@@ -49,6 +49,9 @@ cp .env.example .env            # defaults match docker-compose
 # 3. run the end-to-end demo (crawls the real filesystem MCP server)
 bash scripts/demo.sh
 
+# (or use the Makefile shortcuts: `make` lists targets, e.g. `make up`,
+#  `make demo`, `make demo-public`, `make test`, `make lint`)
+
 # or the cross-server demo: 7 real public servers (npm + uvx), and a secret
 # reachable via tools on two different servers (filesystem AND git)
 bash scripts/demo-public.sh
