@@ -1,0 +1,34 @@
+# Cross-server governance: one secret reachable through tools on TWO different
+# servers (filesystem AND git). A per-server ACL review would clear ci-bot
+# ("it has no filesystem read grant"), but git_show on another server reaches
+# the same governed secret — toolgraph surfaces it because the graph unifies
+# tools across servers around the shared resource.
+
+agents:
+  - ci-bot
+  - ops-agent
+
+policies:
+  - id: secrets-deny
+    effect: DENY
+    scope: app-secrets
+    description: Application secret files must not be reachable by CI/automation agents.
+
+grants:
+  # ci-bot has NO direct filesystem read grant — only git + listing
+  - {agent: ci-bot, tool: "filesystem::list_directory", granted_by: platform}
+  - {agent: ci-bot, tool: "git::git_log", granted_by: platform}
+  - {agent: ci-bot, tool: "git::git_show", granted_by: platform}
+  - {agent: ci-bot, tool: "git::git_status", granted_by: platform}
+  - {agent: ops-agent, tool: "filesystem::read_file", granted_by: platform}
+  - {agent: ops-agent, tool: "filesystem::write_file", granted_by: platform}
+
+data_access:
+  - {tool: "filesystem::read_file", resource: "file:///srv/app/.env", mode: READS}
+  - {tool: "filesystem::read_text_file", resource: "file:///srv/app/.env", mode: READS}
+  - {tool: "filesystem::write_file", resource: "file:///srv/app/.env", mode: WRITES}
+  # git can reveal file contents from history — a real exfiltration path:
+  - {tool: "git::git_show", resource: "file:///srv/app/.env", mode: READS}
+
+governed_by:
+  "file:///srv/app/.env": [secrets-deny]

@@ -1,0 +1,38 @@
+# A broader set of real, public MCP servers — exercises the crawler against
+# heterogeneous real-world servers (npm via npx, Python via uvx; some advertise
+# resources, some don't). Downloads on first run.
+servers:
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+  - name: everything
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-everything"]
+
+  - name: memory
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory"]
+
+  - name: sequential-thinking
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+
+  - name: time
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-time"]
+
+  - name: fetch
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-fetch"]
+
+  - name: git
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-git"]

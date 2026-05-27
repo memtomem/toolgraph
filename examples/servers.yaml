@@ -1,0 +1,14 @@
+# MCP servers to crawl. Each entry is launched/connected to enumerate its
+# live tools and resources. stdio needs command/args; http needs a url.
+servers:
+  # Real, public MCP server (downloads on first run via npx).
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+  # Self-contained fixture server (no network) — handy offline:
+  # - name: sample
+  #   transport: stdio
+  #   command: python
+  #   args: ["tests/fixtures/sample_server.py"]
