@@ -1,0 +1,86 @@
+# Gate exhibit governance — over the user's own memtomem + memtomem-stm.
+#
+# The wedge: memtomem-stm's `surfacing` engine (memtomem_stm/surfacing/engine.py)
+# is invoked on EVERY proxied tool response via
+# `ProxyManager._apply_surfacing` (memtomem_stm/proxy/manager.py:674) and
+# calls `mem_search` on the upstream memtomem server through
+# `surfacing.mcp_client.McpClientSearchAdapter` (mcp_client.py:189). The result
+# is injected into the proxied response.
+#
+# Concretely on this host: ~/.memtomem/stm_proxy.json declares
+# `docs-langchain` and `langfuse-docs` as upstreams. ~/.memtomem/config.json
+# routes files under ~/.claude/projects/*/memory/** to the namespace
+# `claude:<project>`, including this very repo's project memory.
+#
+# So an agent granted only `langchain__search_docs_by_lang_chain` ("just
+# searches public LangChain docs") indirectly reads the operator's personal
+# LTM on every call — surfacing prepends memtomem mem_search hits to the
+# response. The tool description never mentions memtomem or any namespace.
+#
+# A vector/embedding registry indexing tool descriptions cannot link the
+# proxied docs tool to the namespace it transitively touches. toolgraph
+# composes the authored surfacing edge across servers and flags the grant.
+
+agents:
+  - owner        # the user — full LTM access
+  - planner      # subagent that may read project-scoped LTM and use docs+surfacing
+  - helper       # docs-only agent: MUST NOT surface operator personal LTM
+
+policies:
+  - id: operator-ltm-confidentiality
+    effect: DENY
+    scope: personal-memory-leakage
+    description: >
+      The operator's personal LTM (claude:* and codex namespaces) holds
+      working notes, plans, and project context that must not leak into
+      responses surfaced to non-trusted agents.
+
+# Agent -[:CAN_CALL]-> Tool
+grants:
+  # owner has the full memtomem surface
+  - {agent: owner, tool: "memtomem::mem_add", granted_by: user}
+  - {agent: owner, tool: "memtomem::mem_search", granted_by: user}
+  - {agent: owner, tool: "memtomem::mem_read", granted_by: user}
+  - {agent: owner, tool: "memtomem::mem_recall", granted_by: user}
+
+  # planner may search/read memtomem directly + use docs (surfacing OK by design)
+  - {agent: planner, tool: "memtomem::mem_search", granted_by: user}
+  - {agent: planner, tool: "memtomem::mem_read", granted_by: user}
+  - {agent: planner, tool: "memtomem-stm::langchain__search_docs_by_lang_chain", granted_by: user}
+  - {agent: planner, tool: "memtomem-stm::langfuse__searchLangfuseDocs", granted_by: user}
+
+  # helper: ONLY proxied docs grants — no direct memtomem access at all
+  - {agent: helper, tool: "memtomem-stm::langchain__search_docs_by_lang_chain", granted_by: user}
+  - {agent: helper, tool: "memtomem-stm::langfuse__searchLangfuseDocs", granted_by: user}
+  - {agent: helper, tool: "memtomem-stm::langfuse__getLangfuseDocsPage", granted_by: user}
+  - {agent: helper, tool: "memtomem-stm::langfuse__getLangfuseOverview", granted_by: user}
+
+# Tool -[:READS|WRITES]-> Resource (declared data effects).
+#
+# The READS edges from proxied tools to memtomem namespaces are source-backed:
+#   ProxyManager._apply_surfacing -> SurfacingEngine.surface -> mem_search
+# applied to *every* proxied tool response (manager.py:674 unconditionally).
+# Default surfacing enabled=True per surfacing/config.py:33.
+data_access:
+  # direct memtomem reads/writes
+  - {tool: "memtomem::mem_add", resource: "memory:claude:toolgraph", mode: WRITES}
+  - {tool: "memtomem::mem_search", resource: "memory:claude:toolgraph", mode: READS}
+  - {tool: "memtomem::mem_read", resource: "memory:claude:toolgraph", mode: READS}
+  - {tool: "memtomem::mem_recall", resource: "memory:claude:toolgraph", mode: READS}
+
+  # the verified cross-server wedge: every proxied tool runs surfacing, which
+  # calls mem_search on memtomem and may surface ANY indexed namespace.
+  # We model the high-risk one — the operator's project working notes:
+  - {tool: "memtomem-stm::langchain__search_docs_by_lang_chain", resource: "memory:claude:toolgraph", mode: READS}
+  - {tool: "memtomem-stm::langfuse__searchLangfuseDocs", resource: "memory:claude:toolgraph", mode: READS}
+  - {tool: "memtomem-stm::langfuse__getLangfuseDocsPage", resource: "memory:claude:toolgraph", mode: READS}
+  - {tool: "memtomem-stm::langfuse__getLangfuseOverview", resource: "memory:claude:toolgraph", mode: READS}
+
+  # the proxied upstreams themselves (for completeness in blast-radius)
+  - {tool: "memtomem-stm::langchain__search_docs_by_lang_chain", resource: "https://docs.langchain.com/mcp", mode: READS}
+  - {tool: "memtomem-stm::langfuse__searchLangfuseDocs", resource: "https://langfuse.com/api/mcp", mode: READS}
+  - {tool: "memtomem-stm::langfuse__getLangfuseDocsPage", resource: "https://langfuse.com/api/mcp", mode: READS}
+  - {tool: "memtomem-stm::langfuse__getLangfuseOverview", resource: "https://langfuse.com/api/mcp", mode: READS}
+
+governed_by:
+  "memory:claude:toolgraph": [operator-ltm-confidentiality]

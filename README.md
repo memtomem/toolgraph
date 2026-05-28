@@ -62,6 +62,21 @@ yet `unsafe-tools ci-bot` flags it — because `git_show` on a *different* serve
 reaches the same governed secret. A per-server ACL review misses this; the graph
 catches it.
 
+The same wedge appears for **proxy/surfacing servers**. `examples/servers-gate.yaml`
+crawls memtomem + memtomem-stm (a docs proxy whose `surfacing` engine injects
+results from the operator's memtomem LTM into every proxied response — see
+`memtomem_stm/proxy/manager.py:674`). `examples/governance-gate.yaml` flags
+an agent whose only grants are on proxied docs tools (`langchain__*`,
+`langfuse__*`) — because surfacing makes every such call indirectly read the
+operator's personal LTM namespace, which their descriptions never mention.
+Run with:
+
+```bash
+uv run toolgraph crawl --servers examples/servers-gate.yaml
+uv run toolgraph ingest-manifest --governance examples/governance-gate.yaml
+uv run toolgraph check-access helper "memtomem-stm::langchain__search_docs_by_lang_chain"
+```
+
 Or step by step:
 
 ```bash
