@@ -1,0 +1,44 @@
+# Fleet-scale gate exhibit: 7 MCP servers, 2 user-installed + 5 public.
+#
+# The wedge in servers-gate.yaml proves question (a) — toolgraph answers a
+# governance question vector registries can't. This exhibit tests question (b):
+# is per-server authoring genuinely minute-scale across a realistic fleet?
+#
+# See examples/governance-fleet.yaml for minimal but real governance over all
+# seven. The README block reports the wall-clock authoring time and edge counts.
+servers:
+  # --- the user's own (same as servers-gate.yaml) -----------------------
+  - name: memtomem
+    transport: stdio
+    command: uvx
+    args: ["--from", "memtomem", "memtomem-server"]
+
+  - name: memtomem-stm
+    transport: stdio
+    command: memtomem-stm
+
+  # --- public servers a real fleet would have ---------------------------
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/toolgraph-fleet-sandbox"]
+
+  - name: fetch
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-fetch"]
+
+  - name: memory
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-memory"]
+
+  - name: sequential-thinking
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+
+  - name: time
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-time"]
