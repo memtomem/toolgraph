@@ -18,7 +18,7 @@ from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import resolve_tool_keys
-from toolgraph.models import Governance
+from toolgraph.models import Governance, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 
@@ -57,7 +57,9 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                 f"(agent {grant.agent!r})"
             )
         else:
-            resolved_grants.append((grant.agent, key, grant.granted_by))
+            resolved_grants.append(
+                (grant.agent, key, grant.granted_by, edge_provenance_props(grant.provenance))
+            )
 
     resolved_access: list[tuple] = []
     for da in gov.data_access:
@@ -65,7 +67,10 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
         if key is None:
             warnings.append(f"{da.mode}: tool {da.tool!r} {_resolve_problem(da.tool, matches)}")
         else:
-            resolved_access.append((key, da.mode, normalize_resource_uri(da.resource)))
+            resolved_access.append(
+                (key, da.mode, normalize_resource_uri(da.resource),
+                 edge_provenance_props(da.provenance))
+            )
 
     resolved_governed: list[tuple] = []  # (kind, key_or_uri, policy_ids)
     for node_ref, policy_ids in gov.governed_by.items():
@@ -92,39 +97,59 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
 
     agents = set(gov.agents) | {g.agent for g in gov.grants}
     tx.run("UNWIND $ids AS id MERGE (:Agent {id:id})", ids=sorted(agents))
+    # Policy provenance flattens onto the node so a reader sees source/evidence
+    # alongside effect/scope without traversing an edge.
+    policies_payload = []
+    for p in gov.policies:
+        d = p.model_dump(exclude={"provenance"})
+        prov = edge_provenance_props(p.provenance)
+        d["prov_source"] = prov["source"]
+        d["prov_confidence"] = prov["confidence"]
+        d["prov_evidence"] = prov["evidence"]
+        policies_payload.append(d)
     tx.run(
         """
         UNWIND $policies AS p
         MERGE (pol:Policy {id:p.id})
-        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
+        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description,
+            pol.prov_source=p.prov_source, pol.prov_confidence=p.prov_confidence,
+            pol.prov_evidence=p.prov_evidence
         """,
-        policies=[p.model_dump() for p in gov.policies],
+        policies=policies_payload,
     )
 
-    for agent, key, granted_by in resolved_grants:
+    for agent, key, granted_by, prov in resolved_grants:
         tx.run(
             """
             MERGE (a:Agent {id:$agent})
             WITH a MATCH (t:Tool {key:$key})
-            MERGE (a)-[r:CAN_CALL]->(t) SET r.granted_by=$granted_by
+            MERGE (a)-[r:CAN_CALL]->(t)
+            SET r.granted_by=$granted_by,
+                r.source=$source, r.confidence=$confidence, r.evidence=$evidence
             """,
             agent=agent,
             key=key,
             granted_by=granted_by,
+            **prov,
         )
 
-    for key, mode, uri in resolved_access:
+    for key, mode, uri, prov in resolved_access:
         # mode is a validated Literal -> safe to inline as the relationship type.
         tx.run(
             f"""
             MATCH (t:Tool {{key:$key}})
             MERGE (res:Resource {{uri:$uri}})
-            MERGE (t)-[:{mode}]->(res)
+            MERGE (t)-[r:{mode}]->(res)
+            SET r.source=$source, r.confidence=$confidence, r.evidence=$evidence
             """,
             key=key,
             uri=uri,
+            **prov,
         )
 
+    # GOVERNED_BY edges currently carry no per-edge provenance — the policy
+    # node's prov_* fields cover the authoring intent. Default source on the
+    # edge so queries can still filter uniformly.
     for kind, ref, pids in resolved_governed:
         if not pids:
             continue
@@ -134,7 +159,8 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                 MERGE (res:Resource {uri:$ref})
                 WITH res UNWIND $pids AS pid
                 MATCH (p:Policy {id:pid})
-                MERGE (res)-[:GOVERNED_BY]->(p)
+                MERGE (res)-[r:GOVERNED_BY]->(p)
+                SET r.source='operator_asserted', r.confidence='high'
                 """,
                 ref=ref,
                 pids=pids,
@@ -145,7 +171,8 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                 MATCH (t:Tool {key:$ref})
                 UNWIND $pids AS pid
                 MATCH (p:Policy {id:pid})
-                MERGE (t)-[:GOVERNED_BY]->(p)
+                MERGE (t)-[r:GOVERNED_BY]->(p)
+                SET r.source='operator_asserted', r.confidence='high'
                 """,
                 ref=ref,
                 pids=pids,

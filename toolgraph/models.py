@@ -64,11 +64,29 @@ class CrawlResult(BaseModel):
 # --- authored governance (governance.yaml) -------------------------------
 
 
+# Provenance — per-edge metadata so a reader can tell crawled facts from
+# operator assertions, and find the supporting evidence for each assertion.
+# Default for authored edges is operator_asserted/high with no evidence link;
+# the loader sets crawled/high/<endpoint> on EXPOSES/PROVIDES.
+ProvenanceSource = Literal["crawled", "operator_asserted", "inferred"]
+ProvenanceConfidence = Literal["high", "medium", "low"]
+
+
+class Provenance(BaseModel):
+    """Where an edge came from and how strong the claim is."""
+
+    source: ProvenanceSource = "operator_asserted"
+    confidence: ProvenanceConfidence = "high"
+    # free-text pointer: file:line, URL, commit SHA, ticket id, runtime trace.
+    evidence: str | None = None
+
+
 class Policy(BaseModel):
     id: str
     effect: Literal["ALLOW", "DENY"]
     scope: str | None = None
     description: str | None = None
+    provenance: Provenance | None = None
 
 
 class AccessGrant(BaseModel):
@@ -77,6 +95,7 @@ class AccessGrant(BaseModel):
     agent: str
     tool: str
     granted_by: str | None = None
+    provenance: Provenance | None = None
 
 
 class DataAccess(BaseModel):
@@ -85,6 +104,7 @@ class DataAccess(BaseModel):
     tool: str
     resource: str  # resource uri
     mode: Literal["READS", "WRITES"]
+    provenance: Provenance | None = None
 
 
 class Governance(BaseModel):
@@ -94,3 +114,10 @@ class Governance(BaseModel):
     data_access: list[DataAccess] = Field(default_factory=list)
     # node id -> list of policy ids; node id is a resource uri or '<server>::<tool>'
     governed_by: dict[str, list[str]] = Field(default_factory=dict)
+
+
+def edge_provenance_props(p: Provenance | None) -> dict:
+    """Default to operator_asserted/high when authoring code omits provenance."""
+    if p is None:
+        return {"source": "operator_asserted", "confidence": "high", "evidence": None}
+    return p.model_dump()

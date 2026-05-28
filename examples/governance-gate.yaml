@@ -34,6 +34,10 @@ policies:
       The operator's personal LTM (claude:* and codex namespaces) holds
       working notes, plans, and project context that must not leak into
       responses surfaced to non-trusted agents.
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: "~/.memtomem/config.json (namespace.rules) + ~/.memtomem/stm_proxy.json"
 
 # Agent -[:CAN_CALL]-> Tool
 grants:
@@ -70,11 +74,37 @@ data_access:
 
   # the verified cross-server wedge: every proxied tool runs surfacing, which
   # calls mem_search on memtomem and may surface ANY indexed namespace.
-  # We model the high-risk one — the operator's project working notes:
-  - {tool: "memtomem-stm::langchain__search_docs_by_lang_chain", resource: "memory:claude:toolgraph", mode: READS}
-  - {tool: "memtomem-stm::langfuse__searchLangfuseDocs", resource: "memory:claude:toolgraph", mode: READS}
-  - {tool: "memtomem-stm::langfuse__getLangfuseDocsPage", resource: "memory:claude:toolgraph", mode: READS}
-  - {tool: "memtomem-stm::langfuse__getLangfuseOverview", resource: "memory:claude:toolgraph", mode: READS}
+  # We model the high-risk one — the operator's project working notes.
+  # provenance.evidence points at the exact source path so a reviewer can
+  # verify the edge without re-reading the whole demo.
+  - tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance:
+      source: inferred
+      confidence: high
+      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+  - tool: "memtomem-stm::langfuse__searchLangfuseDocs"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance:
+      source: inferred
+      confidence: high
+      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+  - tool: "memtomem-stm::langfuse__getLangfuseDocsPage"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance:
+      source: inferred
+      confidence: high
+      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+  - tool: "memtomem-stm::langfuse__getLangfuseOverview"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance:
+      source: inferred
+      confidence: high
+      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
 
   # the proxied upstreams themselves (for completeness in blast-radius)
   - {tool: "memtomem-stm::langchain__search_docs_by_lang_chain", resource: "https://docs.langchain.com/mcp", mode: READS}

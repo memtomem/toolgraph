@@ -43,6 +43,8 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         }
         for t in result.tools
     ]
+    # EXPOSES carries crawled provenance: source/confidence/evidence so a reader
+    # can distinguish facts (here) from operator assertions (CAN_CALL etc.).
     tx.run(
         """
         MATCH (s:MCPServer {name:$name})
@@ -50,10 +52,12 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         MERGE (tool:Tool {key:t.key})
         SET tool.name=t.name, tool.server=$name,
             tool.description=t.description, tool.input_schema=t.input_schema
-        MERGE (s)-[:EXPOSES]->(tool)
+        MERGE (s)-[e:EXPOSES]->(tool)
+        SET e.source='crawled', e.confidence='high', e.evidence=$evidence
         """,
         name=result.server_name,
         tools=tools,
+        evidence=f"crawled from {result.endpoint or result.transport}",
     )
 
     resources = [
@@ -71,10 +75,12 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         UNWIND $resources AS r
         MERGE (res:Resource {uri:r.uri})
         SET res.name=r.name, res.mime_type=r.mime_type, res.description=r.description
-        MERGE (s)-[:PROVIDES]->(res)
+        MERGE (s)-[p:PROVIDES]->(res)
+        SET p.source='crawled', p.confidence='high', p.evidence=$evidence
         """,
         name=result.server_name,
         resources=resources,
+        evidence=f"crawled from {result.endpoint or result.transport}",
     )
 
     # Reconcile tools this server no longer exposes. Drop the EXPOSES edge always;

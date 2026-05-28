@@ -49,12 +49,18 @@ def _radius_path(agent: str | None, tool: str | None, mode: str | None, resource
 
 
 def _deny_evidence_for(s: Session, key: str) -> list[dict]:
-    """All ways the tool identified by `key` reaches a DENY policy."""
+    """All ways the tool identified by `key` reaches a DENY policy.
+
+    Each row carries the data-access edge's provenance (source/confidence/evidence)
+    so a reader can tell crawled facts from operator assertions without an
+    extra round-trip.
+    """
     evidence: list[dict] = []
     for r in s.run(
         """
         MATCH (t:Tool {key:$key})-[acc:READS|WRITES]->(r:Resource)-[:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        RETURN DISTINCT type(acc) AS mode, r.uri AS resource, p.id AS policy
+        RETURN DISTINCT type(acc) AS mode, r.uri AS resource, p.id AS policy,
+               acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence
         ORDER BY resource, policy
         """,
         key=key,
@@ -66,19 +72,36 @@ def _deny_evidence_for(s: Session, key: str) -> list[dict]:
                 "resource": r["resource"],
                 "policy": r["policy"],
                 "path": _resource_path(_name(key), r["mode"], r["resource"], r["policy"]),
+                "provenance": _prov(r),
             }
         )
     for r in s.run(
         """
-        MATCH (t:Tool {key:$key})-[:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        RETURN DISTINCT p.id AS policy ORDER BY policy
+        MATCH (t:Tool {key:$key})-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+        RETURN DISTINCT p.id AS policy,
+               g.source AS source, g.confidence AS confidence, g.evidence AS evidence
+        ORDER BY policy
         """,
         key=key,
     ):
         evidence.append(
-            {"via": "tool", "policy": r["policy"], "path": _tool_path(_name(key), r["policy"])}
+            {
+                "via": "tool",
+                "policy": r["policy"],
+                "path": _tool_path(_name(key), r["policy"]),
+                "provenance": _prov(r),
+            }
         )
     return evidence
+
+
+def _prov(row) -> dict:
+    """Provenance fields as a sub-dict, defaulting when an older edge lacks them."""
+    return {
+        "source": row["source"] or "operator_asserted",
+        "confidence": row["confidence"] or "high",
+        "evidence": row["evidence"],
+    }
 
 
 def _name(key: str) -> str:
@@ -137,7 +160,11 @@ def check_access(agent: str, tool: str) -> dict:
 
 
 def unsafe_callable_tools(agent: str) -> list[dict]:
-    """Tools the agent can call that reach a DENY policy (via resource or directly)."""
+    """Tools the agent can call that reach a DENY policy (via resource or directly).
+
+    Each row carries the data-access (or tool-governance) edge's provenance so
+    a reader can tell a crawled fact from an operator assertion at a glance.
+    """
     rows: list[dict] = []
     with session() as s:
         for r in s.run(
@@ -145,25 +172,33 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)
                   -[acc:READS|WRITES]->(res:Resource)-[:GOVERNED_BY]->(p:Policy {effect:'DENY'})
             RETURN DISTINCT t.key AS tool_key, t.name AS tool, t.server AS server,
-                   'resource' AS via, type(acc) AS mode, res.uri AS resource, p.id AS policy
+                   'resource' AS via, type(acc) AS mode, res.uri AS resource, p.id AS policy,
+                   acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence
             ORDER BY tool, resource
             """,
             agent=agent,
         ):
             d = dict(r)
             d["path"] = _resource_path(d["tool"], d["mode"], d["resource"], d["policy"])
+            d["provenance"] = _prov(r)
+            for k in ("source", "confidence", "evidence"):
+                d.pop(k, None)
             rows.append(d)
         for r in s.run(
             """
-            MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)-[:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+            MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
             RETURN DISTINCT t.key AS tool_key, t.name AS tool, t.server AS server,
-                   'tool' AS via, null AS mode, null AS resource, p.id AS policy
+                   'tool' AS via, null AS mode, null AS resource, p.id AS policy,
+                   g.source AS source, g.confidence AS confidence, g.evidence AS evidence
             ORDER BY tool
             """,
             agent=agent,
         ):
             d = dict(r)
             d["path"] = _tool_path(d["tool"], d["policy"])
+            d["provenance"] = _prov(r)
+            for k in ("source", "confidence", "evidence"):
+                d.pop(k, None)
             rows.append(d)
     return rows
 
@@ -184,7 +219,8 @@ def blast_radius(node: str) -> dict:
                 MATCH (r:Resource {uri:$uri})
                 OPTIONAL MATCH (t:Tool)-[acc:READS|WRITES]->(r)
                 OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
-                RETURN DISTINCT a.id AS agent, t.key AS tool_key, t.name AS tool, type(acc) AS mode
+                RETURN DISTINCT a.id AS agent, t.key AS tool_key, t.name AS tool, type(acc) AS mode,
+                       acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence
                 ORDER BY agent, tool
                 """,
                 uri=uri,
@@ -193,6 +229,9 @@ def blast_radius(node: str) -> dict:
                     continue  # resource exists but nothing reads/writes it
                 d = dict(r)
                 d["path"] = _radius_path(d["agent"], d["tool"], d["mode"], uri)
+                d["provenance"] = _prov(r)
+                for k in ("source", "confidence", "evidence"):
+                    d.pop(k, None)
                 impacted.append(d)
         return {"kind": "resource", "node": uri, "impacted": impacted}
 
@@ -207,21 +246,26 @@ def blast_radius(node: str) -> dict:
             OPTIONAL MATCH (t:Tool)-[acc:READS|WRITES]->(res)
             OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
             RETURN 'resource' AS via, res.uri AS resource, a.id AS agent,
-                   t.key AS tool_key, t.name AS tool, type(acc) AS mode
+                   t.key AS tool_key, t.name AS tool, type(acc) AS mode,
+                   acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence
             ORDER BY resource, agent, tool
             """,
             node=node,
         ):
             d = dict(r)
             d["path"] = _radius_path(d["agent"], d["tool"], d["mode"], d["resource"])
+            d["provenance"] = _prov(r)
+            for k in ("source", "confidence", "evidence"):
+                d.pop(k, None)
             impacted.append(d)
         # tools this policy governs directly, and who can call them
         for r in s.run(
             """
-            MATCH (t:Tool)-[:GOVERNED_BY]->(:Policy {id:$node})
+            MATCH (t:Tool)-[g:GOVERNED_BY]->(:Policy {id:$node})
             OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
             RETURN 'tool' AS via, null AS resource, a.id AS agent,
-                   t.key AS tool_key, t.name AS tool, null AS mode
+                   t.key AS tool_key, t.name AS tool, null AS mode,
+                   g.source AS source, g.confidence AS confidence, g.evidence AS evidence
             ORDER BY tool, agent
             """,
             node=node,
@@ -232,5 +276,8 @@ def blast_radius(node: str) -> dict:
                 if d["agent"]
                 else None
             )
+            d["provenance"] = _prov(r)
+            for k in ("source", "confidence", "evidence"):
+                d.pop(k, None)
             impacted.append(d)
     return {"kind": "policy", "node": node, "impacted": impacted}
