@@ -16,7 +16,13 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT resource_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE",
     "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.id IS UNIQUE",
     "CREATE CONSTRAINT policy_id IF NOT EXISTS FOR (p:Policy) REQUIRE p.id IS UNIQUE",
+    "CREATE CONSTRAINT exception_key IF NOT EXISTS FOR (e:ExpectedException) REQUIRE e.key IS UNIQUE",
 ]
+
+
+def exception_key(agent: str, tool_key: str, resource: str | None, policy: str) -> str:
+    """Stable identity for ExpectedException; ``resource=*`` collapses 'any resource'."""
+    return f"{agent}|{tool_key}|{resource or '*'}|{policy}"
 
 
 def tool_key(server_name: str, tool_name: str) -> str:

@@ -107,6 +107,18 @@ class DataAccess(BaseModel):
     provenance: Provenance | None = None
 
 
+class ExpectedException(BaseModel):
+    """Operator-declared exception: this (agent, tool, resource?, policy) reach
+    is intentional — surface it as ``authorized_but_governed`` rather than
+    ``violation`` so reviewers don't drown in noise on by-design grants."""
+
+    agent: str
+    tool: str  # '<server>::<tool>' or bare name (same resolution rules as grants)
+    policy: str
+    resource: str | None = None  # narrow to a specific resource; None = any
+    reason: str | None = None
+
+
 class Governance(BaseModel):
     agents: list[str] = Field(default_factory=list)
     policies: list[Policy] = Field(default_factory=list)
@@ -114,6 +126,7 @@ class Governance(BaseModel):
     data_access: list[DataAccess] = Field(default_factory=list)
     # node id -> list of policy ids; node id is a resource uri or '<server>::<tool>'
     governed_by: dict[str, list[str]] = Field(default_factory=dict)
+    expected_exceptions: list[ExpectedException] = Field(default_factory=list)
 
 
 def edge_provenance_props(p: Provenance | None) -> dict:

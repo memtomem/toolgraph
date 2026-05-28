@@ -60,6 +60,7 @@ def test_ingest_is_idempotent(graph):
         "reads": 1,
         "writes": 1,
         "governed_by": 1,
+        "expected_exception": 0,
     }
 
 

@@ -114,3 +114,29 @@ data_access:
 
 governed_by:
   "memory:claude:toolgraph": [operator-ltm-confidentiality]
+
+# Intentional reach: planner is the project subagent — it's *supposed* to read
+# the toolgraph memory namespace. Declaring the exception classifies planner's
+# four reach paths as `authorized_but_governed` instead of `violation`, leaving
+# helper's reaches as the real signal (still `violation`).
+expected_exceptions:
+  - agent: planner
+    tool: "memtomem::mem_search"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "planner is the project subagent; reading project memory is by design"
+  - agent: planner
+    tool: "memtomem::mem_read"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "planner is the project subagent; reading project memory is by design"
+  - agent: planner
+    tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "planner uses docs+surfacing; project-memory injection is expected"
+  - agent: planner
+    tool: "memtomem-stm::langfuse__searchLangfuseDocs"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "planner uses docs+surfacing; project-memory injection is expected"

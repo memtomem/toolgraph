@@ -18,6 +18,7 @@ from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import resolve_tool_keys
+from toolgraph.graph.schema import exception_key
 from toolgraph.models import Governance, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
@@ -72,6 +73,31 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                  edge_provenance_props(da.provenance))
             )
 
+    resolved_exceptions: list[tuple] = []  # (agent, tool_key, resource_or_None, policy, reason)
+    for exc in gov.expected_exceptions:
+        if exc.policy not in known_policies:
+            warnings.append(
+                f"EXPECTED_EXCEPTION: policy {exc.policy!r} not defined "
+                f"(agent {exc.agent!r}, tool {exc.tool!r})"
+            )
+            continue
+        key, matches = _resolve(tx, exc.tool)
+        if key is None:
+            warnings.append(
+                f"EXPECTED_EXCEPTION: tool {exc.tool!r} {_resolve_problem(exc.tool, matches)} "
+                f"(agent {exc.agent!r})"
+            )
+            continue
+        resolved_exceptions.append(
+            (
+                exc.agent,
+                key,
+                normalize_resource_uri(exc.resource) if exc.resource else None,
+                exc.policy,
+                exc.reason,
+            )
+        )
+
     resolved_governed: list[tuple] = []  # (kind, key_or_uri, policy_ids)
     for node_ref, policy_ids in gov.governed_by.items():
         for pid in policy_ids:
@@ -94,6 +120,9 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
     tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]-() DELETE r")
+    # ExpectedException nodes are pure authored bookkeeping — clear and re-apply
+    # alongside the edges so a removed exception promotes the row back to violation.
+    tx.run("MATCH (e:ExpectedException) DETACH DELETE e")
 
     agents = set(gov.agents) | {g.agent for g in gov.grants}
     tx.run("UNWIND $ids AS id MERGE (:Agent {id:id})", ids=sorted(agents))
@@ -147,6 +176,27 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
             **prov,
         )
 
+    if resolved_exceptions:
+        tx.run(
+            """
+            UNWIND $rows AS row
+            MERGE (e:ExpectedException {key:row.key})
+            SET e.agent=row.agent, e.tool_key=row.tool_key,
+                e.resource=row.resource, e.policy=row.policy, e.reason=row.reason
+            """,
+            rows=[
+                {
+                    "key": exception_key(a, k, r, p),
+                    "agent": a,
+                    "tool_key": k,
+                    "resource": r,
+                    "policy": p,
+                    "reason": reason,
+                }
+                for a, k, r, p, reason in resolved_exceptions
+            ],
+        )
+
     # GOVERNED_BY edges currently carry no per-edge provenance — the policy
     # node's prov_* fields cover the authoring intent. Default source on the
     # edge so queries can still filter uniformly.
@@ -195,7 +245,8 @@ def governance_counts() -> dict[str, int]:
     CALL () { MATCH ()-[r:READS]->()       RETURN count(r) AS reads }
     CALL () { MATCH ()-[w:WRITES]->()      RETURN count(w) AS writes }
     CALL () { MATCH ()-[g:GOVERNED_BY]->() RETURN count(g) AS governed_by }
-    RETURN agent, policy, can_call, reads, writes, governed_by
+    CALL () { MATCH (e:ExpectedException)  RETURN count(e) AS expected_exception }
+    RETURN agent, policy, can_call, reads, writes, governed_by, expected_exception
     """
     with session() as s:
         rec = s.run(query).single()
