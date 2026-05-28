@@ -198,11 +198,14 @@ def blast_radius(node: str) -> dict:
 
     with session() as s:
         impacted = []
-        # resources this policy governs, and who reaches them
+        # resources this policy governs, and who reaches them. Bind the tool to
+        # the resource first, then OPTIONALLY the agent, so a tool that
+        # reads/writes the resource with no CAN_CALL grant is still reported.
         for r in s.run(
             """
             MATCH (res:Resource)-[:GOVERNED_BY]->(:Policy {id:$node})
-            OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t:Tool)-[acc:READS|WRITES]->(res)
+            OPTIONAL MATCH (t:Tool)-[acc:READS|WRITES]->(res)
+            OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
             RETURN 'resource' AS via, res.uri AS resource, a.id AS agent,
                    t.key AS tool_key, t.name AS tool, type(acc) AS mode
             ORDER BY resource, agent, tool

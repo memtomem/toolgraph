@@ -10,7 +10,12 @@ URI through ``normalize_resource_uri`` at both write and read boundaries.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import AnyUrl, ValidationError
+
+# A URI scheme (RFC 3986): scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
+_SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
 
 
 def normalize_resource_uri(uri: str) -> str:
@@ -26,5 +31,15 @@ def normalize_resource_uri(uri: str) -> str:
 
 
 def is_resource_ref(ref: str) -> bool:
-    """A governed node is a resource (URI) if it has a scheme separator."""
-    return "://" in ref
+    """Distinguish a resource URI from a tool ref / policy id.
+
+    A resource URI carries a URI scheme (``scheme:`` — covers ``file:///x``,
+    ``memory:foo``, ``urn:secret``, ``file:/tmp/a``), whereas a tool ref is the
+    ``server::tool`` convention or a bare name. The ``::`` check takes precedence
+    so ``server::tool`` is never mistaken for a scheme. (Known edge: an IPv6
+    literal authority like ``http://[::1]/x`` contains ``::``; not expected in
+    governance manifests.)
+    """
+    if "::" in ref:
+        return False
+    return bool(_SCHEME.match(ref))

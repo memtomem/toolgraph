@@ -15,6 +15,7 @@ from toolgraph.models import (
     ServerSpec,
     ToolRecord,
 )
+from toolgraph.uris import is_resource_ref
 
 CSV = "file:///data/customers.csv"
 
@@ -200,3 +201,60 @@ def test_blast_radius_policy_rows_have_path_key(graph):
     )
     impacted = queries.blast_radius("deny")["impacted"]
     assert impacted and all("path" in r for r in impacted)
+
+
+# --- code-review round 3 (PR) fixes --------------------------------------
+
+
+def test_failed_ingest_does_not_mutate_graph(graph):
+    _load("sample", ["read_file"])
+    good = Governance(
+        agents=["planner"],
+        policies=[Policy(id="deny", effect="DENY")],
+        grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+        data_access=[DataAccess(tool="sample::read_file", resource="file:///x", mode="READS")],
+        governed_by={"file:///x": ["deny"]},
+    )
+    assert ingest_governance(good) == []
+    before = governance_counts()
+    assert queries.check_access("planner", "read_file")["verdict"] == "DENY"
+
+    # a manifest with a typo'd policy must be rejected whole — not partially applied
+    bad = good.model_copy(update={"governed_by": {"file:///x": ["dney"]}})
+    warnings = ingest_governance(bad)
+    assert warnings  # rejected
+    assert governance_counts() == before  # graph untouched
+    assert queries.check_access("planner", "read_file")["verdict"] == "DENY"  # DENY preserved
+
+
+def test_policy_blast_includes_ungranted_tool(graph):
+    _load("sample", ["leak"])
+    ingest_governance(
+        Governance(
+            policies=[Policy(id="deny", effect="DENY")],
+            data_access=[DataAccess(tool="sample::leak", resource="file:///secret", mode="WRITES")],
+            governed_by={"file:///secret": ["deny"]},
+        )
+    )
+    impacted = queries.blast_radius("deny")["impacted"]
+    assert any(r["tool"] == "leak" and r["agent"] is None for r in impacted)
+
+
+def test_non_hierarchical_uri_treated_as_resource(graph):
+    assert is_resource_ref("memory:secret")
+    assert is_resource_ref("urn:x")
+    assert is_resource_ref("file:/tmp/a")
+    assert not is_resource_ref("sample::read_file")
+    assert not is_resource_ref("read_file")
+
+    _load("sample", ["read_file"])
+    ingest_governance(
+        Governance(
+            agents=["bot"],
+            policies=[Policy(id="deny", effect="DENY")],
+            grants=[AccessGrant(agent="bot", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource="memory:secret", mode="READS")],
+            governed_by={"memory:secret": ["deny"]},
+        )
+    )
+    assert queries.check_access("bot", "read_file")["verdict"] == "DENY"
