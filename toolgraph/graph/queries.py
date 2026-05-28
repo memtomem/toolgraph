@@ -246,6 +246,116 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
     return rows
 
 
+# --- Negative-truth / drift queries -------------------------------------
+#
+# Audit views that surface what the graph DOESN'T say but probably should.
+# Codex review of the gate exhibit noted that an advisory analyzer that only
+# answers positive reachability questions can look more authoritative than it
+# is; these queries make the unspecified, the unsupported, and the stale
+# parts of the graph visible.
+
+
+def unmapped_tools(only_granted: bool = True) -> list[dict]:
+    """Tools with no authored READS/WRITES — data-flow effects unclassified.
+
+    Default scopes to tools an agent has a CAN_CALL grant on (those matter
+    most for safety review). Pass ``only_granted=False`` to include all
+    crawled tools with no data-access edges.
+    """
+    cypher = (
+        """
+        MATCH (t:Tool)
+        WHERE NOT EXISTS { MATCH (t)-[:READS|WRITES]->() }
+        """
+        + (
+            "  AND EXISTS { MATCH (:Agent)-[:CAN_CALL]->(t) }\n"
+            if only_granted
+            else ""
+        )
+        + """
+        OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
+        RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
+               collect(DISTINCT a.id) AS granted_to
+        ORDER BY tool_key
+        """
+    )
+    with session() as s:
+        return [dict(r) for r in s.run(cypher)]
+
+
+def orphan_policies() -> list[dict]:
+    """Policies that no agent currently reaches — likely obsolete or over-narrow.
+
+    A policy is an orphan when neither a resource it governs is read/written
+    by a CAN_CALL-grantable tool, nor a tool it governs directly has any
+    caller. Useful before pruning policies that look authoritative but in
+    practice gate nothing.
+    """
+    cypher = """
+    MATCH (p:Policy)
+    WHERE NOT EXISTS {
+        MATCH (:Agent)-[:CAN_CALL]->(:Tool)-[:READS|WRITES]->(:Resource)-[:GOVERNED_BY]->(p)
+    }
+      AND NOT EXISTS {
+        MATCH (:Agent)-[:CAN_CALL]->(:Tool)-[:GOVERNED_BY]->(p)
+    }
+    OPTIONAL MATCH (r:Resource)-[:GOVERNED_BY]->(p)
+    OPTIONAL MATCH (t:Tool)-[:GOVERNED_BY]->(p)
+    RETURN p.id AS policy, p.effect AS effect, p.scope AS scope,
+           collect(DISTINCT r.uri) AS resources_governed,
+           collect(DISTINCT t.key) AS tools_governed_directly
+    ORDER BY policy
+    """
+    with session() as s:
+        return [dict(r) for r in s.run(cypher)]
+
+
+def unbacked_edges() -> list[dict]:
+    """Authored edges with source='operator_asserted' but no evidence pointer.
+
+    These are unsupported claims — the gate-review fiction was exactly this
+    shape. Surfacing them at audit time lets operators decide which assertions
+    need source citation before being trusted.
+    """
+    cypher = """
+    MATCH (src)-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]->(dst)
+    WHERE coalesce(r.source, 'operator_asserted') = 'operator_asserted'
+      AND r.evidence IS NULL
+    RETURN type(r) AS edge_type,
+           labels(src)[0] AS src_label,
+           coalesce(src.id, src.key, src.uri, src.name) AS src,
+           labels(dst)[0] AS dst_label,
+           coalesce(dst.id, dst.key, dst.uri, dst.name) AS dst,
+           coalesce(r.source, 'operator_asserted') AS source,
+           coalesce(r.confidence, 'high') AS confidence
+    ORDER BY edge_type, src, dst
+    """
+    with session() as s:
+        return [dict(r) for r in s.run(cypher)]
+
+
+def drifted_tools() -> list[dict]:
+    """Tools with authored governance but no live EXPOSES edge.
+
+    Happens when a server stops advertising a tool but the operator hasn't
+    re-run ingest-manifest. Loader keeps these so a DENY never silently
+    becomes ALLOW; this query lets operators find and resolve them.
+    """
+    cypher = """
+    MATCH (t:Tool)
+    WHERE NOT EXISTS { MATCH (:MCPServer)-[:EXPOSES]->(t) }
+      AND EXISTS { MATCH (t)-[:CAN_CALL|READS|WRITES|GOVERNED_BY]-() }
+    OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
+    OPTIONAL MATCH (t)-[acc:READS|WRITES]->(res:Resource)
+    RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
+           collect(DISTINCT a.id) AS granted_to,
+           collect(DISTINCT {mode:type(acc), resource:res.uri}) AS data_access
+    ORDER BY tool_key
+    """
+    with session() as s:
+        return [dict(r) for r in s.run(cypher)]
+
+
 def blast_radius(node: str) -> dict:
     """Who/what is affected if a resource or a policy changes (with evidence paths).
 

@@ -119,5 +119,31 @@ def blast_radius(node: str) -> None:
     typer.echo(json.dumps(queries.blast_radius(node), indent=2))
 
 
+@app.command("unmapped-tools")
+def unmapped_tools(
+    all: bool = typer.Option(False, "--all", help="Include tools with no CAN_CALL grant."),
+) -> None:
+    """Tools whose data-flow effects (READS/WRITES) are not yet authored."""
+    typer.echo(json.dumps(queries.unmapped_tools(only_granted=not all), indent=2))
+
+
+@app.command("orphan-policies")
+def orphan_policies() -> None:
+    """Policies no agent currently reaches — likely obsolete or over-narrow."""
+    typer.echo(json.dumps(queries.orphan_policies(), indent=2))
+
+
+@app.command("unbacked-edges")
+def unbacked_edges() -> None:
+    """Authored edges with no evidence pointer — unsupported claims."""
+    typer.echo(json.dumps(queries.unbacked_edges(), indent=2))
+
+
+@app.command("drift")
+def drift() -> None:
+    """Tools with authored governance but no live EXPOSES edge (re-ingest needed)."""
+    typer.echo(json.dumps(queries.drifted_tools(), indent=2))
+
+
 if __name__ == "__main__":
     app()
