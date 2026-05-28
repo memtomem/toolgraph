@@ -67,6 +67,10 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
             "check_access",
             "unsafe_callable_tools",
             "blast_radius",
+            "unmapped_tools",
+            "orphan_policies",
+            "unbacked_edges",
+            "drifted_tools",
         }
 
         result = await session.call_tool(

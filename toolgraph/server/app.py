@@ -38,5 +38,34 @@ def blast_radius(node: str) -> dict:
     return queries.blast_radius(node)
 
 
+@mcp.tool()
+def unmapped_tools(only_granted: bool = True) -> dict:
+    """Granted tools (or all tools if `only_granted=False`) with no authored
+    READS/WRITES — data-flow effects unclassified."""
+    rows = queries.unmapped_tools(only_granted=only_granted)
+    return {"count": len(rows), "tools": rows}
+
+
+@mcp.tool()
+def orphan_policies() -> dict:
+    """Policies no agent currently reaches — likely obsolete or over-narrow."""
+    rows = queries.orphan_policies()
+    return {"count": len(rows), "policies": rows}
+
+
+@mcp.tool()
+def unbacked_edges() -> dict:
+    """Authored edges with source='operator_asserted' and no evidence pointer."""
+    rows = queries.unbacked_edges()
+    return {"count": len(rows), "edges": rows}
+
+
+@mcp.tool()
+def drifted_tools() -> dict:
+    """Tools with authored governance but no live EXPOSES edge — re-ingest needed."""
+    rows = queries.drifted_tools()
+    return {"count": len(rows), "tools": rows}
+
+
 if __name__ == "__main__":
     mcp.run()
