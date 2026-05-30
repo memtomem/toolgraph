@@ -1,0 +1,22 @@
+# Pinned Neo4j for toolgraph local dev. 5.26 is the last LTS before calendar
+# versioning; community edition is sufficient (no vector index / node-key needed).
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: toolgraph-neo4j
+    ports:
+      - "7474:7474" # browser
+      - "7687:7687" # bolt
+    environment:
+      NEO4J_AUTH: neo4j/toolgraph-dev
+      NEO4J_server_memory_heap_max__size: 512M
+    volumes:
+      - toolgraph-neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  toolgraph-neo4j-data:

@@ -1,0 +1,12 @@
+# Gate exhibit: the user's own MCP servers (memtomem + memtomem-stm proxy).
+# Crawls both via stdio using the exact launch commands registered with the
+# Claude Code CLI, so the graph reflects what the user actually runs.
+servers:
+  - name: memtomem
+    transport: stdio
+    command: uvx
+    args: ["--from", "memtomem", "memtomem-server"]
+
+  - name: memtomem-stm
+    transport: stdio
+    command: memtomem-stm

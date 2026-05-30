@@ -1,0 +1,140 @@
+# Fleet-scale governance — minimal but real coverage of all 7 servers in
+# servers-fleet.yaml. Validates question (b) of the gate: is per-server
+# authoring genuinely minute-scale?
+#
+# Three agents, three policies, hand-authored to surface realistic risks
+# without inventing fiction (provenance.evidence points at the file or
+# upstream for the non-obvious edges).
+
+agents:
+  - planner      # general-purpose subagent
+  - publisher    # writes externally (filesystem + fetch)
+  - reader       # read-only researcher
+
+policies:
+  - id: sandbox-secrets-deny
+    effect: DENY
+    scope: filesystem-secrets
+    description: Credentials under the demo sandbox must not be reachable by automation.
+
+  - id: ltm-confidentiality
+    effect: DENY
+    scope: personal-memory-leakage
+    description: Operator's claude:* LTM is off-limits to non-trusted agents.
+
+  - id: external-egress-audit
+    effect: DENY
+    scope: outbound-http
+    description: Outbound HTTP from automation should be audited (advisory; treat as needs-review).
+
+# CAN_CALL grants
+grants:
+  # planner: broad read + memory + thinking, no writes
+  - {agent: planner, tool: "memtomem::mem_search"}
+  - {agent: planner, tool: "memtomem::mem_read"}
+  - {agent: planner, tool: "memtomem-stm::langchain__search_docs_by_lang_chain"}
+  - {agent: planner, tool: "memtomem-stm::langfuse__searchLangfuseDocs"}
+  - {agent: planner, tool: "filesystem::read_text_file"}
+  - {agent: planner, tool: "filesystem::list_directory"}
+  - {agent: planner, tool: "memory::search_nodes"}
+  - {agent: planner, tool: "memory::read_graph"}
+  - {agent: planner, tool: "sequential-thinking::sequentialthinking"}
+  - {agent: planner, tool: "time::get_current_time"}
+
+  # publisher: writes filesystem + fetch
+  - {agent: publisher, tool: "filesystem::write_file"}
+  - {agent: publisher, tool: "filesystem::edit_file"}
+  - {agent: publisher, tool: "filesystem::create_directory"}
+  - {agent: publisher, tool: "fetch::fetch"}
+  - {agent: publisher, tool: "time::get_current_time"}
+
+  # reader: only documents + memory read
+  - {agent: reader, tool: "memtomem-stm::langchain__search_docs_by_lang_chain"}
+  - {agent: reader, tool: "memtomem-stm::langfuse__searchLangfuseDocs"}
+  - {agent: reader, tool: "memtomem-stm::langfuse__getLangfuseOverview"}
+  - {agent: reader, tool: "filesystem::list_directory"}
+  - {agent: reader, tool: "time::get_current_time"}
+
+# Tool -[:READS|WRITES]-> Resource — only authored where it matters for
+# governance. Time/sequentialthinking tools have no resource effects.
+data_access:
+  # filesystem on the sandbox secrets file
+  - {tool: "filesystem::read_text_file", resource: "file:///tmp/toolgraph-fleet-sandbox/.env", mode: READS}
+  - {tool: "filesystem::read_file", resource: "file:///tmp/toolgraph-fleet-sandbox/.env", mode: READS}
+  - {tool: "filesystem::write_file", resource: "file:///tmp/toolgraph-fleet-sandbox/.env", mode: WRITES}
+  - {tool: "filesystem::edit_file", resource: "file:///tmp/toolgraph-fleet-sandbox/.env", mode: WRITES}
+
+  # memtomem direct reads of project LTM (source-cited)
+  - tool: "memtomem::mem_search"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance: {source: operator_asserted, confidence: high, evidence: "~/.memtomem/config.json namespace.rules"}
+  - tool: "memtomem::mem_read"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance: {source: operator_asserted, confidence: high, evidence: "~/.memtomem/config.json namespace.rules"}
+
+  # the surfacing-engine wedge (carried over from gate exhibit)
+  - tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+  - tool: "memtomem-stm::langfuse__searchLangfuseDocs"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+  - tool: "memtomem-stm::langfuse__getLangfuseOverview"
+    resource: "memory:claude:toolgraph"
+    mode: READS
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+
+  # fetch is by definition external HTTP egress. NOTE: "https://*" is an
+  # AUTHORING PLACEHOLDER for "any outbound URL" — it's a single Resource
+  # node, not a wildcard pattern. The graph won't compose a DENY on https://*
+  # with a later edge to https://specific.example.com. If you start authoring
+  # specific egress targets, add a governed_by entry per target (or model
+  # egress as a separate policy effect outside the resource axis).
+  - {tool: "fetch::fetch", resource: "https://*", mode: READS}
+
+governed_by:
+  "file:///tmp/toolgraph-fleet-sandbox/.env": [sandbox-secrets-deny]
+  "memory:claude:toolgraph": [ltm-confidentiality]
+  # The egress placeholder; see comment in data_access above.
+  "https://*": [external-egress-audit]
+
+# Intentional reach declarations. Three agents in this exhibit, three roles:
+#   planner   — has authorized exceptions for the LTM-reaching surface tools
+#   publisher — has an authorized exception for outbound egress (its purpose)
+#   reader    — DEMONSTRATES THE VIOLATION SIDE: granted langchain/langfuse
+#               docs tools whose surfacing engine indirectly reads project
+#               memory. No exception is declared for reader because that
+#               surfacing reach is exactly the un-authorized leakage path
+#               the analyzer is supposed to surface. Reader's rows in
+#               `unsafe-tools reader` are the demonstration of "operator
+#               grants what looks like a docs tool, gets memory leakage."
+expected_exceptions:
+  - agent: planner
+    tool: "memtomem::mem_search"
+    resource: "memory:claude:toolgraph"
+    policy: ltm-confidentiality
+    reason: "planner reads project memory by design"
+  - agent: planner
+    tool: "memtomem::mem_read"
+    resource: "memory:claude:toolgraph"
+    policy: ltm-confidentiality
+    reason: "planner reads project memory by design"
+  - agent: planner
+    tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
+    resource: "memory:claude:toolgraph"
+    policy: ltm-confidentiality
+    reason: "planner uses docs+surfacing; surfaced project memory is expected"
+  - agent: planner
+    tool: "memtomem-stm::langfuse__searchLangfuseDocs"
+    resource: "memory:claude:toolgraph"
+    policy: ltm-confidentiality
+    reason: "planner uses docs+surfacing; surfaced project memory is expected"
+  - agent: publisher
+    tool: "fetch::fetch"
+    resource: "https://*"
+    policy: external-egress-audit
+    reason: "publisher is the outbound-egress agent by design; egress is its purpose"

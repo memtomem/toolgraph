@@ -1,0 +1,30 @@
+# Authored governance over the crawled graph. Every edge here is a fact the
+# operator asserts — nothing is inferred. Tool refs are "<server>::<tool>".
+# Governed resources are real-world paths (they need not be MCP-advertised).
+
+agents:
+  - ops-agent
+  - public-bot
+
+policies:
+  - id: secrets-deny
+    effect: DENY
+    scope: secrets
+    description: Credential files must not be reachable by public-facing agents.
+
+# Agent -[:CAN_CALL]-> Tool  (which filesystem tools each agent may invoke)
+grants:
+  - {agent: ops-agent, tool: "filesystem::read_file", granted_by: platform-team}
+  - {agent: ops-agent, tool: "filesystem::write_file", granted_by: platform-team}
+  - {agent: ops-agent, tool: "filesystem::list_directory", granted_by: platform-team}
+  - {agent: public-bot, tool: "filesystem::read_file", granted_by: platform-team}
+  - {agent: public-bot, tool: "filesystem::list_directory", granted_by: platform-team}
+
+# Tool -[:READS|WRITES]-> Resource  (declared data effects)
+data_access:
+  - {tool: "filesystem::read_file", resource: "file:///private/secrets.env", mode: READS}
+  - {tool: "filesystem::write_file", resource: "file:///private/secrets.env", mode: WRITES}
+
+# resource URI -> policies that govern it
+governed_by:
+  "file:///private/secrets.env": [secrets-deny]
