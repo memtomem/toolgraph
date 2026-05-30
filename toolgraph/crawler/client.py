@@ -30,7 +30,11 @@ async def _list_all_tools(session) -> list[ToolRecord]:
             for t in listed.tools
         )
         cursor = getattr(listed, "nextCursor", None)
-        if not cursor:
+        if cursor is None:
+            # Stop ONLY on None: an empty-string cursor is a valid opaque
+            # continuation token in MCP and the SDK distinguishes "" from
+            # None when sending the next request. `if not cursor` would
+            # silently truncate after page 1 against such a server.
             return out
 
 
@@ -50,7 +54,11 @@ async def _list_all_resources(session) -> list[ResourceRecord]:
             for r in listed.resources
         )
         cursor = getattr(listed, "nextCursor", None)
-        if not cursor:
+        if cursor is None:
+            # Stop ONLY on None: an empty-string cursor is a valid opaque
+            # continuation token in MCP and the SDK distinguishes "" from
+            # None when sending the next request. `if not cursor` would
+            # silently truncate after page 1 against such a server.
             return out
 
 

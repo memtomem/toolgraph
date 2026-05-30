@@ -138,6 +138,34 @@ async def test_list_all_tools_drains_paginated_results():
     assert session.tool_calls == [None, "1"]
 
 
+class _EmptyCursorSession:
+    """Server that returns ``nextCursor: ""`` as an opaque continuation token.
+
+    Codex PR #1 re-review: the SDK distinguishes None from empty string when
+    requesting the next page, so the stop predicate must be ``cursor is None``,
+    not ``not cursor``. Without this, a server using empty-string cursors gets
+    silently truncated after page 1.
+    """
+
+    def __init__(self) -> None:
+        self.tool_calls: list[str | None] = []
+
+    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+        self.tool_calls.append(cursor)
+        if cursor is None:
+            return _FakePage([_FakeTool("a")], "", "tools")  # nextCursor="" (not None)
+        return _FakePage([_FakeTool("b")], None, "tools")
+
+
+async def test_list_all_tools_treats_empty_string_cursor_as_continuation():
+    from toolgraph.crawler.client import _list_all_tools
+
+    session = _EmptyCursorSession()
+    tools = await _list_all_tools(session)
+    assert [t.name for t in tools] == ["a", "b"]
+    assert session.tool_calls == [None, ""]
+
+
 async def test_list_all_resources_drains_paginated_results():
     from toolgraph.crawler.client import _list_all_resources
 
