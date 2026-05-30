@@ -148,6 +148,39 @@ def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
     assert any("no-such-policy" in w for w in warnings)
 
 
+def test_exception_with_no_reason_still_classifies_authorized(graph):
+    """Codex PR #1 review: classification was checking exc.reason for non-null
+    as the match signal. ExpectedException.reason is OPTIONAL — a no-reason
+    exception is valid and must still classify the row as
+    authorized_but_governed. The match signal is now `exc IS NOT NULL`."""
+    _seed(graph)
+    assert ingest_governance(
+        _gov(
+            ExpectedException(
+                agent="planner",
+                tool="sample::read_file",
+                policy="pii-deny",
+                resource=CSV,
+                # reason intentionally omitted
+            )
+        )
+    ) == []
+    rows = queries.unsafe_callable_tools("planner")
+    by_tool = {r["tool"]: r for r in rows}
+    assert by_tool["read_file"]["classification"] == "authorized_but_governed"
+    # No exception_reason key (reason was None)
+    assert "exception_reason" not in by_tool["read_file"]
+
+    # check_access path too
+    res = queries.check_access("planner", "read_file")
+    [ev] = res["deny_evidence"]
+    assert ev["classification"] == "authorized_but_governed"
+    assert "exception_reason" not in ev
+    # And all_authorized=False for read_file alone (write_file still violation)
+    # because planner has both grants; assert all_authorized respects has_exception
+    assert res["verdict"] == "DENY"
+
+
 def test_check_access_carries_all_authorized_signal(graph):
     """When verdict=DENY, callers need a single signal for 'all paths are
     by-design'. Without it they'd have to aggregate per-row classification."""

@@ -71,6 +71,10 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
       ``authorized_but_governed`` based on a matching ExpectedException.
     """
     evidence: list[dict] = []
+    # Codex PR #1 review: detect exception match via `exc IS NOT NULL`, NOT via
+    # `exc.reason IS NOT NULL`. ``reason`` is optional on ExpectedException;
+    # using it as the match signal would misclassify a valid no-reason
+    # exception as a violation.
     for r in s.run(
         """
         MATCH (t:Tool {key:$key})-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
@@ -80,7 +84,7 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
         RETURN DISTINCT type(acc) AS mode, r.uri AS resource, p.id AS policy,
                acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
                gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-               exc.reason AS exception_reason
+               exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
         ORDER BY resource, policy
         """,
         key=key,
@@ -99,7 +103,7 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
             d["policy_provenance"] = policy_prov
         if agent is not None:
             d["classification"] = (
-                "authorized_but_governed" if r["exception_reason"] is not None else "violation"
+                "authorized_but_governed" if r["has_exception"] else "violation"
             )
             if r["exception_reason"] is not None:
                 d["exception_reason"] = r["exception_reason"]
@@ -111,7 +115,7 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
           WHERE ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
         RETURN DISTINCT p.id AS policy,
                g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-               exc.reason AS exception_reason
+               exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
         ORDER BY policy
         """,
         key=key,
@@ -125,7 +129,7 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
         }
         if agent is not None:
             d["classification"] = (
-                "authorized_but_governed" if r["exception_reason"] is not None else "violation"
+                "authorized_but_governed" if r["has_exception"] else "violation"
             )
             if r["exception_reason"] is not None:
                 d["exception_reason"] = r["exception_reason"]
@@ -292,7 +296,7 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
                    'resource' AS via, type(acc) AS mode, res.uri AS resource, p.id AS policy,
                    acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
                    gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-                   exc.reason AS exception_reason
+                   exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
             ORDER BY tool, resource
             """,
             agent=agent,
@@ -304,10 +308,11 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             if policy_prov is not None:
                 d["policy_provenance"] = policy_prov
             d["classification"] = (
-                "authorized_but_governed" if r["exception_reason"] is not None else "violation"
+                "authorized_but_governed" if r["has_exception"] else "violation"
             )
             for k in ("source", "confidence", "evidence",
-                      "gov_source", "gov_confidence", "gov_evidence"):
+                      "gov_source", "gov_confidence", "gov_evidence",
+                      "has_exception"):
                 d.pop(k, None)
             if d.get("exception_reason") is None:
                 d.pop("exception_reason", None)
@@ -320,7 +325,7 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             RETURN DISTINCT t.key AS tool_key, t.name AS tool, t.server AS server,
                    'tool' AS via, null AS mode, null AS resource, p.id AS policy,
                    g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-                   exc.reason AS exception_reason
+                   exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
             ORDER BY tool
             """,
             agent=agent,
@@ -329,9 +334,9 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             d["path"] = _tool_path(d["tool"], d["policy"])
             d["provenance"] = _prov(r)
             d["classification"] = (
-                "authorized_but_governed" if r["exception_reason"] is not None else "violation"
+                "authorized_but_governed" if r["has_exception"] else "violation"
             )
-            for k in ("source", "confidence", "evidence"):
+            for k in ("source", "confidence", "evidence", "has_exception"):
                 d.pop(k, None)
             if d.get("exception_reason") is None:
                 d.pop("exception_reason", None)

@@ -74,3 +74,82 @@ async def test_crawl_streamable_http(http_url):
     spec = ServerSpec(name="sample-http", transport="streamable-http", url=http_url)
     result = await crawl_server(spec)
     assert sorted(t.name for t in result.tools) == ["read_file", "write_file"]
+
+
+# --- pagination: Codex PR #1 review --------------------------------------
+
+
+class _FakeTool:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = None
+        self.inputSchema = {}
+
+
+class _FakeResource:
+    def __init__(self, uri: str) -> None:
+        self.uri = uri
+        self.name = None
+        self.mimeType = None
+        self.description = None
+
+
+class _FakePage:
+    def __init__(self, items: list, next_cursor: str | None, attr: str) -> None:
+        setattr(self, attr, items)
+        self.nextCursor = next_cursor
+
+
+class _PagedSession:
+    """Stand-in for an MCP ClientSession that returns paged list results."""
+
+    def __init__(self, tool_pages, resource_pages) -> None:
+        self.tool_pages = tool_pages
+        self.resource_pages = resource_pages
+        self.tool_calls: list[str | None] = []
+        self.resource_calls: list[str | None] = []
+
+    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+        self.tool_calls.append(cursor)
+        idx = 0 if cursor is None else int(cursor)
+        items, next_cursor = self.tool_pages[idx]
+        return _FakePage(items, next_cursor, "tools")
+
+    async def list_resources(self, cursor: str | None = None) -> _FakePage:
+        self.resource_calls.append(cursor)
+        idx = 0 if cursor is None else int(cursor)
+        items, next_cursor = self.resource_pages[idx]
+        return _FakePage(items, next_cursor, "resources")
+
+
+async def test_list_all_tools_drains_paginated_results():
+    """Server returns 3 tools across 2 pages — both pages must surface."""
+    from toolgraph.crawler.client import _list_all_tools
+
+    session = _PagedSession(
+        tool_pages=[
+            ([_FakeTool("a"), _FakeTool("b")], "1"),  # page 0 -> nextCursor=1
+            ([_FakeTool("c")], None),                  # page 1 -> done
+        ],
+        resource_pages=[],
+    )
+    tools = await _list_all_tools(session)
+    assert [t.name for t in tools] == ["a", "b", "c"]
+    assert session.tool_calls == [None, "1"]
+
+
+async def test_list_all_resources_drains_paginated_results():
+    from toolgraph.crawler.client import _list_all_resources
+
+    session = _PagedSession(
+        tool_pages=[],
+        resource_pages=[
+            ([_FakeResource("file:///a")], "1"),
+            ([_FakeResource("file:///b"), _FakeResource("file:///c")], None),
+        ],
+    )
+    resources = await _list_all_resources(session)
+    assert [r.uri for r in resources] == [
+        "file:///a", "file:///b", "file:///c",
+    ]
+    assert session.resource_calls == [None, "1"]
