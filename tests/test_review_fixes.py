@@ -37,6 +37,9 @@ def _load(server: str, tool_names: list[str], resources: list[str] | None = None
 def test_ambiguous_bare_name_in_query(graph):
     _load("alpha", ["read_file"])
     _load("beta", ["read_file"])
+    # AGENT_NOT_FOUND is checked before tool resolution (outer concern), so we
+    # need a real Agent for AMBIGUOUS_TOOL to actually surface.
+    ingest_governance(Governance(agents=["planner"]))
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "AMBIGUOUS_TOOL"
     assert sorted(res["candidates"]) == ["alpha::read_file", "beta::read_file"]

@@ -34,10 +34,8 @@ policies:
       The operator's personal LTM (claude:* and codex namespaces) holds
       working notes, plans, and project context that must not leak into
       responses surfaced to non-trusted agents.
-    provenance:
-      source: operator_asserted
-      confidence: high
-      evidence: "~/.memtomem/config.json (namespace.rules) + ~/.memtomem/stm_proxy.json"
+    # Per-binding evidence lives on the GOVERNED_BY edge (see governed_by:
+    # below) — that's where "WHY this resource is under this policy" belongs.
 
 # Agent -[:CAN_CALL]-> Tool
 grants:
@@ -113,7 +111,17 @@ data_access:
   - {tool: "memtomem-stm::langfuse__getLangfuseOverview", resource: "https://langfuse.com/api/mcp", mode: READS}
 
 governed_by:
-  "memory:claude:toolgraph": [operator-ltm-confidentiality]
+  # Per-binding provenance: cite WHY this resource is bound to this policy.
+  # ~/.memtomem/config.json declares the namespace-routing rule that puts this
+  # repo's project memory under claude:toolgraph; stm_proxy.json lists the
+  # upstreams that the surfacing engine queries. Both files together are the
+  # source of the (resource, policy) binding's truth.
+  "memory:claude:toolgraph":
+    - policy: operator-ltm-confidentiality
+      provenance:
+        source: operator_asserted
+        confidence: high
+        evidence: "~/.memtomem/config.json (namespace.rules) + ~/.memtomem/stm_proxy.json"
 
 # Intentional reach: planner is the project subagent — it's *supposed* to read
 # the toolgraph memory namespace. Declaring the exception classifies planner's

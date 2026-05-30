@@ -15,6 +15,7 @@ from toolgraph.models import (
     CrawlResult,
     DataAccess,
     Governance,
+    GovernedByBinding,
     Policy,
     Provenance,
     ResourceRecord,
@@ -70,14 +71,7 @@ def test_explicit_provenance_roundtrips_to_graph(graph):
     ingest_governance(
         Governance(
             agents=["planner"],
-            policies=[
-                Policy(
-                    id="pii-deny",
-                    effect="DENY",
-                    scope="customer-pii",
-                    provenance=Provenance(evidence="ops/policy/pii-2026Q2.md"),
-                )
-            ],
+            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
             grants=[
                 AccessGrant(
                     agent="planner",
@@ -97,7 +91,16 @@ def test_explicit_provenance_roundtrips_to_graph(graph):
                     ),
                 )
             ],
-            governed_by={CSV: ["pii-deny"]},
+            # Per-binding provenance: cite WHY this resource is under this policy.
+            # Replaces the dead Policy.provenance flattening of the previous round.
+            governed_by={
+                CSV: [
+                    GovernedByBinding(
+                        policy="pii-deny",
+                        provenance=Provenance(evidence="ops/policy/pii-2026Q2.md"),
+                    )
+                ]
+            },
         )
     )
     with driver.session() as s:
@@ -108,16 +111,99 @@ def test_explicit_provenance_roundtrips_to_graph(graph):
             "MATCH ()-[r:READS]->() "
             "RETURN r.source AS source, r.confidence AS conf, r.evidence AS ev"
         ).single()
-        pol = s.run(
-            "MATCH (p:Policy {id:'pii-deny'}) "
-            "RETURN p.prov_source AS source, p.prov_evidence AS ev"
+        gov_edge = s.run(
+            "MATCH (:Resource)-[r:GOVERNED_BY]->(:Policy {id:'pii-deny'}) "
+            "RETURN r.source AS source, r.confidence AS conf, r.evidence AS ev"
         ).single()
     assert grant["ev"] == "grants.yaml#L17"
     assert access["source"] == "inferred"
     assert access["conf"] == "medium"
     assert "static-analysis" in access["ev"]
-    assert pol["source"] == "operator_asserted"
-    assert pol["ev"] == "ops/policy/pii-2026Q2.md"
+    # GOVERNED_BY edge now carries the per-binding evidence.
+    assert gov_edge["source"] == "operator_asserted"
+    assert gov_edge["conf"] == "high"
+    assert gov_edge["ev"] == "ops/policy/pii-2026Q2.md"
+
+
+def test_bare_string_governed_by_still_works(graph):
+    """Backward compat: ``governed_by: {uri: [policy_id_str]}`` still parses,
+    lifts to GovernedByBinding(policy=str, provenance=None), and writes a
+    GOVERNED_BY edge with default source/confidence and null evidence.
+    """
+    _seed(graph)
+    assert ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource=CSV, mode="READS")
+            ],
+            governed_by={CSV: ["pii-deny"]},  # bare string, no provenance
+        )
+    ) == []
+    with driver.session() as s:
+        gov_edge = s.run(
+            "MATCH (:Resource)-[r:GOVERNED_BY]->(:Policy {id:'pii-deny'}) "
+            "RETURN r.source AS source, r.evidence AS ev"
+        ).single()
+    assert gov_edge["source"] == "operator_asserted"
+    assert gov_edge["ev"] is None
+
+
+def test_policy_provenance_surfaces_on_deny_evidence_when_authored(graph):
+    """When a GOVERNED_BY binding carries evidence, deny_evidence rows include
+    a ``policy_provenance`` sub-dict. Default operator_asserted/no-evidence
+    bindings DO NOT add the key (kept clean to avoid noise)."""
+    _seed(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource=CSV,
+                    mode="READS",
+                    provenance=Provenance(evidence="manifest.yaml#L42"),
+                )
+            ],
+            governed_by={
+                CSV: [
+                    GovernedByBinding(
+                        policy="pii-deny",
+                        provenance=Provenance(evidence="ops/policy/pii.md#binding"),
+                    )
+                ]
+            },
+        )
+    )
+    res = queries.check_access("planner", "read_file")
+    [ev] = res["deny_evidence"]
+    assert ev["provenance"]["evidence"] == "manifest.yaml#L42"
+    assert ev["policy_provenance"]["evidence"] == "ops/policy/pii.md#binding"
+
+    # And with a bare-string binding, policy_provenance is NOT attached
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource=CSV,
+                    mode="READS",
+                    provenance=Provenance(evidence="manifest.yaml#L42"),
+                )
+            ],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+    res = queries.check_access("planner", "read_file")
+    [ev] = res["deny_evidence"]
+    assert "policy_provenance" not in ev
 
 
 def test_query_results_include_provenance(graph):

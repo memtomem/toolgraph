@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 Transport = Literal["stdio", "streamable-http", "sse"]
 
@@ -82,11 +82,16 @@ class Provenance(BaseModel):
 
 
 class Policy(BaseModel):
+    # ``extra='forbid'`` catches old manifests that still carry a node-level
+    # ``provenance:`` block (the pre-completion-round shape) with a clear
+    # Pydantic error pointing at the field, instead of silently ignoring it.
+    # The replacement lives on GovernedByBinding (per-edge provenance).
+    model_config = ConfigDict(extra="forbid")
+
     id: str
     effect: Literal["ALLOW", "DENY"]
     scope: str | None = None
     description: str | None = None
-    provenance: Provenance | None = None
 
 
 class AccessGrant(BaseModel):
@@ -119,13 +124,28 @@ class ExpectedException(BaseModel):
     reason: str | None = None
 
 
+class GovernedByBinding(BaseModel):
+    """One (node, policy) binding with optional evidence.
+
+    Lets authors cite WHY this resource (or tool) is bound to this policy —
+    e.g. a config file, a runbook, a compliance ticket. Bare strings in
+    ``governed_by`` lists are still accepted and lift to this shape with
+    ``provenance=None``.
+    """
+
+    policy: str
+    provenance: Provenance | None = None
+
+
 class Governance(BaseModel):
     agents: list[str] = Field(default_factory=list)
     policies: list[Policy] = Field(default_factory=list)
     grants: list[AccessGrant] = Field(default_factory=list)
     data_access: list[DataAccess] = Field(default_factory=list)
-    # node id -> list of policy ids; node id is a resource uri or '<server>::<tool>'
-    governed_by: dict[str, list[str]] = Field(default_factory=dict)
+    # node id -> list of bindings. Each item is either a bare policy_id string
+    # (backward-compatible, no provenance) or a GovernedByBinding object with
+    # per-binding source citation. node id is a resource uri or '<server>::<tool>'.
+    governed_by: dict[str, list[str | GovernedByBinding]] = Field(default_factory=dict)
     expected_exceptions: list[ExpectedException] = Field(default_factory=list)
 
 

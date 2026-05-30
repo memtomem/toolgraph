@@ -15,6 +15,7 @@ from toolgraph.models import (
     CrawlResult,
     DataAccess,
     Governance,
+    GovernedByBinding,
     Policy,
     Provenance,
     ResourceRecord,
@@ -103,16 +104,16 @@ def test_orphan_policy_flagged_when_no_reachable_agent(graph):
 # --- unbacked_edges -------------------------------------------------------
 
 
-def test_unbacked_edges_lists_authored_edges_with_no_evidence(graph):
+def test_unbacked_edges_default_excludes_can_call_grants(graph):
+    """CAN_CALL is intent, not a factual claim — evidence shouldn't be required
+    by default. Otherwise every grant pollutes the audit output."""
     _seed_three_tools(graph)
     ingest_governance(
         Governance(
             agents=["planner"],
             policies=[Policy(id="pii", effect="DENY", scope="pii")],
             grants=[
-                # no provenance -> evidence is null
                 AccessGrant(agent="planner", tool="sample::read_file"),
-                # has evidence -> NOT unbacked
                 AccessGrant(
                     agent="planner",
                     tool="sample::write_file",
@@ -130,13 +131,76 @@ def test_unbacked_edges_lists_authored_edges_with_no_evidence(graph):
         )
     )
     rows = queries.unbacked_edges()
-    # CAN_CALL planner->read_file (no evidence) AND READS read_file->csv (no
-    # evidence) AND GOVERNED_BY csv->pii (no evidence). The CAN_CALL grant
-    # with evidence does NOT appear.
+    edge_signatures = {(r["edge_type"], r["src"], r["dst"]) for r in rows}
+    # CAN_CALL excluded by default — even the grant with no evidence
+    assert ("CAN_CALL", "planner", "sample::read_file") not in edge_signatures
+    assert ("CAN_CALL", "planner", "sample::write_file") not in edge_signatures
+    # READS / GOVERNED_BY ARE surfaced (factual claims)
+    assert ("READS", "sample::read_file", "file:///data/customers.csv") in edge_signatures
+    assert ("GOVERNED_BY", "file:///data/customers.csv", "pii") in edge_signatures
+
+
+def test_unbacked_edges_include_grants_surfaces_can_call(graph):
+    """With ``include_grants=True``, the unbacked CAN_CALL grant appears and
+    the one with evidence does not."""
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::read_file"),
+                AccessGrant(
+                    agent="planner",
+                    tool="sample::write_file",
+                    provenance=Provenance(evidence="ops/grants/Q2.md#L8"),
+                ),
+            ],
+        )
+    )
+    rows = queries.unbacked_edges(include_grants=True)
     edge_signatures = {(r["edge_type"], r["src"], r["dst"]) for r in rows}
     assert ("CAN_CALL", "planner", "sample::read_file") in edge_signatures
-    assert ("READS", "sample::read_file", "file:///data/customers.csv") in edge_signatures
     assert ("CAN_CALL", "planner", "sample::write_file") not in edge_signatures
+
+
+def test_unbacked_edges_governed_by_binding_evidence_suppresses_row(graph):
+    """A GOVERNED_BY edge written via the binding-object form with evidence
+    must not appear in unbacked_edges; the bare-string form still does."""
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[
+                Policy(id="pii", effect="DENY", scope="pii"),
+                Policy(id="other", effect="DENY", scope="other"),
+            ],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource="file:///data/customers.csv",
+                    mode="READS",
+                    provenance=Provenance(evidence="da.md"),
+                ),
+            ],
+            governed_by={
+                "file:///data/customers.csv": [
+                    # binding with evidence -> NOT unbacked
+                    GovernedByBinding(
+                        policy="pii",
+                        provenance=Provenance(evidence="ops/policy/pii.md"),
+                    ),
+                    # bare string -> still unbacked
+                    "other",
+                ]
+            },
+        )
+    )
+    rows = queries.unbacked_edges()
+    governed_rows = [r for r in rows if r["edge_type"] == "GOVERNED_BY"]
+    assert {(r["src"], r["dst"]) for r in governed_rows} == {
+        ("file:///data/customers.csv", "other"),
+    }
 
 
 # --- drifted_tools --------------------------------------------------------

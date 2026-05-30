@@ -77,8 +77,10 @@ bash scripts/demo-public.sh
 
 The cross-server demo is the headline: `ci-bot` has no filesystem read grant,
 yet `unsafe-tools ci-bot` flags it — because `git_show` on a *different* server
-reaches the same governed secret. A per-server ACL review misses this; the graph
-catches it.
+reaches the same governed secret. The graph form makes the cross-server path
+explicit without per-server bookkeeping; the same authored edges in a
+relational or OPA model would catch it too, but operators would have to
+write the join themselves.
 
 The same wedge appears for **proxy/surfacing servers**. `examples/servers-gate.yaml`
 crawls memtomem + memtomem-stm (a docs proxy whose `surfacing` engine injects
@@ -104,16 +106,45 @@ uv run toolgraph crawl --servers examples/servers.yaml   # crawl -> load factual
 uv run toolgraph ingest-manifest --governance examples/governance.yaml
 
 # positive-reachability queries
-uv run toolgraph unsafe-tools public-bot
+uv run toolgraph unsafe-tools public-bot          # violations only (default)
+uv run toolgraph unsafe-tools public-bot --all    # + operator-declared exceptions
 uv run toolgraph check-access public-bot read_file
 uv run toolgraph blast-radius "file:///private/secrets.env"
 
 # negative-truth / drift queries — what the graph DOESN'T say but should
-uv run toolgraph unmapped-tools          # granted tools w/ no READS/WRITES yet
-uv run toolgraph orphan-policies         # policies no agent currently reaches
-uv run toolgraph unbacked-edges          # authored edges with no evidence ptr
-uv run toolgraph drift                   # tools w/ governance but no live EXPOSES
+uv run toolgraph unmapped-tools                     # granted tools w/ no READS/WRITES yet
+uv run toolgraph orphan-policies                    # policies no agent currently reaches
+uv run toolgraph unbacked-edges                     # READS/WRITES/GOVERNED_BY w/ no evidence
+uv run toolgraph unbacked-edges --include-grants    # also audit CAN_CALL grants
+uv run toolgraph drift                              # tools w/ governance but no live EXPOSES
 ```
+
+### Distinguishing what the graph doesn't know
+
+- `check-access` verdicts include `AGENT_NOT_FOUND` (the agent string matches
+  no Agent node — typo or deleted agent) and `TOOL_NOT_FOUND`. The two are
+  not collapsed into `NOT_GRANTED`, so an operator iterating on names can
+  tell which case they're in. Every response carries `agent_found: bool`
+  and `found` for the tool — `True`/`False` when tool resolution ran, and
+  `null` on the `AGENT_NOT_FOUND` branch (the tool was not looked up).
+  Callers should use `result.get("found")` so the three-state shape doesn't
+  trip indexing.
+- When `verdict: "DENY"`, the response also carries
+  `all_authorized: bool` — `true` when every `deny_evidence` row is
+  `authorized_but_governed` (an operator-declared exception). Lets a caller
+  detect "DENY only because of by-design grants" without aggregating per-row
+  classifications.
+- `blast-radius` returns `found: false` when the node argument matches no
+  Resource or Policy. A typo'd URI is no longer indistinguishable from
+  `impacted: []`. `blast-radius` accepts a URI-shaped argument as either a
+  resource URI or a policy id — if the lexical URI pattern matches no
+  Resource node, it retries against Policy ids before declaring not-found
+  (so a policy id like `urn:secret` or `mailto:ops` works as a node).
+- `unsafe-tools` (CLI) and the `unsafe_callable_tools` MCP tool both
+  default to `classification='violation'` only; pass `--all` (CLI) or
+  `include_authorized: true` (MCP) to see operator-declared exceptions
+  too. Both surfaces also carry `agent_found: bool` so a typo'd agent
+  doesn't look like an agent with zero unsafe tools.
 
 ### Result classification
 
@@ -147,6 +178,26 @@ data_access:
       evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"
 ```
 
+`governed_by` bindings carry their own provenance — *why* this resource is
+under this policy, which is often a different citation from the data-flow
+edge. Bare-string entries are still accepted (no evidence, equivalent to
+the old shape); add an object item to cite the binding's source:
+
+```yaml
+governed_by:
+  "memory:claude:toolgraph":
+    - policy: operator-ltm-confidentiality
+      provenance:
+        source: operator_asserted
+        evidence: "~/.memtomem/config.json (namespace.rules)"
+  "file:///srv/app/.env": [secrets-deny]   # bare string — no evidence
+```
+
+When a DENY fires via a resource path, the result row includes both
+`provenance` (the data-flow edge that put the row in front of you) and
+`policy_provenance` (the binding evidence, attached only when the author
+cited one).
+
 ## toolgraph as an MCP server
 
 toolgraph exposes its three queries as MCP tools, so an agent can ask the
@@ -174,8 +225,11 @@ Two reference exhibits:
   cross-server reach a vector registry of tool descriptions cannot.
 - `examples/servers-fleet.yaml` + `governance-fleet.yaml` — a 7-server
   fleet (the two above + filesystem, fetch, memory, sequential-thinking,
-  time) with minimal but real governance. Validates authoring cost across
-  heterogeneous servers (single-pass authoring took under a minute total).
+  time) with minimal but real governance. Validates that per-server
+  authoring is minute-scale, not hour-scale. (Caveat: the original
+  single-pass took ~48s because the author had already read the
+  surfacing-engine source for the gate exhibit; an unfamiliar operator on
+  unfamiliar servers should plan for 2–5 minutes per server.)
 
 ## Layout
 
@@ -199,8 +253,22 @@ uv run pytest          # uses a real Neo4j via testcontainers (no Cypher mocking
 
 This is a deliberately thin, thesis-validating MVP. **In:** factual crawl +
 authored governance + three positive-reachability queries + four
-negative-truth/drift queries + classification + per-edge provenance +
-exception annotations.
+negative-truth/drift queries + classification + per-edge provenance
+(including per-`governed_by`-binding) + exception annotations + `found`
+flags on `check-access` and `blast-radius` so unknown nodes are
+distinguishable from empty results.
+
+Idempotency is fully declarative: `ingest-manifest` re-applies authored
+edges (CAN_CALL/READS/WRITES/GOVERNED_BY) AND prunes Agent + Policy nodes
+the manifest no longer mentions, so renaming a policy in YAML does not
+leave the old Policy node behind. Stale `prov_*` properties on Policy
+nodes from earlier shapes are also cleaned at re-ingest.
+
+Expected-exception validation enforces a full reachability invariant —
+the operator can't declare an exception that fails to classify any row
+(typo'd agent, no CAN_CALL grant, resource not governed by the policy,
+or a wildcard exception with no tool→policy path are all caught at
+ingest with a clear warning).
 
 **Still deferred** (no plan to start until use proves them out):
 LLM-inferred dependency/version edges, vector search, an official-registry

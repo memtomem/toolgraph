@@ -146,3 +146,36 @@ def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
         )
     )
     assert any("no-such-policy" in w for w in warnings)
+
+
+def test_check_access_carries_all_authorized_signal(graph):
+    """When verdict=DENY, callers need a single signal for 'all paths are
+    by-design'. Without it they'd have to aggregate per-row classification."""
+    _seed(graph)
+    # Every reach for planner is covered by an exception -> all_authorized=True
+    assert ingest_governance(
+        _gov(
+            ExpectedException(
+                agent="planner",
+                tool="sample::read_file",
+                policy="pii-deny",
+                resource=CSV,
+                reason="by design",
+            ),
+            ExpectedException(
+                agent="planner",
+                tool="sample::write_file",
+                policy="pii-deny",
+                resource=CSV,
+                reason="by design",
+            ),
+        )
+    ) == []
+    res = queries.check_access("planner", "read_file")
+    assert res["verdict"] == "DENY"
+    assert res["all_authorized"] is True
+
+    # support-bot has no exception -> all_authorized=False
+    res = queries.check_access("support-bot", "read_file")
+    assert res["verdict"] == "DENY"
+    assert res["all_authorized"] is False

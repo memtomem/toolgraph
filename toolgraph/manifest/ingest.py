@@ -19,8 +19,30 @@ from neo4j import ManagedTransaction
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import resolve_tool_keys
 from toolgraph.graph.schema import exception_key
-from toolgraph.models import Governance, edge_provenance_props
+from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
+
+
+def _normalize_bindings(items: list) -> list[GovernedByBinding]:
+    """Lift heterogeneous list items to GovernedByBinding instances.
+
+    Three input shapes can land here:
+    - ``str`` — bare policy id (backward-compat YAML shape; or list[str]
+      injected via Pydantic ``model_copy(update=...)`` which BYPASSES
+      validators; test_review_fixes.py:223 hits exactly this path).
+    - ``dict`` — raw object from ``model_copy(update=...)`` that wasn't
+      re-validated; coerce via ``model_validate``.
+    - ``GovernedByBinding`` — already-validated object from the YAML parser.
+    """
+    out: list[GovernedByBinding] = []
+    for item in items:
+        if isinstance(item, str):
+            out.append(GovernedByBinding(policy=item))
+        elif isinstance(item, GovernedByBinding):
+            out.append(item)
+        else:
+            out.append(GovernedByBinding.model_validate(item))
+    return out
 
 
 def _resolve(tx: ManagedTransaction, ref: str) -> tuple[str | None, list[str]]:
@@ -46,7 +68,23 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
     runs only for a fully clean manifest: clear authored edges, then re-apply.
     """
     warnings: list[str] = []
+    # Detect duplicate policy ids BEFORE building deny_policies. Without this,
+    # a manifest with [Policy(id='x', effect='DENY'), Policy(id='x', effect='ALLOW')]
+    # passes deny-policy validation (set-based), then Phase 2 MERGE+SET on the
+    # same id silently overwrites effect to whichever was processed last —
+    # potentially leaving an ALLOW node that no longer matches the DENY-only
+    # classifier in _deny_evidence_for. Codex R3.5 review caught this.
+    seen_policy_ids: set[str] = set()
+    for p in gov.policies:
+        if p.id in seen_policy_ids:
+            warnings.append(
+                f"POLICY: duplicate id {p.id!r} in policies: list — "
+                f"each policy must be declared once"
+            )
+        seen_policy_ids.add(p.id)
     known_policies = {p.id for p in gov.policies}
+    deny_policies = {p.id for p in gov.policies if p.effect == "DENY"}
+    known_agents = set(gov.agents) | {g.agent for g in gov.grants}
 
     # --- Phase 1: validate + resolve (read-only) -------------------------
     resolved_grants: list[tuple] = []
@@ -63,21 +101,82 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
             )
 
     resolved_access: list[tuple] = []
+    authored_access: set[tuple[str, str]] = set()  # (tool_key, resource_uri) for exception check
     for da in gov.data_access:
         key, matches = _resolve(tx, da.tool)
         if key is None:
             warnings.append(f"{da.mode}: tool {da.tool!r} {_resolve_problem(da.tool, matches)}")
         else:
-            resolved_access.append(
-                (key, da.mode, normalize_resource_uri(da.resource),
-                 edge_provenance_props(da.provenance))
-            )
+            uri = normalize_resource_uri(da.resource)
+            resolved_access.append((key, da.mode, uri, edge_provenance_props(da.provenance)))
+            authored_access.add((key, uri))
+
+    # Resolve governed_by first so exception validation can see the full
+    # (resource→policy) and (tool→policy) reachability map.
+    resolved_governed: list[tuple] = []  # (kind, key_or_uri, list[(pid, prov_props)])
+    policy_resources: dict[str, set[str]] = {}  # pid -> {uri, ...}
+    policy_tools: dict[str, set[str]] = {}      # pid -> {tool_key, ...}
+    for node_ref, items in gov.governed_by.items():
+        bindings = _normalize_bindings(items)
+        for b in bindings:
+            if b.policy not in known_policies:
+                warnings.append(
+                    f"GOVERNED_BY: policy {b.policy!r} not defined (node {node_ref!r})"
+                )
+        valid = [
+            (b.policy, edge_provenance_props(b.provenance))
+            for b in bindings
+            if b.policy in known_policies
+        ]
+        if is_resource_ref(node_ref):
+            uri = normalize_resource_uri(node_ref)
+            resolved_governed.append(("resource", uri, valid))
+            for pid, _ in valid:
+                policy_resources.setdefault(pid, set()).add(uri)
+        else:
+            key, matches = _resolve(tx, node_ref)
+            if key is None:
+                warnings.append(
+                    f"GOVERNED_BY: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
+                )
+            else:
+                resolved_governed.append(("tool", key, valid))
+                for pid, _ in valid:
+                    policy_tools.setdefault(pid, set()).add(key)
+
+    # Reachability lookups for exception validation: which tools each agent
+    # holds a grant on, and which resources each tool actually touches.
+    agent_grant_tools: dict[str, set[str]] = {}
+    for a, k, _, _ in resolved_grants:
+        agent_grant_tools.setdefault(a, set()).add(k)
+    tool_resources: dict[str, set[str]] = {}
+    for k, _, uri, _ in resolved_access:
+        tool_resources.setdefault(k, set()).add(uri)
 
     resolved_exceptions: list[tuple] = []  # (agent, tool_key, resource_or_None, policy, reason)
     for exc in gov.expected_exceptions:
+        # Validate the agent against declared agents (or grant authors) so a
+        # typo like 'planer' doesn't silently create a dead-on-arrival
+        # exception node that fails to classify any row.
+        if exc.agent not in known_agents:
+            warnings.append(
+                f"EXPECTED_EXCEPTION: agent {exc.agent!r} not declared in agents: or grants: "
+                f"(tool {exc.tool!r})"
+            )
+            continue
         if exc.policy not in known_policies:
             warnings.append(
                 f"EXPECTED_EXCEPTION: policy {exc.policy!r} not defined "
+                f"(agent {exc.agent!r}, tool {exc.tool!r})"
+            )
+            continue
+        # Classification only joins to DENY policies (_deny_evidence_for matches
+        # `Policy {effect:'DENY'}`); an exception against an ALLOW policy can
+        # never fire. Codex R3 review caught this.
+        if exc.policy not in deny_policies:
+            warnings.append(
+                f"EXPECTED_EXCEPTION: policy {exc.policy!r} has effect=ALLOW; "
+                f"exceptions only apply to DENY policies "
                 f"(agent {exc.agent!r}, tool {exc.tool!r})"
             )
             continue
@@ -88,32 +187,60 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                 f"(agent {exc.agent!r})"
             )
             continue
-        resolved_exceptions.append(
-            (
-                exc.agent,
-                key,
-                normalize_resource_uri(exc.resource) if exc.resource else None,
-                exc.policy,
-                exc.reason,
+        # The exception only fires when the agent's deny_evidence row matches
+        # (agent, tool, resource?, policy). That requires:
+        #   1) agent holds a CAN_CALL grant on the tool — otherwise the agent
+        #      will never appear in unsafe_callable_tools for that tool;
+        #   2) the (tool, policy) pair is actually reachable — either via a
+        #      governed resource the tool touches, or by direct tool-level
+        #      GOVERNED_BY. Without (2) no deny row will ever fire.
+        # Closing only the "wrong resource" slice (the previous round) wasn't
+        # enough — Codex flagged that wrong-policy and ungranted-agent
+        # exceptions still survived.
+        if key not in agent_grant_tools.get(exc.agent, set()):
+            warnings.append(
+                f"EXPECTED_EXCEPTION: agent {exc.agent!r} has no CAN_CALL grant on tool "
+                f"{exc.tool!r} — exception will never classify any row"
             )
-        )
-
-    resolved_governed: list[tuple] = []  # (kind, key_or_uri, policy_ids)
-    for node_ref, policy_ids in gov.governed_by.items():
-        for pid in policy_ids:
-            if pid not in known_policies:
-                warnings.append(f"GOVERNED_BY: policy {pid!r} not defined (node {node_ref!r})")
-        valid = [pid for pid in policy_ids if pid in known_policies]
-        if is_resource_ref(node_ref):
-            resolved_governed.append(("resource", normalize_resource_uri(node_ref), valid))
-        else:
-            key, matches = _resolve(tx, node_ref)
-            if key is None:
+            continue
+        resource_uri = normalize_resource_uri(exc.resource) if exc.resource else None
+        policy_resource_set = policy_resources.get(exc.policy, set())
+        policy_tool_set = policy_tools.get(exc.policy, set())
+        if resource_uri is not None:
+            # Specific resource: tool must READ/WRITE it AND that resource
+            # must be GOVERNED_BY this policy.
+            if (key, resource_uri) not in authored_access:
                 warnings.append(
-                    f"GOVERNED_BY: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
+                    f"EXPECTED_EXCEPTION: tool {exc.tool!r} has no READS/WRITES "
+                    f"to resource {exc.resource!r} in this manifest "
+                    f"(agent {exc.agent!r}, policy {exc.policy!r})"
                 )
-            else:
-                resolved_governed.append(("tool", key, valid))
+                continue
+            if resource_uri not in policy_resource_set:
+                warnings.append(
+                    f"EXPECTED_EXCEPTION: resource {exc.resource!r} is not governed_by "
+                    f"policy {exc.policy!r} in this manifest "
+                    f"(agent {exc.agent!r}, tool {exc.tool!r})"
+                )
+                continue
+        else:
+            # Wildcard: tool must reach this policy via SOME path —
+            # a tool-touched resource governed by the policy, OR the tool
+            # itself directly governed by the policy.
+            reaches_via_resource = bool(
+                tool_resources.get(key, set()) & policy_resource_set
+            )
+            reaches_via_tool = key in policy_tool_set
+            if not (reaches_via_resource or reaches_via_tool):
+                warnings.append(
+                    f"EXPECTED_EXCEPTION: tool {exc.tool!r} has no path to DENY policy "
+                    f"{exc.policy!r} in this manifest "
+                    f"(agent {exc.agent!r}) — wildcard exception is dead-on-arrival"
+                )
+                continue
+        resolved_exceptions.append(
+            (exc.agent, key, resource_uri, exc.policy, exc.reason)
+        )
 
     if warnings:  # reject the whole manifest — do not mutate
         return warnings
@@ -124,27 +251,35 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
     # alongside the edges so a removed exception promotes the row back to violation.
     tx.run("MATCH (e:ExpectedException) DETACH DELETE e")
 
-    agents = set(gov.agents) | {g.agent for g in gov.grants}
-    tx.run("UNWIND $ids AS id MERGE (:Agent {id:id})", ids=sorted(agents))
-    # Policy provenance flattens onto the node so a reader sees source/evidence
-    # alongside effect/scope without traversing an edge.
-    policies_payload = []
-    for p in gov.policies:
-        d = p.model_dump(exclude={"provenance"})
-        prov = edge_provenance_props(p.provenance)
-        d["prov_source"] = prov["source"]
-        d["prov_confidence"] = prov["confidence"]
-        d["prov_evidence"] = prov["evidence"]
-        policies_payload.append(d)
+    tx.run("UNWIND $ids AS id MERGE (:Agent {id:id})", ids=sorted(known_agents))
+    # Policy provenance lives on the GOVERNED_BY binding (per-edge), not the
+    # node — see GovernedByBinding. Policy nodes carry only declaration data.
+    # REMOVE drops the legacy ``prov_*`` properties left over from the
+    # pre-completion-round shape, so an upgrading graph cleans itself up.
     tx.run(
         """
         UNWIND $policies AS p
         MERGE (pol:Policy {id:p.id})
-        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description,
-            pol.prov_source=p.prov_source, pol.prov_confidence=p.prov_confidence,
-            pol.prov_evidence=p.prov_evidence
+        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
+        REMOVE pol.prov_source, pol.prov_confidence, pol.prov_evidence
         """,
-        policies=policies_payload,
+        policies=[p.model_dump() for p in gov.policies],
+    )
+    # Declarative manifest: prune Agent + Policy nodes the operator removed
+    # from this manifest. The new ``found`` / ``agent_found`` API treats
+    # node existence as a truth signal; leaking renamed-away nodes would
+    # silently make ``unsafe-tools old-agent`` look like a clean empty
+    # answer and ``blast-radius old-policy`` claim found:true. Edges were
+    # already cleared at the top of Phase 2, so DETACH DELETE is a no-op
+    # on the edge side; it just removes the now-orphan node.
+    policy_ids = [p.id for p in gov.policies]
+    tx.run(
+        "MATCH (a:Agent) WHERE NOT a.id IN $ids DETACH DELETE a",
+        ids=sorted(known_agents),
+    )
+    tx.run(
+        "MATCH (pol:Policy) WHERE NOT pol.id IN $ids DETACH DELETE pol",
+        ids=policy_ids,
     )
 
     for agent, key, granted_by, prov in resolved_grants:
@@ -197,35 +332,39 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
             ],
         )
 
-    # GOVERNED_BY edges currently carry no per-edge provenance — the policy
-    # node's prov_* fields cover the authoring intent. Default source on the
-    # edge so queries can still filter uniformly.
-    for kind, ref, pids in resolved_governed:
-        if not pids:
+    # GOVERNED_BY edges carry per-binding provenance: an author can cite WHY
+    # this resource (or tool) is bound to this policy. Bare-string entries in
+    # ``governed_by`` lift to bindings with no evidence (operator_asserted/high
+    # by default), so unbacked_edges still surfaces them as needing a citation.
+    for kind, ref, bindings in resolved_governed:
+        if not bindings:
             continue
+        payload = [
+            {"pid": pid, **prov} for pid, prov in bindings
+        ]
         if kind == "resource":
             tx.run(
                 """
                 MERGE (res:Resource {uri:$ref})
-                WITH res UNWIND $pids AS pid
-                MATCH (p:Policy {id:pid})
+                WITH res UNWIND $bindings AS b
+                MATCH (p:Policy {id:b.pid})
                 MERGE (res)-[r:GOVERNED_BY]->(p)
-                SET r.source='operator_asserted', r.confidence='high'
+                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
                 """,
                 ref=ref,
-                pids=pids,
+                bindings=payload,
             )
         else:
             tx.run(
                 """
                 MATCH (t:Tool {key:$ref})
-                UNWIND $pids AS pid
-                MATCH (p:Policy {id:pid})
+                UNWIND $bindings AS b
+                MATCH (p:Policy {id:b.pid})
                 MERGE (t)-[r:GOVERNED_BY]->(p)
-                SET r.source='operator_asserted', r.confidence='high'
+                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
                 """,
                 ref=ref,
-                pids=pids,
+                bindings=payload,
             )
 
     return []

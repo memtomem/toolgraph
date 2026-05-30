@@ -72,12 +72,16 @@ def ingest_manifest(
     gov = load_governance(path)
     schema.init_schema()
     warnings = ingest_governance(gov)
-    typer.echo(f"Ingested governance from {path}")
-    for w in warnings:
-        typer.echo(f"  ⚠ {w}")
-    typer.echo(f"Governance now: {governance_counts()}")
     if warnings:
+        # Ingest is atomic: any warning rejects the whole manifest. Reflect
+        # that in the headline so an operator with a typo doesn't read
+        # "Ingested" as success.
+        typer.echo(f"REJECTED — manifest at {path} not applied (graph unchanged)")
+        for w in warnings:
+            typer.echo(f"  ⚠ {w}")
         raise typer.Exit(code=1)
+    typer.echo(f"Ingested governance from {path}")
+    typer.echo(f"Governance now: {governance_counts()}")
 
 
 @app.command()
@@ -108,9 +112,28 @@ def check_access(agent: str, tool: str) -> None:
 
 
 @app.command("unsafe-tools")
-def unsafe_tools(agent: str) -> None:
-    """Tools AGENT can call that touch a DENY-governed resource."""
-    typer.echo(json.dumps(queries.unsafe_callable_tools(agent), indent=2))
+def unsafe_tools(
+    agent: str,
+    all: bool = typer.Option(
+        False, "--all",
+        help="Include authorized_but_governed rows (operator-declared exceptions).",
+    ),
+) -> None:
+    """Tools AGENT can call that touch a DENY-governed resource.
+
+    Defaults to ``classification='violation'`` only — operator-declared
+    exceptions (``authorized_but_governed``) are filtered out so reviewers
+    don't drown in by-design grants. Pass ``--all`` to see both.
+
+    A typo'd agent prints AGENT_NOT_FOUND and exits 1 — not silently empty.
+    """
+    if not queries.agent_exists(agent):
+        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph")
+        raise typer.Exit(code=1)
+    rows = queries.unsafe_callable_tools(agent)
+    if not all:
+        rows = [r for r in rows if r.get("classification") == "violation"]
+    typer.echo(json.dumps(rows, indent=2))
 
 
 @app.command("blast-radius")
@@ -134,9 +157,21 @@ def orphan_policies() -> None:
 
 
 @app.command("unbacked-edges")
-def unbacked_edges() -> None:
-    """Authored edges with no evidence pointer — unsupported claims."""
-    typer.echo(json.dumps(queries.unbacked_edges(), indent=2))
+def unbacked_edges(
+    include_grants: bool = typer.Option(
+        False, "--include-grants",
+        help="Include CAN_CALL grants (intent declarations) — usually noise.",
+    ),
+) -> None:
+    """Authored edges with no evidence pointer — unsupported claims.
+
+    Default scope is READS/WRITES/GOVERNED_BY (factual / load-bearing claims).
+    CAN_CALL grants are excluded by default — a grant is intent, not a
+    factual claim, so requiring evidence on every grant pollutes the audit.
+    """
+    typer.echo(
+        json.dumps(queries.unbacked_edges(include_grants=include_grants), indent=2)
+    )
 
 
 @app.command("drift")
