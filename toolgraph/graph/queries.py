@@ -1,4 +1,4 @@
-"""The three governance queries — the product.
+"""Governance and audit queries — the product.
 
 Each returns explainable structure (the path + evidence), not a bare boolean.
 Reachability spans Agent -> Tool -> Resource -> Policy across four node types,
@@ -458,7 +458,8 @@ def drifted_tools() -> list[dict]:
     OPTIONAL MATCH (t)-[acc:READS|WRITES]->(res:Resource)
     RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
            collect(DISTINCT a.id) AS granted_to,
-           collect(DISTINCT {mode:type(acc), resource:res.uri}) AS data_access
+           [x IN collect(DISTINCT {mode:type(acc), resource:res.uri})
+            WHERE x.mode IS NOT NULL AND x.resource IS NOT NULL] AS data_access
     ORDER BY tool_key
     """
     with session() as s:
