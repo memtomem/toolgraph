@@ -11,6 +11,7 @@
 - Policy.extra='forbid' rejects legacy provenance: block
 - expected_exceptions against ALLOW policies warned at ingest (Codex R3.5)
 - Duplicate policy ids rejected at ingest (Codex R3.5)
+- IPv6 resource URIs are not mistaken for server::tool refs
 """
 
 from __future__ import annotations
@@ -371,6 +372,35 @@ def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(graph):
     assert any(r["via"] == "tool" for r in res["impacted"])
 
 
+def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
+    """IPv6 URL authorities contain ``::``. The resource/tool discriminator
+    must only reserve the leading ``server::tool`` shape for tool refs."""
+    uri = "http://[::1]/secret"
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_url")],
+            resources=[ResourceRecord(uri=uri)],
+        )
+    )
+
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="secret-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_url")],
+            data_access=[
+                DataAccess(tool="sample::read_url", resource=uri, mode="READS")
+            ],
+            governed_by={uri: ["secret-deny"]},
+        )
+    )
+
+    assert warnings == []
+    assert queries.check_access("planner", "sample::read_url")["verdict"] == "DENY"
+
+
 def test_cli_unbacked_edges_default_excludes_can_call(graph):
     """`toolgraph unbacked-edges` defaults to READS/WRITES/GOVERNED_BY;
     --include-grants widens to CAN_CALL too."""
@@ -713,5 +743,3 @@ def test_bare_string_governed_by_via_model_copy_still_normalizes(graph):
     assert warnings
     # graph state preserved
     assert queries.check_access("planner", "read_file")["verdict"] == "DENY"
-
-
