@@ -237,6 +237,56 @@ def test_unbacked_edges_treats_blank_evidence_as_missing(graph):
     assert ("GOVERNED_BY", "file:///data/customers.csv", "pii") in edge_signatures
 
 
+def test_unbacked_edges_includes_inferred_claims_without_evidence(graph):
+    """An inferred data-flow edge is still unsupported without a citation to
+    the inference source. It should not be hidden just because source is not
+    operator_asserted."""
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii", effect="DENY", scope="pii")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource="file:///data/customers.csv",
+                    mode="READS",
+                    provenance=Provenance(source="inferred", confidence="medium"),
+                ),
+            ],
+            governed_by={
+                "file:///data/customers.csv": [
+                    GovernedByBinding(
+                        policy="pii",
+                        provenance=Provenance(evidence="ops/policy/pii.md"),
+                    ),
+                ]
+            },
+        )
+    )
+
+    rows = queries.unbacked_edges()
+    read_rows = [
+        r
+        for r in rows
+        if r["edge_type"] == "READS"
+        and r["src"] == "sample::read_file"
+        and r["dst"] == "file:///data/customers.csv"
+    ]
+    assert read_rows == [
+        {
+            "edge_type": "READS",
+            "src_label": "Tool",
+            "src": "sample::read_file",
+            "dst_label": "Resource",
+            "dst": "file:///data/customers.csv",
+            "source": "inferred",
+            "confidence": "medium",
+        }
+    ]
+
+
 # --- drifted_tools --------------------------------------------------------
 
 

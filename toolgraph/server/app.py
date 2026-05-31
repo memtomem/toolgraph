@@ -70,7 +70,7 @@ def orphan_policies() -> dict:
 
 @mcp.tool()
 def unbacked_edges(include_grants: bool = False) -> dict:
-    """Authored edges with source='operator_asserted' and no evidence pointer.
+    """Authored edges with no usable evidence pointer.
 
     Default scope is READS/WRITES/GOVERNED_BY — load-bearing claims about the
     world. Pass ``include_grants=True`` to also surface CAN_CALL grants

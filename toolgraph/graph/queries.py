@@ -409,11 +409,13 @@ def orphan_policies() -> list[dict]:
 
 
 def unbacked_edges(include_grants: bool = False) -> list[dict]:
-    """Authored edges with source='operator_asserted' but no evidence pointer.
+    """Authored edges with no usable evidence pointer.
 
     These are unsupported claims — the gate-review fiction was exactly this
     shape. Surfacing them at audit time lets operators decide which assertions
-    need source citation before being trusted.
+    need source citation before being trusted. This includes both
+    operator_asserted and inferred claims; either is unreviewable without a
+    supporting pointer.
 
     ``CAN_CALL`` grants are EXCLUDED by default: a grant is intent declaration,
     not a factual claim about the world, so requiring evidence on every grant
@@ -428,8 +430,7 @@ def unbacked_edges(include_grants: bool = False) -> list[dict]:
     )
     cypher = f"""
     MATCH (src)-[r:{edge_types}]->(dst)
-    WHERE coalesce(r.source, 'operator_asserted') = 'operator_asserted'
-      AND (r.evidence IS NULL OR trim(r.evidence) = '')
+    WHERE r.evidence IS NULL OR trim(r.evidence) = ''
     RETURN type(r) AS edge_type,
            labels(src)[0] AS src_label,
            coalesce(src.id, src.key, src.uri, src.name) AS src,
