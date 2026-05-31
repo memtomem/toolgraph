@@ -203,6 +203,40 @@ def test_unbacked_edges_governed_by_binding_evidence_suppresses_row(graph):
     }
 
 
+def test_unbacked_edges_treats_blank_evidence_as_missing(graph):
+    """Empty or whitespace evidence is not a usable source pointer. It should
+    be audited the same way as omitted evidence."""
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii", effect="DENY", scope="pii")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource="file:///data/customers.csv",
+                    mode="READS",
+                    provenance=Provenance(evidence="   "),
+                ),
+            ],
+            governed_by={
+                "file:///data/customers.csv": [
+                    GovernedByBinding(
+                        policy="pii",
+                        provenance=Provenance(evidence=""),
+                    ),
+                ]
+            },
+        )
+    )
+
+    rows = queries.unbacked_edges()
+    edge_signatures = {(r["edge_type"], r["src"], r["dst"]) for r in rows}
+    assert ("READS", "sample::read_file", "file:///data/customers.csv") in edge_signatures
+    assert ("GOVERNED_BY", "file:///data/customers.csv", "pii") in edge_signatures
+
+
 # --- drifted_tools --------------------------------------------------------
 
 

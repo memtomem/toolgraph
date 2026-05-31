@@ -429,7 +429,7 @@ def unbacked_edges(include_grants: bool = False) -> list[dict]:
     cypher = f"""
     MATCH (src)-[r:{edge_types}]->(dst)
     WHERE coalesce(r.source, 'operator_asserted') = 'operator_asserted'
-      AND r.evidence IS NULL
+      AND (r.evidence IS NULL OR trim(r.evidence) = '')
     RETURN type(r) AS edge_type,
            labels(src)[0] AS src_label,
            coalesce(src.id, src.key, src.uri, src.name) AS src,
