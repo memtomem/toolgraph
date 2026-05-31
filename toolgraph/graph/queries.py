@@ -470,8 +470,8 @@ def blast_radius(node: str) -> dict:
     """Who/what is affected if a resource or a policy changes (with evidence paths).
 
     Every impacted row has the same keys (via/resource/agent/tool_key/tool/mode/path);
-    `path` is None when a governed node is reachable by no agent. A tool that touches
-    the resource but has no caller is still reported (it is affected).
+    `path` is None when an affected tool has no caller. A tool that touches the
+    resource but has no caller is still reported (it is affected).
 
     The response carries ``found`` — False when the node argument matches no
     Resource (for a URI) or Policy (otherwise). Without this, a typo'd URI is
@@ -547,6 +547,8 @@ def _blast_radius_policy(s: Session, node: str) -> dict:
         """,
         node=node,
     ):
+        if r["tool"] is None:
+            continue  # policy governs a resource, but no tool currently touches it
         d = dict(r)
         d["path"] = _radius_path(d["agent"], d["tool"], d["mode"], d["resource"])
         d["provenance"] = _prov(r)

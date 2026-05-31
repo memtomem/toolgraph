@@ -100,3 +100,22 @@ def test_blast_radius_policy(scenario):
     assert all(r["resource"] == CSV for r in res["impacted"])
     agents = {r["agent"] for r in res["impacted"]}
     assert agents == {"planner", "support-bot"}
+
+
+def test_blast_radius_policy_omits_governed_resource_with_no_tool(graph):
+    """A policy can govern a resource before any tool READS/WRITES it. That
+    should keep found=True for the policy, but it is not an impacted tool row."""
+    ingest_governance(
+        Governance(
+            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+
+    res = queries.blast_radius("pii-deny")
+    assert res == {
+        "kind": "policy",
+        "node": "pii-deny",
+        "found": True,
+        "impacted": [],
+    }
