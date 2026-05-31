@@ -200,8 +200,8 @@ cited one).
 
 ## toolgraph as an MCP server
 
-toolgraph exposes its three queries as MCP tools, so an agent can ask the
-registry about itself over the same protocol toolgraph crawls:
+toolgraph exposes its governance and audit queries as MCP tools, so an agent
+can ask the registry about itself over the same protocol toolgraph crawls:
 
 ```bash
 uv run toolgraph serve            # stdio
@@ -236,7 +236,7 @@ Two reference exhibits:
 ```
 toolgraph/
   crawler/   connect to MCP servers (stdio + streamable-http), enumerate tools/resources
-  graph/     Neo4j driver, schema/constraints, idempotent loader, the 3 governance queries
+  graph/     Neo4j driver, schema/constraints, idempotent loader, governance/audit queries
   manifest/  parse + ingest authored governance (idempotent)
   server/    FastMCP server exposing the queries as MCP tools
   cli.py     crawl / ingest-manifest / check-access / unsafe-tools / blast-radius /

@@ -1,4 +1,4 @@
-"""Phase 4: the three governance queries, against a hand-traced scenario.
+"""Phase 4: core governance queries, against a hand-traced scenario.
 
 Scenario:
   planner     CAN_CALL read_file, write_file

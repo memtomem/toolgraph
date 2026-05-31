@@ -1,9 +1,9 @@
 """Pydantic models: crawl inputs/outputs and authored-governance records.
 
 Two families:
-- Crawler config + factual crawl results (this phase).
-- Authored governance (policies, ACL grants, data access) — used by the
-  manifest ingest in a later phase, defined here so the schema lives in one place.
+- Crawler config + factual crawl results.
+- Authored governance (policies, ACL grants, data access) — used by manifest
+  ingest, defined here so the schema lives in one place.
 """
 
 from __future__ import annotations

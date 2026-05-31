@@ -239,3 +239,35 @@ def test_drift_surfaces_tools_with_governance_but_no_exposes(graph):
     # Sanity: live tool with no drift not listed.
     with driver.session() as s:
         assert s.run("MATCH (t:Tool {key:'sample::read_file'}) RETURN t").single() is not None
+
+
+def test_drift_data_access_is_empty_when_only_grant_exists(graph):
+    """A drifted tool can be governance-relevant because an agent can call it,
+    even before data_access is authored. The audit row should report an empty
+    list, not a placeholder map full of null values."""
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            grants=[AccessGrant(agent="planner", tool="sample::write_file")],
+        )
+    )
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file")],
+            resources=[ResourceRecord(uri="file:///data/customers.csv")],
+        )
+    )
+
+    rows = queries.drifted_tools()
+    assert rows == [
+        {
+            "tool_key": "sample::write_file",
+            "tool": "write_file",
+            "server": "sample",
+            "granted_to": ["planner"],
+            "data_access": [],
+        }
+    ]
