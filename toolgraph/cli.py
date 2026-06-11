@@ -8,7 +8,12 @@ from pathlib import Path
 import typer
 
 from toolgraph import config
-from toolgraph.crawler.crawl import DEFAULT_TIMEOUT, crawl_all, load_servers_config
+from toolgraph.crawler.crawl import (
+    DEFAULT_TIMEOUT,
+    crawl_all,
+    fleet_keep_names,
+    load_servers_config,
+)
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
@@ -38,8 +43,20 @@ def init_schema() -> None:
 def crawl(
     servers: Path = typer.Option(None, help="Path to servers.yaml (defaults to config)."),
     timeout: float = typer.Option(DEFAULT_TIMEOUT, help="Per-server crawl timeout (seconds)."),
+    prune: bool = typer.Option(
+        True, "--prune/--no-prune",
+        help="Fleet reconciliation (ADR-0007): after loading, retire crawled "
+             "subgraphs of servers no longer in servers.yaml. Pass --no-prune "
+             "when crawling a subset file that does not declare the whole fleet.",
+    ),
 ) -> None:
-    """Crawl every server in servers.yaml and load its tools/resources into the graph."""
+    """Crawl every server in servers.yaml and load its tools/resources into the graph.
+
+    servers.yaml declares the fleet: by default a successful pass also retires
+    servers (and their crawl-owned subgraphs) that are no longer listed, so
+    stale EXPOSES edges cannot defeat the drift checks. Failed servers are
+    protected by their ``name`` override; an unnamed failure skips the prune.
+    """
     path = servers or config.settings.servers_config
     specs = load_servers_config(path)
     typer.echo(f"Crawling {len(specs)} server(s) from {path} ...")
@@ -56,6 +73,23 @@ def crawl(
             typer.echo(f"    ⚠ {w}")
     for label, error in failures:
         typer.echo(f"  ✗ {label}: {error}")
+
+    if prune:
+        keep, blockers = fleet_keep_names(specs, results, failures)
+        if blockers:
+            typer.echo(
+                "  ⚠ fleet reconciliation skipped: failed server(s) "
+                f"{', '.join(sorted(blockers))} have no `name:` override in "
+                f"{path}, so a crawl failure cannot be told apart from a "
+                "removed server — add `name:` to keep reconciliation running "
+                "through failures"
+            )
+        else:
+            retired, warnings = loader.retire_unlisted_servers(keep)
+            for name in retired:
+                typer.echo(f"  − retired {name!r}: no longer in {path}")
+            for w in warnings:
+                typer.echo(f"    ⚠ {w}")
 
     counts = loader.graph_counts()
     typer.echo(f"Graph now: {counts}")

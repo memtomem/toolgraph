@@ -54,3 +54,26 @@ def crawl_all(
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> tuple[list[CrawlResult], list[tuple[str, str]]]:
     return asyncio.run(crawl_all_async(specs, timeout, concurrency))
+
+
+def fleet_keep_names(
+    specs: list[ServerSpec],
+    results: list[CrawlResult],
+    failures: list[tuple[str, str]],
+) -> tuple[set[str], list[str]]:
+    """Graph names that must survive fleet reconciliation, plus blockers.
+
+    A failed spec with a ``name`` override is protected by that name. A failed
+    spec WITHOUT one cannot be mapped to a graph identity (node names come
+    from ``serverInfo.name`` at crawl time, which a failed crawl never saw) —
+    its label is returned as a blocker and the caller must skip the prune:
+    a server that failed to crawl is not a server that was removed.
+
+    Blocker detection rides on the failure label: a named spec's label IS its
+    name (see ``_label``), so any failure label outside the named set must
+    come from an unnamed spec.
+    """
+    named = {s.name for s in specs if s.name}
+    keep = named | {r.server_name for r in results}
+    blockers = [label for label, _ in failures if label not in named]
+    return keep, blockers
