@@ -128,6 +128,24 @@ uv run toolgraph unbacked-edges --include-grants    # also audit CAN_CALL grants
 uv run toolgraph drift                              # tools w/ governance but no live EXPOSES
 ```
 
+### Exit codes
+
+Per [ADR-0003](docs/adr/0003-cli-output-and-exit-code-contract.md) this table
+is a contract: query commands reserve stdout for their JSON (diagnostics go
+to stderr) and exit 0 by default — gating is opt-in.
+
+| Command | Exit code |
+| --- | --- |
+| query commands (default) | 0 always — advisory, even on DENY/violations |
+| `unsafe-tools` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
+| `ingest-manifest` (manifest REJECTED) | 1 |
+| `crawl` (any server failed) | 1 |
+| `check-access --fail-on-deny` | 1 on `DENY` with `all_authorized: false` · 2 on `AGENT_NOT_FOUND` / `TOOL_NOT_FOUND` / `AMBIGUOUS_TOOL` · 0 otherwise (`ALLOW`, `NOT_GRANTED`, authorized-only `DENY`) |
+| `unsafe-tools --fail-on-violation` | 1 when any `violation` row remains in the printed output (with or without `--all`) |
+
+A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
+clean run.
+
 ### Distinguishing what the graph doesn't know
 
 - `check-access` verdicts include `AGENT_NOT_FOUND` (the agent string matches
