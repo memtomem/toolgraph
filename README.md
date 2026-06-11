@@ -128,6 +128,11 @@ uv run toolgraph unbacked-edges --include-grants    # also audit CAN_CALL grants
 uv run toolgraph drift                              # tools w/ governance but no live EXPOSES
 uv run toolgraph destructive-unsafeguarded          # destructive-hinted tools w/ no policy path
 uv run toolgraph annotation-contradictions          # authored WRITES vs readOnlyHint claims
+
+# selector surface (ADR-0005) — batch, deterministic, no relevance scoring
+uv run toolgraph rank-features planner git_status read_file export_data
+uv run toolgraph eligible-tools planner git_status read_file --profile strict
+uv run toolgraph selection-explain planner git_status
 ```
 
 ### Exit codes
@@ -139,7 +144,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
-| `unsafe-tools` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
+| `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `ingest-manifest` (manifest REJECTED) | 1 |
 | `crawl` (any server failed) | 1 |
 | `check-access --fail-on-deny` | 1 on `DENY` with `all_authorized: false` · 2 on `AGENT_NOT_FOUND` / `TOOL_NOT_FOUND` / `AMBIGUOUS_TOOL` · 0 otherwise (`ALLOW`, `NOT_GRANTED`, authorized-only `DENY`) |
@@ -252,6 +257,47 @@ two audit queries that join self-claims against authored truth:
   (the hint's crawl pass, the authored edge's evidence pointer) and the
   operator picks the stronger evidence.
 
+## Selector surface (deterministic, ADR-0005)
+
+toolgraph can serve tool selection as a context-engineering layer: shrink a
+candidate catalog deterministically *before* any relevance ranker sees it
+([ADR-0005](docs/adr/0005-selector-surface-boundary.md), background in
+[the report](docs/context-engineering-tool-selection-report.md)). Three
+batch-first entry points (CLI + MCP) run a fixed number of queries
+regardless of candidate count — per-candidate `check-access` calls scale
+linearly, which is unacceptable on the online path:
+
+- `rank-features AGENT CANDIDATES…` — per-candidate facts in input order:
+  resolution (`found` / `ambiguous` / `tool_key`), grant, verdict, DENY
+  classification + evidence paths, drift, mapping, evidence coverage, the
+  four annotation self-claims, and a **rule-based** `risk_score` from this
+  fixed table (first match wins): `1.0` DENY violation · `0.8` drifted ·
+  `0.6` unmapped · `0.4` unbacked load-bearing edge · `0.2`
+  authorized_but_governed · `0.0` otherwise.
+- `eligible-tools AGENT CANDIDATES… --profile strict` — hard filter with
+  reject reasons and policy-evidence paths. Profiles are named rule sets,
+  not learned thresholds:
+
+  | Profile | Use | Rejects |
+  | --- | --- | --- |
+  | `strict` (default) | production agents | everything but a clean, fully-authored ALLOW: not-found / ambiguous / not-granted / any DENY / drifted / unmapped |
+  | `review` | human-in-the-loop | not-found / ambiguous / not-granted / DENY violations / drifted (operator exceptions and unmapped pass) |
+  | `explore` | offline eval / sandbox | not-found / ambiguous / not-granted / drifted only |
+
+- `selection-explain AGENT TOOL` — compact human-readable reasons for one
+  decision, for operators and end users.
+
+Hard boundary: no relevance scoring, no learning, ever — those belong to the
+consumer. A learned model may rerank the eligible list but may **never
+override a hard reject** (`NOT_GRANTED`, `violation`, drifted). Ambiguous
+bare names are never auto-resolved — the consumer must re-submit the
+server-qualified key. An unknown agent returns `agent_found: false`
+(CLI: `AGENT_NOT_FOUND` on stderr, exit 1): selection should abort, because
+a typo'd agent is a context-construction error, not an empty catalog.
+
+MCP responses carry `graph_generation` (ADR-0004) so consumers can cache
+features per graph state with one integer comparison.
+
 ## toolgraph as an MCP server
 
 toolgraph exposes its governance and audit queries as MCP tools, so an agent
@@ -264,7 +310,8 @@ uv run toolgraph serve --http     # streamable-http
 
 Tools: `check_access`, `unsafe_callable_tools`, `blast_radius`,
 `unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`,
-`destructive_unsafeguarded`, `annotation_contradictions`.
+`destructive_unsafeguarded`, `annotation_contradictions`, `rank_features`,
+`eligible_tools`, `selection_explain`.
 
 ## Inputs
 
@@ -296,7 +343,8 @@ toolgraph/
   server/    FastMCP server exposing the queries as MCP tools
   cli.py     crawl / ingest-manifest / check-access / unsafe-tools / blast-radius /
              unmapped-tools / orphan-policies / unbacked-edges / drift /
-             destructive-unsafeguarded / annotation-contradictions / serve / reset
+             destructive-unsafeguarded / annotation-contradictions /
+             rank-features / eligible-tools / selection-explain / serve / reset
 ```
 
 ## Tests

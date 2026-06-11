@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from mcp.server.fastmcp import FastMCP
 
-from toolgraph.graph import queries
+from toolgraph.graph import queries, selector
 
 mcp = FastMCP("toolgraph")
 
@@ -171,6 +171,50 @@ def annotation_contradictions() -> dict:
         return {"count": len(rows), "contradictions": rows}
 
     return _with_generation(fetch)
+
+
+@mcp.tool()
+def rank_features(agent: str, candidates: list[str]) -> dict:
+    """Batch selection features for every candidate, in input order (ADR-0005).
+
+    Facts only — resolution (found/ambiguous/tool_key), grant, verdict, DENY
+    classification + evidence paths, drift, mapping, evidence coverage, the
+    four annotation self-claims — plus the rule-based ``risk_score`` from the
+    published fixed table. No relevance, no learning. ``agent_found: false``
+    means selection should abort: context-construction error, not an empty
+    result. Cache per ``graph_generation``.
+    """
+    return _with_generation(lambda: selector.rank_features(agent, candidates))
+
+
+@mcp.tool()
+def eligible_tools(
+    agent: str, candidates: list[str], profile: str = selector.DEFAULT_PROFILE
+) -> dict:
+    """Hard-filter candidates with reject reasons + policy-evidence paths.
+
+    ``profile`` is a named rule set — strict (production default) / review /
+    explore — not a learned threshold. ``eligible`` holds resolved tool keys
+    in candidate input order; each rejected row carries the input ref, the
+    winning reason, and for DENY reasons the graph paths that prove it. A
+    learned consumer may rerank ``eligible`` but may never resurrect a
+    rejected row (ADR-0005).
+    """
+    return _with_generation(
+        lambda: selector.eligible_tools(agent, candidates, profile=profile)
+    )
+
+
+@mcp.tool()
+def selection_explain(
+    agent: str, tool: str, profile: str = selector.DEFAULT_PROFILE
+) -> dict:
+    """Compact human-readable reasons why `tool` is eligible/rejected for
+    `agent` under `profile` — a view over the same facts ``rank_features``
+    returns, for operators and end users."""
+    return _with_generation(
+        lambda: selector.selection_explain(agent, tool, profile=profile)
+    )
 
 
 if __name__ == "__main__":
