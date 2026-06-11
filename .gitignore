@@ -11,3 +11,6 @@ wheels/
 
 # Local secrets / config
 .env
+
+# Agent session logs
+.swarm/

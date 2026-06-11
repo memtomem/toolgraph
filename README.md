@@ -56,6 +56,13 @@ nothing is LLM-guessed.
 
 ## Quickstart
 
+New to toolgraph? Start with the Korean beginner guide:
+[`docs/ko-beginner-guide.md`](docs/ko-beginner-guide.md).
+
+For the context-engineering and tool-selection roadmap, see
+[`docs/context-engineering-tool-selection-report.md`](docs/context-engineering-tool-selection-report.md).
+Contract-shaping decisions are recorded in [`docs/adr/`](docs/adr/README.md).
+
 ```bash
 # 1. start Neo4j (pinned 5.26 community)
 docker compose up -d
