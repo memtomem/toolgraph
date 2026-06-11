@@ -106,6 +106,20 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         name=result.server_name,
         keys=keys,
     )
+    # A tool the server stopped exposing makes NO annotation claims anymore —
+    # the node may be kept below (authored governance), but leaving the hints
+    # would have the audit queries cite a crawled/medium claim nobody is
+    # making (ADR-0006; Codex review of this branch caught it).
+    tx.run(
+        """
+        MATCH (old:Tool {server:$name})
+        WHERE NOT old.key IN $keys
+        REMOVE old.read_only_hint, old.destructive_hint,
+               old.idempotent_hint, old.open_world_hint
+        """,
+        name=result.server_name,
+        keys=keys,
+    )
     tx.run(
         """
         MATCH (old:Tool {server:$name})

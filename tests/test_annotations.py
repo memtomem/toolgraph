@@ -72,6 +72,36 @@ def test_loader_stores_and_clears_annotations(graph):
     assert "destructive_hint" not in _tool_props("sample::write_file")
 
 
+def test_drifted_tool_makes_no_annotation_claims(graph):
+    """A governed tool the server stopped exposing is KEPT (a DENY must not
+    silently become ALLOW) — but the server no longer claims anything about
+    it, so its annotation hints must clear with the EXPOSES edge. Without
+    this, destructive_unsafeguarded keeps citing a crawled/medium claim
+    nobody is making (Codex review of this branch)."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="write_file", destructive_hint=True)],
+        )
+    )
+    report = ingest_governance(
+        Governance(
+            agents=["support-bot"],
+            grants=[AccessGrant(agent="support-bot", tool="sample::write_file")],
+        )
+    )
+    assert report.applied, report.warnings
+    assert queries.destructive_unsafeguarded() != []
+
+    # Server drops the tool; the grant keeps the node alive — drifted.
+    loader.load_crawl_result(CrawlResult(server_name="sample", transport="stdio"))
+    props = _tool_props("sample::write_file")
+    assert props, "governed tool must survive the re-crawl"
+    assert "destructive_hint" not in props
+    assert queries.destructive_unsafeguarded() == []
+
+
 # --- destructive-unsafeguarded --------------------------------------------
 
 
