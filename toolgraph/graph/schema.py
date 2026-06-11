@@ -17,7 +17,17 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.id IS UNIQUE",
     "CREATE CONSTRAINT policy_id IF NOT EXISTS FOR (p:Policy) REQUIRE p.id IS UNIQUE",
     "CREATE CONSTRAINT exception_key IF NOT EXISTS FOR (e:ExpectedException) REQUIRE e.key IS UNIQUE",
+    "CREATE CONSTRAINT graphmeta_id IF NOT EXISTS FOR (m:GraphMeta) REQUIRE m.id IS UNIQUE",
 ]
+
+# ADR-0004: run in the SAME transaction as every successful crawl load and
+# manifest ingest, so generation and graph state can never be observed out of
+# sync. It is an invalidation token, not a semantic version — a crawl of N
+# servers bumps N times. Rejected ingests return before reaching this.
+BUMP_GENERATION = (
+    "MERGE (m:GraphMeta {id:'singleton'}) "
+    "SET m.generation = coalesce(m.generation, 0) + 1, m.updated_at = datetime()"
+)
 
 
 def exception_key(agent: str, tool_key: str, resource: str | None, policy: str) -> str:

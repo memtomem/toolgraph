@@ -92,7 +92,10 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
         )
         got = _structured(result)
 
+    # The MCP wrapper stamps graph_generation on top of the query result
+    # (ADR-0004); the query layer itself stays unstamped for the CLI.
     expected = queries.check_access("support-bot", "read_file")
+    expected["graph_generation"] = queries.graph_generation()
     assert got == expected
     assert got["verdict"] == "DENY"
 
