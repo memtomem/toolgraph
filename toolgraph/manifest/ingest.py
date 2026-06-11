@@ -429,6 +429,14 @@ def _ingest(
     # never match this degree-0 filter; the loader stays their owner.
     tx.run("MATCH (res:Resource) WHERE NOT EXISTS { MATCH (res)--() } DELETE res")
 
+    # Same rule for Tools (ADR-0007). A tool kept only for its authored
+    # governance — typically after fleet reconciliation retired its server —
+    # loses its last edge when the manifest stops mentioning it. No crawl
+    # will ever reconcile a retired server's name again, so without this a
+    # degree-0 tool ghosts in bare-name resolution forever. Live crawled
+    # tools always carry EXPOSES and never match.
+    tx.run("MATCH (t:Tool) WHERE NOT EXISTS { MATCH (t)--() } DELETE t")
+
     # ADR-0004: only a manifest that actually applied bumps the generation —
     # the rejected path returned before Phase 2, leaving caches valid.
     tx.run(BUMP_GENERATION)

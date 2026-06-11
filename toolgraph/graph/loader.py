@@ -169,6 +169,91 @@ def load_crawl_result(result: CrawlResult) -> list[str]:
         return s.execute_write(_merge_crawl, result)
 
 
+def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str], list[str]]:
+    rec = tx.run(
+        "MATCH (s:MCPServer) WHERE NOT s.name IN $keep "
+        "RETURN collect(s.name) AS retired",
+        keep=keep,
+    ).single()
+    retired = sorted(rec["retired"]) if rec else []
+    if not retired:
+        # Nothing changed — don't bump the generation (ADR-0004: the token
+        # invalidates caches; a no-op reconciliation must leave them valid).
+        return [], []
+
+    # Resources these servers provided: candidates for deletion once the
+    # PROVIDES edges drop with the server node below.
+    rec = tx.run(
+        "MATCH (s:MCPServer)-[:PROVIDES]->(r:Resource) WHERE s.name IN $names "
+        "RETURN collect(DISTINCT r.uri) AS uris",
+        names=retired,
+    ).single()
+    resource_uris = rec["uris"] if rec else []
+
+    # A retired server makes no annotation claims anymore (ADR-0006) — kept
+    # tools must not keep citing crawled/medium self-claims from a server
+    # that no longer exists.
+    tx.run(
+        """
+        MATCH (t:Tool) WHERE t.server IN $names
+        REMOVE t.read_only_hint, t.destructive_hint,
+               t.idempotent_hint, t.open_world_hint
+        """,
+        names=retired,
+    )
+    # Same keep-rule as per-server reconciliation: tools with authored
+    # governance are kept (a silent delete would turn a DENY into a false
+    # ALLOW); pure crawl artifacts go.
+    tx.run(
+        """
+        MATCH (t:Tool) WHERE t.server IN $names
+          AND NOT EXISTS { MATCH (t)-[:CAN_CALL|READS|WRITES|GOVERNED_BY]-() }
+        DETACH DELETE t
+        """,
+        names=retired,
+    )
+    rec = tx.run(
+        "MATCH (t:Tool) WHERE t.server IN $names RETURN collect(t.key) AS kept",
+        names=retired,
+    ).single()
+    kept = sorted(rec["kept"]) if rec else []
+
+    # The server node and all its EXPOSES/PROVIDES edges go together — kept
+    # tools lose their EXPOSES here and become honestly drifted.
+    tx.run(
+        "MATCH (s:MCPServer) WHERE s.name IN $names DETACH DELETE s",
+        names=retired,
+    )
+    # ADR-0001 resource rule (same degree-0 filter as ingest Phase 2): a
+    # resource nobody provides and nothing authored references is a crawl
+    # artifact of a dead server. Shared or governed resources keep edges
+    # and never match.
+    tx.run(
+        """
+        MATCH (r:Resource) WHERE r.uri IN $uris
+          AND NOT EXISTS { MATCH (r)--() }
+        DELETE r
+        """,
+        uris=resource_uris,
+    )
+
+    tx.run(BUMP_GENERATION)
+    return retired, [
+        f"tool {k!r} kept after its server was retired from servers.yaml — it "
+        f"retains authored governance (kept so a DENY cannot silently become "
+        f"ALLOW; it is now drifted — remove it from the manifest and re-ingest "
+        f"to retire it)"
+        for k in kept
+    ]
+
+
+def retire_unlisted_servers(keep: set[str]) -> tuple[list[str], list[str]]:
+    """Fleet reconciliation (ADR-0007): retire crawled subgraphs of servers
+    no longer in servers.yaml. Returns (retired server names, warnings)."""
+    with session() as s:
+        return s.execute_write(_retire_unlisted, sorted(keep))
+
+
 def graph_counts() -> dict[str, int]:
     """Node/edge tallies — used by the idempotency check and the demo."""
     query = """
