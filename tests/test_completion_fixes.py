@@ -126,7 +126,7 @@ def test_exception_with_unknown_agent_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any("planer" in w and "not declared" in w for w in warnings)
 
@@ -152,7 +152,7 @@ def test_exception_narrowed_to_missing_resource_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any("file:///wrong" in w and "no READS/WRITES" in w for w in warnings)
 
@@ -395,7 +395,7 @@ def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
             ],
             governed_by={uri: ["secret-deny"]},
         )
-    )
+    ).warnings
 
     assert warnings == []
     assert queries.check_access("planner", "sample::read_url")["verdict"] == "DENY"
@@ -563,7 +563,7 @@ def test_exception_with_no_grant_for_tool_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any("loner" in w and "no CAN_CALL grant" in w for w in warnings)
 
@@ -594,7 +594,7 @@ def test_exception_with_wrong_policy_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any(
         "other-deny" in w and "not governed_by" in w for w in warnings
@@ -626,7 +626,7 @@ def test_wildcard_exception_with_no_reachable_path_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any("dead-on-arrival" in w and "unrelated-deny" in w for w in warnings)
 
@@ -664,7 +664,7 @@ def test_duplicate_policy_id_with_conflicting_effects_is_rejected(graph):
             data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
             governed_by={CSV: ["legacy"]},
         )
-    )
+    ).warnings
     assert warnings
     assert any("duplicate id" in w and "legacy" in w for w in warnings)
 
@@ -693,7 +693,7 @@ def test_exception_against_allow_policy_warns(graph):
                 )
             ],
         )
-    )
+    ).warnings
     assert warnings
     assert any("legacy-allow" in w and "ALLOW" in w for w in warnings)
 
@@ -732,14 +732,14 @@ def test_bare_string_governed_by_via_model_copy_still_normalizes(graph):
         data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
         governed_by={CSV: ["pii-deny"]},
     )
-    assert ingest_governance(good) == []
+    assert ingest_governance(good).warnings == []
     # Inject a bare list[str] via model_copy (bypasses validators)
     bumped = good.model_copy(update={"governed_by": {CSV: ["pii-deny"]}})
-    assert ingest_governance(bumped) == []  # normalization handles it
+    assert ingest_governance(bumped).warnings == []  # normalization handles it
 
     # And the bad shape (typo) is rejected as before
     bad = good.model_copy(update={"governed_by": {CSV: ["dney"]}})
-    warnings = ingest_governance(bad)
+    warnings = ingest_governance(bad).warnings
     assert warnings
     # graph state preserved
     assert queries.check_access("planner", "read_file")["verdict"] == "DENY"

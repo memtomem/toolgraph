@@ -57,7 +57,7 @@ def _gov(*exceptions: ExpectedException) -> Governance:
 
 def test_no_exceptions_means_every_reach_is_violation(graph):
     _seed(graph)
-    assert ingest_governance(_gov()) == []
+    assert ingest_governance(_gov()).warnings == []
     rows = queries.unsafe_callable_tools("planner")
     assert {(r["tool"], r["classification"]) for r in rows} == {
         ("read_file", "violation"),
@@ -77,7 +77,7 @@ def test_matching_exception_marks_row_authorized_but_governed(graph):
                 reason="planner is the PII data owner; reads are by design",
             )
         )
-    ) == []
+    ).warnings == []
     by_tool = {r["tool"]: r for r in queries.unsafe_callable_tools("planner")}
     assert by_tool["read_file"]["classification"] == "authorized_but_governed"
     assert by_tool["read_file"]["exception_reason"].startswith("planner is the PII")
@@ -98,7 +98,7 @@ def test_exception_with_no_resource_covers_every_resource(graph):
                 reason="planner is on-call; emergency writes are authorized",
             )
         )
-    ) == []
+    ).warnings == []
     by_tool = {r["tool"]: r for r in queries.unsafe_callable_tools("planner")}
     assert by_tool["write_file"]["classification"] == "authorized_but_governed"
 
@@ -115,7 +115,7 @@ def test_check_access_evidence_carries_classification_when_agent_known(graph):
                 reason="by design",
             )
         )
-    ) == []
+    ).warnings == []
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"  # verdict semantics unchanged
     [ev] = res["deny_evidence"]
@@ -136,7 +136,7 @@ def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
                 agent="planner", tool="sample::nope", policy="pii-deny", reason="x"
             )
         )
-    )
+    ).warnings
     assert any("nope" in w for w in warnings)
     warnings = ingest_governance(
         _gov(
@@ -144,7 +144,7 @@ def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
                 agent="planner", tool="sample::read_file", policy="no-such-policy", reason="x"
             )
         )
-    )
+    ).warnings
     assert any("no-such-policy" in w for w in warnings)
 
 
@@ -164,7 +164,7 @@ def test_exception_with_no_reason_still_classifies_authorized(graph):
                 # reason intentionally omitted
             )
         )
-    ) == []
+    ).warnings == []
     rows = queries.unsafe_callable_tools("planner")
     by_tool = {r["tool"]: r for r in rows}
     assert by_tool["read_file"]["classification"] == "authorized_but_governed"
@@ -203,7 +203,7 @@ def test_check_access_carries_all_authorized_signal(graph):
                 reason="by design",
             ),
         )
-    ) == []
+    ).warnings == []
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"
     assert res["all_authorized"] is True

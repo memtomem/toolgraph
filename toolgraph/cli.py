@@ -66,20 +66,29 @@ def crawl(
 @app.command("ingest-manifest")
 def ingest_manifest(
     governance: Path = typer.Option(None, help="Path to governance.yaml (defaults to config)."),
+    strict_drift: bool = typer.Option(
+        False, "--strict-drift",
+        help="Treat drifted tool refs (no live EXPOSES edge) as errors that "
+             "reject the manifest. Default: non-fatal notice.",
+    ),
 ) -> None:
     """Ingest authored governance (agents, policies, ACL, data access, GOVERNED_BY)."""
     path = governance or config.settings.governance_config
     gov = load_governance(path)
     schema.init_schema()
-    warnings = ingest_governance(gov)
-    if warnings:
+    report = ingest_governance(gov, strict_drift=strict_drift)
+    if report.warnings:
         # Ingest is atomic: any warning rejects the whole manifest. Reflect
         # that in the headline so an operator with a typo doesn't read
         # "Ingested" as success.
         typer.echo(f"REJECTED — manifest at {path} not applied (graph unchanged)")
-        for w in warnings:
+        for w in report.warnings:
             typer.echo(f"  ⚠ {w}")
+        for n in report.notices:
+            typer.echo(f"  ℹ {n}")
         raise typer.Exit(code=1)
+    for n in report.notices:
+        typer.echo(f"  ℹ {n}")
     typer.echo(f"Ingested governance from {path}")
     typer.echo(f"Governance now: {governance_counts()}")
 

@@ -50,7 +50,7 @@ def scenario(graph):
         ],
         governed_by={CSV: ["pii-deny"]},
     )
-    assert ingest_governance(gov) == []
+    assert ingest_governance(gov).warnings == []
 
 
 def test_check_access_deny(scenario):

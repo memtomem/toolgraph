@@ -127,7 +127,9 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
 
     return [
         f"tool {k!r} no longer exposed by {result.server_name!r} but retains authored "
-        f"governance (kept; re-run ingest-manifest to reconcile)"
+        f"governance (kept so a DENY cannot silently become ALLOW; remove it from the "
+        f"manifest and re-ingest — re-ingesting unchanged just re-targets the stale "
+        f"tool and emits a DRIFT notice)"
         for k in orphaned
     ]
 

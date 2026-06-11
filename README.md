@@ -111,6 +111,8 @@ uv run toolgraph check                                   # verify Neo4j connecti
 uv run toolgraph init-schema                             # uniqueness constraints
 uv run toolgraph crawl --servers examples/servers.yaml   # crawl -> load factual graph
 uv run toolgraph ingest-manifest --governance examples/governance.yaml
+# refs to tools no server currently exposes emit a non-fatal DRIFT notice;
+# add --strict-drift to reject the manifest instead (CI gating, ADR-0002)
 
 # positive-reachability queries
 uv run toolgraph unsafe-tools public-bot          # violations only (default)

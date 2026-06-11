@@ -50,12 +50,12 @@ def test_ambiguous_bare_name_in_ingest_warns(graph):
     _load("beta", ["read_file"])
     warnings = ingest_governance(
         Governance(agents=["planner"], grants=[AccessGrant(agent="planner", tool="read_file")])
-    )
+    ).warnings
     assert any("ambiguous" in w for w in warnings)
     # exact key still resolves
     assert ingest_governance(
         Governance(agents=["planner"], grants=[AccessGrant(agent="planner", tool="alpha::read_file")])
-    ) == []
+    ).warnings == []
 
 
 # --- HIGH: tool-level GOVERNED_BY honored --------------------------------
@@ -91,7 +91,7 @@ def test_missing_policy_id_warns(graph):
             data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
             governed_by={CSV: ["typo-policy"]},
         )
-    )
+    ).warnings
     assert any("typo-policy" in w and "not defined" in w for w in warnings)
     # the bogus deny edge must not exist -> access is not falsely DENY'd
     assert governance_counts()["governed_by"] == 0
@@ -218,13 +218,13 @@ def test_failed_ingest_does_not_mutate_graph(graph):
         data_access=[DataAccess(tool="sample::read_file", resource="file:///x", mode="READS")],
         governed_by={"file:///x": ["deny"]},
     )
-    assert ingest_governance(good) == []
+    assert ingest_governance(good).warnings == []
     before = governance_counts()
     assert queries.check_access("planner", "read_file")["verdict"] == "DENY"
 
     # a manifest with a typo'd policy must be rejected whole — not partially applied
     bad = good.model_copy(update={"governed_by": {"file:///x": ["dney"]}})
-    warnings = ingest_governance(bad)
+    warnings = ingest_governance(bad).warnings
     assert warnings  # rejected
     assert governance_counts() == before  # graph untouched
     assert queries.check_access("planner", "read_file")["verdict"] == "DENY"  # DENY preserved
