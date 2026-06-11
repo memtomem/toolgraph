@@ -211,6 +211,14 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
             # server-qualified key (regression criterion #1).
             row["verdict"] = "AMBIGUOUS_TOOL"
             row["candidates"] = keys
+        elif keys[0] not in facts:
+            # Tool deleted between resolution and the facts read — Neo4j is
+            # read-committed, so the two batch queries can straddle a
+            # concurrent crawl/ingest (the same window check_access closes
+            # with its meta-is-None branch). Report the truth signal instead
+            # of crashing the whole batch (Codex review).
+            row["found"] = False
+            row["verdict"] = "TOOL_NOT_FOUND"
         else:
             key = keys[0]
             f = facts[key]

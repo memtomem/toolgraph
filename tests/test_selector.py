@@ -203,6 +203,28 @@ def test_rank_features_unknown_agent_aborts_selection(graph):
     assert got == {"agent": "nobody", "agent_found": False, "features": []}
 
 
+def test_rank_features_tool_vanishing_mid_batch_reports_not_found(graph, monkeypatch):
+    """Neo4j is read-committed: a concurrent crawl/ingest can delete a tool
+    between the resolve query and the facts query. The row must come back as
+    a structured TOOL_NOT_FOUND, not crash the batch (Codex review)."""
+    _seed()
+    real = selector._tool_facts
+
+    def facts_missing_one(s, keys, agent):
+        facts = real(s, keys, agent)
+        facts.pop("alpha::git_status", None)
+        return facts
+
+    monkeypatch.setattr(selector, "_tool_facts", facts_missing_one)
+    got = selector.rank_features("planner", ["alpha::git_status", "alpha::free_tool"])
+    vanished, survivor = got["features"]
+    assert vanished["found"] is False
+    assert vanished["verdict"] == "TOOL_NOT_FOUND"
+    assert vanished["risk_score"] is None
+    assert survivor["candidate"] == "alpha::free_tool"
+    assert survivor["found"] is True  # the rest of the batch is unaffected
+
+
 # --- eligible_tools: the profile matrix ------------------------------------
 
 
