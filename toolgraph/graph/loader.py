@@ -16,7 +16,7 @@ import json
 from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.schema import tool_key
+from toolgraph.graph.schema import BUMP_GENERATION, tool_key
 from toolgraph.models import CrawlResult
 from toolgraph.uris import normalize_resource_uri
 
@@ -124,6 +124,10 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         name=result.server_name,
         uris=[r["uri"] for r in resources],
     )
+
+    # ADR-0004: same transaction as the mutation, so a reader can never see
+    # new graph state under an old generation (or vice versa).
+    tx.run(BUMP_GENERATION)
 
     return [
         f"tool {k!r} no longer exposed by {result.server_name!r} but retains authored "

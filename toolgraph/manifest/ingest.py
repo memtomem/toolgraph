@@ -20,7 +20,7 @@ from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import resolve_tool_keys
-from toolgraph.graph.schema import exception_key
+from toolgraph.graph.schema import BUMP_GENERATION, exception_key
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
@@ -428,6 +428,10 @@ def _ingest(
     # but untouched resource. Crawled resources keep their PROVIDES edge and
     # never match this degree-0 filter; the loader stays their owner.
     tx.run("MATCH (res:Resource) WHERE NOT EXISTS { MATCH (res)--() } DELETE res")
+
+    # ADR-0004: only a manifest that actually applied bumps the generation —
+    # the rejected path returned before Phase 2, leaving caches valid.
+    tx.run(BUMP_GENERATION)
 
     return [], notices
 

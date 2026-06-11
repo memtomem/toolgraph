@@ -32,6 +32,22 @@ def resolve_tool_keys(s: Session, ref: str) -> list[str]:
     return [r["key"] for r in rows]
 
 
+def graph_generation() -> int:
+    """Current graph generation; 0 when no GraphMeta node exists (empty/reset graph).
+
+    ADR-0004: a monotonic id bumped in the same transaction as every successful
+    crawl load and manifest ingest. Consumers use it for cache invalidation
+    (one integer comparison instead of re-running audit queries) and for
+    pinning selection-telemetry rows to a replayable graph state.
+    """
+    with session() as s:
+        rec = s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) "
+            "RETURN coalesce(m.generation, 0) AS generation"
+        ).single()
+        return rec["generation"] if rec else 0
+
+
 def agent_exists(agent: str) -> bool:
     """Is there an Agent node with this id? Used by the CLI + MCP surfaces to
     return a discriminated AGENT_NOT_FOUND signal instead of silently

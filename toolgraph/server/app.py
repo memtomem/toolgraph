@@ -1,5 +1,9 @@
 """toolgraph as an MCP server: agents query the registry over the same protocol
 it crawls. Thin wrappers over graph.queries — all logic lives there.
+
+Every response carries ``graph_generation`` (ADR-0004) so callers can cache
+graph-derived features and pin telemetry to a replayable graph state. The
+stamp lives HERE, not in the query layer — CLI output stays unchanged.
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ def check_access(agent: str, tool: str) -> dict:
     response also carries ``all_authorized: bool`` — True when every
     deny_evidence row is an operator-declared exception.
     """
-    return queries.check_access(agent, tool)
+    result = queries.check_access(agent, tool)
+    result["graph_generation"] = queries.graph_generation()
+    return result
 
 
 @mcp.tool()
@@ -39,18 +45,33 @@ def unsafe_callable_tools(agent: str, include_authorized: bool = False) -> dict:
     ``agent_found=False`` distinguishes a typo'd agent (returns empty) from
     an agent with zero unsafe tools (also returns empty).
     """
+    generation = queries.graph_generation()
     if not queries.agent_exists(agent):
-        return {"agent": agent, "agent_found": False, "count": 0, "tools": []}
+        return {
+            "agent": agent,
+            "agent_found": False,
+            "count": 0,
+            "tools": [],
+            "graph_generation": generation,
+        }
     tools = queries.unsafe_callable_tools(agent)
     if not include_authorized:
         tools = [t for t in tools if t.get("classification") == "violation"]
-    return {"agent": agent, "agent_found": True, "count": len(tools), "tools": tools}
+    return {
+        "agent": agent,
+        "agent_found": True,
+        "count": len(tools),
+        "tools": tools,
+        "graph_generation": generation,
+    }
 
 
 @mcp.tool()
 def blast_radius(node: str) -> dict:
     """Agents/tools affected if `node` (a resource URI or a policy id) changes."""
-    return queries.blast_radius(node)
+    result = queries.blast_radius(node)
+    result["graph_generation"] = queries.graph_generation()
+    return result
 
 
 @mcp.tool()
@@ -58,14 +79,14 @@ def unmapped_tools(only_granted: bool = True) -> dict:
     """Granted tools (or all tools if `only_granted=False`) with no authored
     READS/WRITES — data-flow effects unclassified."""
     rows = queries.unmapped_tools(only_granted=only_granted)
-    return {"count": len(rows), "tools": rows}
+    return {"count": len(rows), "tools": rows, "graph_generation": queries.graph_generation()}
 
 
 @mcp.tool()
 def orphan_policies() -> dict:
     """Policies no agent currently reaches — likely obsolete or over-narrow."""
     rows = queries.orphan_policies()
-    return {"count": len(rows), "policies": rows}
+    return {"count": len(rows), "policies": rows, "graph_generation": queries.graph_generation()}
 
 
 @mcp.tool()
@@ -78,14 +99,14 @@ def unbacked_edges(include_grants: bool = False) -> dict:
     grant to cite a change-request / runbook).
     """
     rows = queries.unbacked_edges(include_grants=include_grants)
-    return {"count": len(rows), "edges": rows}
+    return {"count": len(rows), "edges": rows, "graph_generation": queries.graph_generation()}
 
 
 @mcp.tool()
 def drifted_tools() -> dict:
     """Tools with authored governance but no live EXPOSES edge — re-ingest needed."""
     rows = queries.drifted_tools()
-    return {"count": len(rows), "tools": rows}
+    return {"count": len(rows), "tools": rows, "graph_generation": queries.graph_generation()}
 
 
 if __name__ == "__main__":
