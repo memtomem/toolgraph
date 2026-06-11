@@ -47,9 +47,9 @@ def test_ingest_is_idempotent(graph):
     _seed_crawl()
     gov = _governance()
 
-    assert ingest_governance(gov) == []  # no unresolved refs
+    assert ingest_governance(gov).warnings == []  # no unresolved refs
     first = governance_counts()
-    assert ingest_governance(gov) == []
+    assert ingest_governance(gov).warnings == []
     second = governance_counts()
 
     assert first == second
@@ -70,5 +70,5 @@ def test_unresolved_tool_ref_warns(graph):
         agents=["planner"],
         grants=[AccessGrant(agent="planner", tool="sample::does_not_exist")],
     )
-    warnings = ingest_governance(gov)
+    warnings = ingest_governance(gov).warnings
     assert any("does_not_exist" in w for w in warnings)

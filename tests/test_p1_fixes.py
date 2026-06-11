@@ -56,11 +56,11 @@ def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
             data_access=[DataAccess(tool="sample::read_file", resource=ENV, mode="READS")],
             governed_by={ENV: ["secrets-deny"]},
         )
-    ) == []
+    ).warnings == []
     assert queries.blast_radius(ENV)["found"] is True
 
     # Re-ingest without any mention of ENV.
-    assert ingest_governance(Governance(**base)) == []
+    assert ingest_governance(Governance(**base)).warnings == []
     res = queries.blast_radius(ENV)
     assert res["found"] is False
     assert res["impacted"] == []
@@ -70,7 +70,7 @@ def test_phase2_keeps_crawled_resource_without_governance(graph):
     """A crawled resource (live PROVIDES) is the loader's property: ingest
     must never prune it, even when no manifest mentions it."""
     _crawl(graph)
-    assert ingest_governance(Governance(agents=["planner"])) == []
+    assert ingest_governance(Governance(agents=["planner"])).warnings == []
     assert queries.blast_radius(CSV)["found"] is True
 
 
@@ -99,7 +99,7 @@ def _governance_with_both_exceptions() -> Governance:
 
 def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
     _crawl(graph)
-    assert ingest_governance(_governance_with_both_exceptions()) == []
+    assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     rows = queries.unsafe_callable_tools("planner")
     assert len(rows) == 1
@@ -111,7 +111,7 @@ def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
 
 def test_check_access_one_deny_row_when_wildcard_and_specific_both_match(graph):
     _crawl(graph)
-    assert ingest_governance(_governance_with_both_exceptions()) == []
+    assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"

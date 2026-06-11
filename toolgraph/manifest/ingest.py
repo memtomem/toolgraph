@@ -14,6 +14,8 @@ unknown tools, and undefined policy ids become warnings that abort the ingest.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
@@ -21,6 +23,25 @@ from toolgraph.graph.queries import resolve_tool_keys
 from toolgraph.graph.schema import exception_key
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
+
+
+@dataclass
+class IngestReport:
+    """Outcome of a manifest ingest (ADR-0002).
+
+    ``warnings`` reject the whole manifest — graph untouched (the atomicity
+    contract). ``notices`` are non-fatal advisories: today, drift — a tool
+    ref that resolves to a node no server currently exposes. A clean apply
+    has empty ``warnings`` but may still carry ``notices``; with
+    ``strict_drift`` drift notices are promoted into ``warnings``.
+    """
+
+    warnings: list[str] = field(default_factory=list)
+    notices: list[str] = field(default_factory=list)
+
+    @property
+    def applied(self) -> bool:
+        return not self.warnings
 
 
 def _normalize_bindings(items: list) -> list[GovernedByBinding]:
@@ -59,15 +80,22 @@ def _resolve_problem(ref: str, matches: list[str]) -> str:
     return f"ambiguous {matches}" if matches else "not found"
 
 
-def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
-    """Two phases in one transaction.
+def _ingest(
+    tx: ManagedTransaction, gov: Governance, strict_drift: bool = False
+) -> tuple[list[str], list[str]]:
+    """Two phases in one transaction; returns (warnings, notices).
 
     Phase 1 validates every reference read-only and collects warnings. If ANY
     warning is found the manifest is rejected whole — nothing is mutated — so a
     typo can never wipe an existing DENY and leave a false ALLOW behind. Phase 2
     runs only for a fully clean manifest: clear authored edges, then re-apply.
+
+    Drift (a resolved tool ref with no live EXPOSES edge) is a NOTICE, not a
+    warning: rejecting would make a fleet with one temporarily-down server
+    un-ingestable. ``strict_drift`` promotes drift to warnings for CI use.
     """
     warnings: list[str] = []
+    notices: list[str] = []
     # Detect duplicate policy ids BEFORE building deny_policies. Without this,
     # a manifest with [Policy(id='x', effect='DENY'), Policy(id='x', effect='ALLOW')]
     # passes deny-policy validation (set-based), then Phase 2 MERGE+SET on the
@@ -242,8 +270,34 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
             (exc.agent, key, resource_uri, exc.policy, exc.reason)
         )
 
+    # ADR-0002 drift contract: a ref can resolve to a Tool node that no
+    # server currently exposes (the loader keeps governed tools so a DENY
+    # never silently becomes ALLOW). Without this check, re-ingesting the
+    # same manifest silently re-grants against the stale node and the drift
+    # persists with zero signal in the authoring loop.
+    referenced_keys = {k for _, k, _, _ in resolved_grants}
+    referenced_keys |= {k for k, _, _, _ in resolved_access}
+    referenced_keys |= {ref for kind, ref, _ in resolved_governed if kind == "tool"}
+    referenced_keys |= {k for _, k, _, _, _ in resolved_exceptions}
+    if referenced_keys:
+        drifted = [
+            r["key"]
+            for r in tx.run(
+                "MATCH (t:Tool) WHERE t.key IN $keys "
+                "AND NOT EXISTS { MATCH (:MCPServer)-[:EXPOSES]->(t) } "
+                "RETURN t.key AS key ORDER BY key",
+                keys=sorted(referenced_keys),
+            )
+        ]
+        for key in drifted:
+            (warnings if strict_drift else notices).append(
+                f"DRIFT: tool {key!r} resolves but no server currently exposes "
+                f"it — authored governance targets a stale tool. Remove it from "
+                f"the manifest, or re-crawl its server if it should still exist."
+            )
+
     if warnings:  # reject the whole manifest — do not mutate
-        return warnings
+        return warnings, notices
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
     tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]-() DELETE r")
@@ -375,13 +429,18 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
     # never match this degree-0 filter; the loader stays their owner.
     tx.run("MATCH (res:Resource) WHERE NOT EXISTS { MATCH (res)--() } DELETE res")
 
-    return []
+    return [], notices
 
 
-def ingest_governance(gov: Governance) -> list[str]:
-    """Apply the manifest atomically; return warnings (graph untouched if non-empty)."""
+def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestReport:
+    """Apply the manifest atomically.
+
+    Non-empty ``report.warnings`` means rejected — graph untouched.
+    ``report.notices`` are non-fatal drift advisories (see IngestReport).
+    """
     with session() as s:
-        return s.execute_write(_ingest, gov)
+        warnings, notices = s.execute_write(_ingest, gov, strict_drift)
+        return IngestReport(warnings=warnings, notices=notices)
 
 
 def governance_counts() -> dict[str, int]:

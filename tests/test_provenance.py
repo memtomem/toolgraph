@@ -141,7 +141,7 @@ def test_bare_string_governed_by_still_works(graph):
             ],
             governed_by={CSV: ["pii-deny"]},  # bare string, no provenance
         )
-    ) == []
+    ).warnings == []
     with driver.session() as s:
         gov_edge = s.run(
             "MATCH (:Resource)-[r:GOVERNED_BY]->(:Policy {id:'pii-deny'}) "
