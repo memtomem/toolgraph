@@ -75,15 +75,27 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
     # `exc.reason IS NOT NULL`. ``reason`` is optional on ExpectedException;
     # using it as the match signal would misclassify a valid no-reason
     # exception as a violation.
+    #
+    # Exceptions are COLLECTED, not row-multiplied: a wildcard (resource IS
+    # NULL) and a resource-specific exception can both match one deny path,
+    # and DISTINCT cannot collapse rows whose ``reason`` strings differ —
+    # which duplicated evidence rows. One row per path; the most specific
+    # exception (resource-bound over wildcard) supplies the reason.
     for r in s.run(
         """
         MATCH (t:Tool {key:$key})-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
         OPTIONAL MATCH (exc:ExpectedException {tool_key:$key, policy:p.id})
           WHERE ($agent IS NULL OR exc.agent = $agent)
             AND (exc.resource IS NULL OR exc.resource = r.uri)
-        RETURN DISTINCT type(acc) AS mode, r.uri AS resource, p.id AS policy,
-               acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
-               gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
+        WITH type(acc) AS mode, r.uri AS resource, p.id AS policy,
+             acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
+             gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
+             collect(DISTINCT exc) AS excs
+        WITH mode, resource, policy, source, confidence, evidence,
+             gov_source, gov_confidence, gov_evidence,
+             coalesce(head([e IN excs WHERE e.resource IS NOT NULL]), head(excs)) AS exc
+        RETURN mode, resource, policy, source, confidence, evidence,
+               gov_source, gov_confidence, gov_evidence,
                exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
         ORDER BY resource, policy
         """,
@@ -113,8 +125,11 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
         MATCH (t:Tool {key:$key})-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
         OPTIONAL MATCH (exc:ExpectedException {tool_key:$key, policy:p.id})
           WHERE ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
-        RETURN DISTINCT p.id AS policy,
-               g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
+        WITH p.id AS policy,
+             g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
+             collect(DISTINCT exc) AS excs
+        WITH policy, source, confidence, evidence, head(excs) AS exc
+        RETURN policy, source, confidence, evidence,
                exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
         ORDER BY policy
         """,
@@ -286,16 +301,24 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
     """
     rows: list[dict] = []
     with session() as s:
+        # Same exception-collection rule as _deny_evidence_for: one row per
+        # deny path, the most specific matching exception wins the reason.
         for r in s.run(
             """
             MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)
                   -[acc:READS|WRITES]->(res:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
             OPTIONAL MATCH (exc:ExpectedException {agent:$agent, tool_key:t.key, policy:p.id})
               WHERE exc.resource IS NULL OR exc.resource = res.uri
-            RETURN DISTINCT t.key AS tool_key, t.name AS tool, t.server AS server,
-                   'resource' AS via, type(acc) AS mode, res.uri AS resource, p.id AS policy,
-                   acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
-                   gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
+            WITH t.key AS tool_key, t.name AS tool, t.server AS server,
+                 type(acc) AS mode, res.uri AS resource, p.id AS policy,
+                 acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
+                 gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
+                 collect(DISTINCT exc) AS excs
+            WITH tool_key, tool, server, mode, resource, policy,
+                 source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
+                 coalesce(head([e IN excs WHERE e.resource IS NOT NULL]), head(excs)) AS exc
+            RETURN tool_key, tool, server, 'resource' AS via, mode, resource, policy,
+                   source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
                    exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
             ORDER BY tool, resource
             """,
@@ -322,9 +345,13 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
             OPTIONAL MATCH (exc:ExpectedException {agent:$agent, tool_key:t.key, policy:p.id})
               WHERE exc.resource IS NULL
-            RETURN DISTINCT t.key AS tool_key, t.name AS tool, t.server AS server,
-                   'tool' AS via, null AS mode, null AS resource, p.id AS policy,
-                   g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
+            WITH t.key AS tool_key, t.name AS tool, t.server AS server, p.id AS policy,
+                 g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
+                 collect(DISTINCT exc) AS excs
+            WITH tool_key, tool, server, policy, source, confidence, evidence,
+                 head(excs) AS exc
+            RETURN tool_key, tool, server, 'tool' AS via, null AS mode, null AS resource,
+                   policy, source, confidence, evidence,
                    exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
             ORDER BY tool
             """,

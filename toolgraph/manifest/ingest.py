@@ -367,6 +367,14 @@ def _ingest(tx: ManagedTransaction, gov: Governance) -> list[str]:
                 bindings=payload,
             )
 
+    # ADR-0001: node existence is a truth signal, for Resources too. A
+    # resource the manifest stopped mentioning had its authored edges cleared
+    # above and nothing re-applied; leaving the node would make blast_radius
+    # answer found:true / impacted:[] for it — indistinguishable from a real
+    # but untouched resource. Crawled resources keep their PROVIDES edge and
+    # never match this degree-0 filter; the loader stays their owner.
+    tx.run("MATCH (res:Resource) WHERE NOT EXISTS { MATCH (res)--() } DELETE res")
+
     return []
 
 
