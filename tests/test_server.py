@@ -87,6 +87,9 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
             "drifted_tools",
             "destructive_unsafeguarded",
             "annotation_contradictions",
+            "rank_features",
+            "eligible_tools",
+            "selection_explain",
         }
 
         result = await session.call_tool(
@@ -132,6 +135,36 @@ async def test_mcp_wrapper_returns_documented_shape(
     assert collection_key in got, f"{tool_name} missing {collection_key!r} key"
     assert isinstance(got[collection_key], list)
     assert got["count"] == len(got[collection_key])
+
+
+async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container):
+    """ADR-0005 gate criterion: the MCP wrappers return the same structured
+    shape as the direct selector functions, plus the generation stamp."""
+    from toolgraph.graph import selector
+
+    _seed()
+    candidates = ["read_file", "sample::ping", "nope"]
+    async with open_session(_spec(neo4j_container)) as session:
+        await session.initialize()
+        ranked = _structured(await session.call_tool(
+            "rank_features", {"agent": "support-bot", "candidates": candidates}
+        ))
+        filtered = _structured(await session.call_tool(
+            "eligible_tools",
+            {"agent": "support-bot", "candidates": candidates, "profile": "review"},
+        ))
+        explained = _structured(await session.call_tool(
+            "selection_explain", {"agent": "support-bot", "tool": "read_file"}
+        ))
+
+    generation = queries.graph_generation()
+    for got, expected in (
+        (ranked, selector.rank_features("support-bot", candidates)),
+        (filtered, selector.eligible_tools("support-bot", candidates, profile="review")),
+        (explained, selector.selection_explain("support-bot", "read_file")),
+    ):
+        expected["graph_generation"] = generation
+        assert got == expected
 
 
 async def test_mcp_blast_radius_carries_found_flag(graph, neo4j_container):

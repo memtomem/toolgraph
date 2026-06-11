@@ -74,8 +74,14 @@ def _radius_path(agent: str | None, tool: str | None, mode: str | None, resource
     return None
 
 
-def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[dict]:
-    """All ways the tool identified by `key` reaches a DENY policy.
+def _deny_evidence_batch(
+    s: Session, keys: list[str], agent: str | None = None
+) -> dict[str, list[dict]]:
+    """All ways each tool in ``keys`` reaches a DENY policy, in two queries.
+
+    Batched so the selector surface (ADR-0005) can evaluate N candidates
+    without N round trips — per-candidate calls scale linearly, which is
+    unacceptable on the online selection path.
 
     Each row carries:
     - ``provenance``: the load-bearing edge's provenance — the data-access edge
@@ -86,7 +92,7 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
     - ``classification`` (when ``agent`` given): ``violation`` or
       ``authorized_but_governed`` based on a matching ExpectedException.
     """
-    evidence: list[dict] = []
+    evidence: dict[str, list[dict]] = {k: [] for k in keys}
     # Codex PR #1 review: detect exception match via `exc IS NOT NULL`, NOT via
     # `exc.reason IS NOT NULL`. ``reason`` is optional on ExpectedException;
     # using it as the match signal would misclassify a valid no-reason
@@ -99,25 +105,28 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
     # exception (resource-bound over wildcard) supplies the reason.
     for r in s.run(
         """
-        MATCH (t:Tool {key:$key})-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        OPTIONAL MATCH (exc:ExpectedException {tool_key:$key, policy:p.id})
-          WHERE ($agent IS NULL OR exc.agent = $agent)
+        MATCH (t:Tool)-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+        WHERE t.key IN $keys
+        OPTIONAL MATCH (exc:ExpectedException {policy:p.id})
+          WHERE exc.tool_key = t.key
+            AND ($agent IS NULL OR exc.agent = $agent)
             AND (exc.resource IS NULL OR exc.resource = r.uri)
-        WITH type(acc) AS mode, r.uri AS resource, p.id AS policy,
+        WITH t.key AS key, type(acc) AS mode, r.uri AS resource, p.id AS policy,
              acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
              gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
              collect(DISTINCT exc) AS excs
-        WITH mode, resource, policy, source, confidence, evidence,
+        WITH key, mode, resource, policy, source, confidence, evidence,
              gov_source, gov_confidence, gov_evidence,
              coalesce(head([e IN excs WHERE e.resource IS NOT NULL]), head(excs)) AS exc
-        RETURN mode, resource, policy, source, confidence, evidence,
+        RETURN key, mode, resource, policy, source, confidence, evidence,
                gov_source, gov_confidence, gov_evidence,
                exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
-        ORDER BY resource, policy
+        ORDER BY key, resource, policy
         """,
-        key=key,
+        keys=keys,
         agent=agent,
     ):
+        key = r["key"]
         d = {
             "via": "resource",
             "mode": r["mode"],
@@ -135,23 +144,26 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
             )
             if r["exception_reason"] is not None:
                 d["exception_reason"] = r["exception_reason"]
-        evidence.append(d)
+        evidence[key].append(d)
     for r in s.run(
         """
-        MATCH (t:Tool {key:$key})-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        OPTIONAL MATCH (exc:ExpectedException {tool_key:$key, policy:p.id})
-          WHERE ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
-        WITH p.id AS policy,
+        MATCH (t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+        WHERE t.key IN $keys
+        OPTIONAL MATCH (exc:ExpectedException {policy:p.id})
+          WHERE exc.tool_key = t.key
+            AND ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
+        WITH t.key AS key, p.id AS policy,
              g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
              collect(DISTINCT exc) AS excs
-        WITH policy, source, confidence, evidence, head(excs) AS exc
-        RETURN policy, source, confidence, evidence,
+        WITH key, policy, source, confidence, evidence, head(excs) AS exc
+        RETURN key, policy, source, confidence, evidence,
                exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
-        ORDER BY policy
+        ORDER BY key, policy
         """,
-        key=key,
+        keys=keys,
         agent=agent,
     ):
+        key = r["key"]
         d = {
             "via": "tool",
             "policy": r["policy"],
@@ -164,8 +176,13 @@ def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[d
             )
             if r["exception_reason"] is not None:
                 d["exception_reason"] = r["exception_reason"]
-        evidence.append(d)
+        evidence[key].append(d)
     return evidence
+
+
+def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[dict]:
+    """Single-tool view over ``_deny_evidence_batch`` (see there for row shape)."""
+    return _deny_evidence_batch(s, [key], agent=agent)[key]
 
 
 def _prov(row) -> dict:

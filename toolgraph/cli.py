@@ -9,7 +9,7 @@ import typer
 
 from toolgraph import config
 from toolgraph.crawler.crawl import DEFAULT_TIMEOUT, crawl_all, load_servers_config
-from toolgraph.graph import driver, loader, queries, schema
+from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 
@@ -234,6 +234,72 @@ def annotation_contradictions() -> None:
     Both sides cite their provenance; the operator picks the stronger evidence.
     """
     typer.echo(json.dumps(queries.annotation_contradictions(), indent=2))
+
+
+def _selector_profile(profile: str) -> str:
+    if profile not in selector.PROFILES:
+        raise typer.BadParameter(
+            f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
+        )
+    return profile
+
+
+def _require_agent(agent: str) -> None:
+    """Selection with an unknown agent is a context-construction error, not an
+    empty result — mirror unsafe-tools: diagnostic to stderr, exit 1."""
+    if not queries.agent_exists(agent):
+        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph", err=True)
+        raise typer.Exit(code=1)
+
+
+@app.command("rank-features")
+def rank_features(agent: str, candidates: list[str]) -> None:
+    """Batch selection features for CANDIDATES (ADR-0005), in input order.
+
+    Facts only — resolution, grant, DENY classification + paths, drift,
+    mapping, evidence coverage, annotation self-claims — plus the rule-based
+    risk_score from the published fixed table. No relevance, no learning.
+    """
+    _require_agent(agent)
+    typer.echo(json.dumps(selector.rank_features(agent, candidates), indent=2))
+
+
+@app.command("eligible-tools")
+def eligible_tools(
+    agent: str,
+    candidates: list[str],
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE, "--profile",
+        help="Named rule set: strict (production default) / review / explore.",
+    ),
+) -> None:
+    """Hard-filter CANDIDATES with reject reasons + policy-evidence paths.
+
+    A learned consumer may rerank the eligible list but may never resurrect
+    a rejected row (ADR-0005).
+    """
+    _selector_profile(profile)
+    _require_agent(agent)
+    typer.echo(
+        json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2)
+    )
+
+
+@app.command("selection-explain")
+def selection_explain(
+    agent: str,
+    tool: str,
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE, "--profile",
+        help="Named rule set: strict (production default) / review / explore.",
+    ),
+) -> None:
+    """Compact human-readable reasons why TOOL is eligible/rejected for AGENT."""
+    _selector_profile(profile)
+    _require_agent(agent)
+    typer.echo(
+        json.dumps(selector.selection_explain(agent, tool, profile=profile), indent=2)
+    )
 
 
 if __name__ == "__main__":
