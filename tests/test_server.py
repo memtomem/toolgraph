@@ -85,6 +85,8 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
             "orphan_policies",
             "unbacked_edges",
             "drifted_tools",
+            "destructive_unsafeguarded",
+            "annotation_contradictions",
         }
 
         result = await session.call_tool(
@@ -108,6 +110,8 @@ _WRAPPER_CASES = [
     ("orphan_policies", {}, "policies"),
     ("unbacked_edges", {}, "edges"),
     ("drifted_tools", {}, "tools"),
+    ("destructive_unsafeguarded", {}, "tools"),
+    ("annotation_contradictions", {}, "contradictions"),
 ]
 
 

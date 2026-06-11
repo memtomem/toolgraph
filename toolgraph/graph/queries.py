@@ -510,6 +510,89 @@ def drifted_tools() -> list[dict]:
         return [dict(r) for r in s.run(cypher)]
 
 
+def _annotation_provenance(exposes_evidence: str | None) -> dict:
+    """Provenance for a tool-annotation claim (ADR-0006).
+
+    Annotations are the server's self-claims: crawled facts, but unverified —
+    so ``confidence: medium``, never the ``high`` of EXPOSES/PROVIDES. The
+    evidence pointer is the EXPOSES edge's (the annotation arrived on the same
+    crawl pass); null when the tool has drifted off its server.
+    """
+    return {"source": "crawled", "confidence": "medium", "evidence": exposes_evidence}
+
+
+def destructive_unsafeguarded() -> list[dict]:
+    """Tools hinting ``destructiveHint: true`` with no GOVERNED_BY path at all —
+    neither directly on the tool nor via any resource it reads/writes.
+
+    This is an authoring priority queue, not a verdict: the server claims the
+    tool is destructive, and no operator has bound a policy anywhere near it.
+    Annotations never auto-create edges (ADR-0006) — each row cites the
+    annotation's provenance and leaves the authoring decision to the operator.
+    """
+    cypher = """
+    MATCH (t:Tool)
+    WHERE t.destructive_hint = true
+      AND NOT EXISTS { MATCH (t)-[:GOVERNED_BY]->(:Policy) }
+      AND NOT EXISTS { MATCH (t)-[:READS|WRITES]->(:Resource)-[:GOVERNED_BY]->(:Policy) }
+    OPTIONAL MATCH (:MCPServer)-[e:EXPOSES]->(t)
+    OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
+    OPTIONAL MATCH (t)-[acc:READS|WRITES]->(res:Resource)
+    RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
+           e.evidence AS exposes_evidence,
+           collect(DISTINCT a.id) AS granted_to,
+           [x IN collect(DISTINCT {mode:type(acc), resource:res.uri})
+            WHERE x.mode IS NOT NULL AND x.resource IS NOT NULL] AS data_access
+    ORDER BY tool_key
+    """
+    rows: list[dict] = []
+    with session() as s:
+        for r in s.run(cypher):
+            d = dict(r)
+            d["annotation_claim"] = "destructiveHint: true"
+            d["annotation_provenance"] = _annotation_provenance(r["exposes_evidence"])
+            d.pop("exposes_evidence", None)
+            rows.append(d)
+    return rows
+
+
+def annotation_contradictions() -> list[dict]:
+    """Authored WRITES edges on tools hinting ``readOnlyHint: true``.
+
+    One side is wrong — the server's self-claim or the operator's assertion —
+    and the analyzer's job is to make the disagreement visible, not to pick a
+    winner. Both sides cite their provenance so the operator can chase the
+    stronger evidence (ADR-0006).
+    """
+    cypher = """
+    MATCH (t:Tool)-[w:WRITES]->(res:Resource)
+    WHERE t.read_only_hint = true
+    OPTIONAL MATCH (:MCPServer)-[e:EXPOSES]->(t)
+    RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
+           res.uri AS resource, e.evidence AS exposes_evidence,
+           w.source AS source, w.confidence AS confidence, w.evidence AS evidence
+    ORDER BY tool_key, resource
+    """
+    rows: list[dict] = []
+    with session() as s:
+        for r in s.run(cypher):
+            rows.append(
+                {
+                    "tool_key": r["tool_key"],
+                    "tool": r["tool"],
+                    "server": r["server"],
+                    "resource": r["resource"],
+                    "annotation_claim": "readOnlyHint: true",
+                    "annotation_provenance": _annotation_provenance(
+                        r["exposes_evidence"]
+                    ),
+                    "authored_claim": f"WRITES {r['resource']}",
+                    "authored_provenance": _prov(r),
+                }
+            )
+    return rows
+
+
 def blast_radius(node: str) -> dict:
     """Who/what is affected if a resource or a policy changes (with evidence paths).
 

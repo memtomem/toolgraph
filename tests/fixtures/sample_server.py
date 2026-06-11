@@ -7,17 +7,18 @@
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 
 def build(port: int = 8077) -> FastMCP:
     mcp = FastMCP("sample-server", host="127.0.0.1", port=port)
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     def read_file(path: str) -> str:
         """Read a file."""
         return f"contents of {path}"
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
     def write_file(path: str, content: str) -> str:
         """Write a file."""
         return "ok"

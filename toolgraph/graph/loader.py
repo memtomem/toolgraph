@@ -40,18 +40,29 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
             "name": t.name,
             "description": t.description,
             "input_schema": json.dumps(t.input_schema) if t.input_schema is not None else None,
+            "read_only_hint": t.read_only_hint,
+            "destructive_hint": t.destructive_hint,
+            "idempotent_hint": t.idempotent_hint,
+            "open_world_hint": t.open_world_hint,
         }
         for t in result.tools
     ]
     # EXPOSES carries crawled provenance: source/confidence/evidence so a reader
     # can distinguish facts (here) from operator assertions (CAN_CALL etc.).
+    # Annotation hints (ADR-0006) are SET unconditionally: a null value removes
+    # the property, so a hint the server stopped sending is cleared on the same
+    # crawl pass that owns the node (same lifecycle as description).
     tx.run(
         """
         MATCH (s:MCPServer {name:$name})
         UNWIND $tools AS t
         MERGE (tool:Tool {key:t.key})
         SET tool.name=t.name, tool.server=$name,
-            tool.description=t.description, tool.input_schema=t.input_schema
+            tool.description=t.description, tool.input_schema=t.input_schema,
+            tool.read_only_hint=t.read_only_hint,
+            tool.destructive_hint=t.destructive_hint,
+            tool.idempotent_hint=t.idempotent_hint,
+            tool.open_world_hint=t.open_world_hint
         MERGE (s)-[e:EXPOSES]->(tool)
         SET e.source='crawled', e.confidence='high', e.evidence=$evidence
         """,

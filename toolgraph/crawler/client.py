@@ -13,6 +13,24 @@ def _endpoint(spec: ServerSpec) -> str | None:
     return spec.url
 
 
+def _annotation_fields(tool) -> dict:
+    """Tool annotations as ToolRecord fields (ADR-0006).
+
+    Annotations are optional in the protocol; absent ones stay None so the
+    loader can clear node properties the server stopped sending (SET to null
+    removes the property — same reconciliation lifecycle as description).
+    """
+    ann = getattr(tool, "annotations", None)
+    if ann is None:
+        return {}
+    return {
+        "read_only_hint": ann.readOnlyHint,
+        "destructive_hint": ann.destructiveHint,
+        "idempotent_hint": ann.idempotentHint,
+        "open_world_hint": ann.openWorldHint,
+    }
+
+
 async def _list_all_tools(session) -> list[ToolRecord]:
     """Drain ``list_tools`` pages until ``nextCursor`` is exhausted.
 
@@ -26,7 +44,12 @@ async def _list_all_tools(session) -> list[ToolRecord]:
     while True:
         listed = await session.list_tools(cursor=cursor)
         out.extend(
-            ToolRecord(name=t.name, description=t.description, input_schema=t.inputSchema)
+            ToolRecord(
+                name=t.name,
+                description=t.description,
+                input_schema=t.inputSchema,
+                **_annotation_fields(t),
+            )
             for t in listed.tools
         )
         cursor = getattr(listed, "nextCursor", None)
