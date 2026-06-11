@@ -94,3 +94,35 @@ def test_mcp_responses_carry_graph_generation(graph):
 
     got = unmapped_tools.fn() if hasattr(unmapped_tools, "fn") else unmapped_tools()
     assert got["graph_generation"] == expected
+
+
+def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
+    """Codex review of PR #22: result and generation are separate reads under
+    read-committed isolation, so a write landing between them must not mispair
+    state with generation. The bracket (read gen, fetch, read gen, compare)
+    retries until stable: simulate a crawl committing mid-fetch."""
+    from toolgraph.server import app
+    from toolgraph.server.app import check_access
+
+    loader.load_crawl_result(_crawl())
+    ingest_governance(_governance())
+
+    # Generation sequence across bracket reads: 2, then 3 (a write slipped
+    # in after the first fetch), then stable 3s — first bracket fails,
+    # second succeeds and must stamp 3.
+    seq = iter([2, 3, 3, 3])
+    monkeypatch.setattr(app.queries, "graph_generation", lambda: next(seq))
+    fetches = 0
+    real_check_access = app.queries.check_access
+
+    def counting_check_access(agent, tool):
+        nonlocal fetches
+        fetches += 1
+        return real_check_access(agent, tool)
+
+    monkeypatch.setattr(app.queries, "check_access", counting_check_access)
+
+    fn = check_access.fn if hasattr(check_access, "fn") else check_access
+    got = fn("support-bot", "read_file")
+    assert got["graph_generation"] == 3
+    assert fetches == 2  # first bracket discarded, second accepted
