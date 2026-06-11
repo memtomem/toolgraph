@@ -140,5 +140,38 @@ def drifted_tools() -> dict:
     return _with_generation(fetch)
 
 
+@mcp.tool()
+def destructive_unsafeguarded() -> dict:
+    """Tools hinting ``destructiveHint: true`` with no GOVERNED_BY path —
+    neither directly on the tool nor via any resource it reads/writes.
+
+    The hint is the server's self-claim (``crawled``/``medium``, ADR-0006):
+    these rows are an authoring priority queue, not violations. Annotations
+    never auto-create edges; the operator authors the policy binding.
+    """
+
+    def fetch() -> dict:
+        rows = queries.destructive_unsafeguarded()
+        return {"count": len(rows), "tools": rows}
+
+    return _with_generation(fetch)
+
+
+@mcp.tool()
+def annotation_contradictions() -> dict:
+    """Authored WRITES edges on tools hinting ``readOnlyHint: true``.
+
+    One side is wrong — the server's self-claim or the operator's assertion.
+    Each row cites both provenances so the operator can chase the stronger
+    evidence; the analyzer never picks a winner (ADR-0006).
+    """
+
+    def fetch() -> dict:
+        rows = queries.annotation_contradictions()
+        return {"count": len(rows), "contradictions": rows}
+
+    return _with_generation(fetch)
+
+
 if __name__ == "__main__":
     mcp.run()

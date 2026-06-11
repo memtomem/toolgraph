@@ -43,6 +43,13 @@ class ToolRecord(BaseModel):
     name: str
     description: str | None = None
     input_schema: dict | None = None
+    # MCP tool annotations (ADR-0006): the server's self-claims about its own
+    # behavior. Crawlable, but unverified by anyone — they surface with
+    # ``confidence: medium``, never ``high`` like EXPOSES/PROVIDES.
+    read_only_hint: bool | None = None
+    destructive_hint: bool | None = None
+    idempotent_hint: bool | None = None
+    open_world_hint: bool | None = None
 
 
 class ResourceRecord(BaseModel):

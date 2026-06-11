@@ -126,6 +126,8 @@ uv run toolgraph orphan-policies                    # policies no agent currentl
 uv run toolgraph unbacked-edges                     # READS/WRITES/GOVERNED_BY w/ no evidence
 uv run toolgraph unbacked-edges --include-grants    # also audit CAN_CALL grants
 uv run toolgraph drift                              # tools w/ governance but no live EXPOSES
+uv run toolgraph destructive-unsafeguarded          # destructive-hinted tools w/ no policy path
+uv run toolgraph annotation-contradictions          # authored WRITES vs readOnlyHint claims
 ```
 
 ### Exit codes
@@ -225,6 +227,31 @@ When a DENY fires via a resource path, the result row includes both
 `policy_provenance` (the binding evidence, attached only when the author
 cited one).
 
+### Tool annotations are self-claims, not facts
+
+The crawler stores MCP tool annotations (`readOnlyHint`, `destructiveHint`,
+`idempotentHint`, `openWorldHint`) as Tool-node properties on the same crawl
+pass that owns the node, and clears any hint the server stops sending
+([ADR-0006](docs/adr/0006-crawl-tool-annotations-as-self-claims.md)).
+
+Their provenance is `crawled` / **`medium`** — deliberately one tier below
+EXPOSES/PROVIDES (`high`). "The server advertised this tool" is
+protocol-observable; "this tool is read-only" is the server's *own unverified
+claim about itself*, and a lying or sloppy server can hint anything. Letting
+hints launder into the same confidence tier as protocol facts would defeat the
+provenance model.
+
+Annotations never auto-create READS/WRITES/GOVERNED_BY edges — they only feed
+two audit queries that join self-claims against authored truth:
+
+- `destructive-unsafeguarded` — tools hinting destructive with no
+  GOVERNED_BY path at all (direct or via any resource they touch). An
+  authoring priority queue at zero authoring cost, not a verdict.
+- `annotation-contradictions` — authored WRITES edges on tools hinting
+  `readOnlyHint: true`. One side is wrong; each row cites both provenances
+  (the hint's crawl pass, the authored edge's evidence pointer) and the
+  operator picks the stronger evidence.
+
 ## toolgraph as an MCP server
 
 toolgraph exposes its governance and audit queries as MCP tools, so an agent
@@ -236,7 +263,8 @@ uv run toolgraph serve --http     # streamable-http
 ```
 
 Tools: `check_access`, `unsafe_callable_tools`, `blast_radius`,
-`unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`.
+`unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`,
+`destructive_unsafeguarded`, `annotation_contradictions`.
 
 ## Inputs
 
@@ -267,7 +295,8 @@ toolgraph/
   manifest/  parse + ingest authored governance (idempotent)
   server/    FastMCP server exposing the queries as MCP tools
   cli.py     crawl / ingest-manifest / check-access / unsafe-tools / blast-radius /
-             unmapped-tools / orphan-policies / unbacked-edges / drift / serve / reset
+             unmapped-tools / orphan-policies / unbacked-edges / drift /
+             destructive-unsafeguarded / annotation-contradictions / serve / reset
 ```
 
 ## Tests

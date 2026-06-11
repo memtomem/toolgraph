@@ -217,5 +217,24 @@ def drift() -> None:
     typer.echo(json.dumps(queries.drifted_tools(), indent=2))
 
 
+@app.command("destructive-unsafeguarded")
+def destructive_unsafeguarded() -> None:
+    """Destructive-hinted tools with no GOVERNED_BY path (direct or via any resource).
+
+    The hint is the server's self-claim (crawled/medium, ADR-0006) — these rows
+    are an authoring priority queue, not violations.
+    """
+    typer.echo(json.dumps(queries.destructive_unsafeguarded(), indent=2))
+
+
+@app.command("annotation-contradictions")
+def annotation_contradictions() -> None:
+    """Authored WRITES on tools hinting readOnlyHint: true — one side is wrong.
+
+    Both sides cite their provenance; the operator picks the stronger evidence.
+    """
+    typer.echo(json.dumps(queries.annotation_contradictions(), indent=2))
+
+
 if __name__ == "__main__":
     app()
