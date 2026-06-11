@@ -15,7 +15,11 @@ import yaml
 from typer.testing import CliRunner
 
 from toolgraph import cli
-from toolgraph.crawler.crawl import fleet_keep_names
+from toolgraph.crawler.crawl import (
+    duplicate_identities,
+    duplicate_name_overrides,
+    fleet_keep_names,
+)
 from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
@@ -68,16 +72,27 @@ def test_keep_is_named_specs_plus_crawled_names():
 
 
 def test_named_failure_is_protected_not_blocking():
-    specs = [ServerSpec(name="flaky", command="cmd")]
-    keep, blockers = fleet_keep_names(specs, [], [("flaky", "timeout after 1s")])
+    spec = ServerSpec(name="flaky", command="cmd")
+    keep, blockers = fleet_keep_names([spec], [], [(spec, "timeout after 1s")])
     assert keep == {"flaky"}
     assert blockers == []
 
 
 def test_unnamed_failure_blocks_the_prune():
-    specs = [ServerSpec(command="npx flaky-server")]
-    keep, blockers = fleet_keep_names(
-        specs, [], [("npx flaky-server", "timeout after 1s")]
+    spec = ServerSpec(command="npx flaky-server")
+    keep, blockers = fleet_keep_names([spec], [], [(spec, "timeout after 1s")])
+    assert blockers == ["npx flaky-server"]
+
+
+def test_label_collision_does_not_protect_unnamed_failure():
+    """An unnamed spec whose command equals another spec's name is still an
+    unidentifiable failure — blocker detection must ride on the spec, not on
+    a display label (Codex review of this branch caught it)."""
+    named = ServerSpec(name="npx flaky-server", command="cmd-a")
+    unnamed = ServerSpec(command="npx flaky-server")
+    results = [CrawlResult(server_name="npx flaky-server", transport="stdio")]
+    _, blockers = fleet_keep_names(
+        [named, unnamed], results, [(unnamed, "timeout after 1s")]
     )
     assert blockers == ["npx flaky-server"]
 
@@ -85,6 +100,24 @@ def test_unnamed_failure_blocks_the_prune():
 def test_empty_fleet_keeps_nothing():
     keep, blockers = fleet_keep_names([], [], [])
     assert keep == set() and blockers == []
+
+
+def test_duplicate_name_overrides_detected():
+    specs = [
+        ServerSpec(name="dup", command="cmd-a"),
+        ServerSpec(name="dup", command="cmd-b"),
+        ServerSpec(name="solo", command="cmd-c"),
+    ]
+    assert duplicate_name_overrides(specs) == {"dup"}
+
+
+def test_duplicate_identities_across_results_and_named_failures():
+    # An unnamed server self-reporting a failed named spec's name is the
+    # same identity collision, one crawl later.
+    failed = ServerSpec(name="pinned", command="cmd-a")
+    results = [CrawlResult(server_name="pinned", transport="stdio")]
+    assert duplicate_identities(results, [(failed, "boom")]) == {"pinned"}
+    assert duplicate_identities(results, []) == set()
 
 
 # --- retirement semantics (real graph) ------------------------------------
@@ -188,6 +221,35 @@ def test_rename_unambiguates_bare_twin(graph):
     assert queries.check_access("planner", "write_file")["verdict"] == "NOT_GRANTED"
 
 
+def test_reingest_without_tool_collects_retired_governed_ghost(graph):
+    """The kept-tool warning's exit path must actually work: once the
+    manifest stops mentioning a retired server's governed tool, re-ingest
+    deletes the degree-0 ghost — no crawl will ever reconcile that server's
+    name again (Codex review of this branch caught it)."""
+    _load("sample", [ToolRecord(name="write_file")])
+    _load("sample_v2", [ToolRecord(name="write_file")])
+    report = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="legacy-deny", effect="DENY")],
+            governed_by={"sample::write_file": ["legacy-deny"]},
+        )
+    )
+    assert report.warnings == []
+
+    retired, warnings = loader.retire_unlisted_servers({"sample_v2"})
+    assert retired == ["sample"] and len(warnings) == 1
+    # Kept for its DENY — so the bare ref is (honestly) still ambiguous.
+    assert queries.check_access("planner", "write_file")["verdict"] == "AMBIGUOUS_TOOL"
+
+    # Operator follows the warning: the manifest stops mentioning the tool.
+    report = ingest_governance(
+        Governance(agents=["planner"], policies=[Policy(id="legacy-deny", effect="DENY")])
+    )
+    assert report.warnings == []
+    assert queries.check_access("planner", "write_file")["verdict"] == "NOT_GRANTED"
+
+
 # --- CLI wiring ------------------------------------------------------------
 
 
@@ -231,4 +293,21 @@ def test_no_prune_flag_preserves_unlisted_servers(graph, tmp_path):
     result = CliRunner().invoke(cli.app, ["crawl", "--servers", path, "--no-prune"])
 
     assert result.exit_code == 0
+    assert _server_names() == {"ghost"}
+
+
+def test_duplicate_name_overrides_reject_before_crawl(graph, tmp_path):
+    _load("ghost", [ToolRecord(name="haunt")])
+    path = _write_servers_yaml(
+        tmp_path,
+        [
+            {"name": "dup", "transport": "stdio", "command": "cmd-a"},
+            {"name": "dup", "transport": "stdio", "command": "cmd-b"},
+        ],
+    )
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", path])
+
+    assert result.exit_code == 1
+    # Rejected before connecting to anything — the graph is untouched.
     assert _server_names() == {"ghost"}

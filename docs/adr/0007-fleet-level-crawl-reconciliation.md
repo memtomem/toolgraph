@@ -48,6 +48,20 @@ ADR-0001 made node existence a truth signal, but nothing retired nodes whose
 4. The whole prune is one transaction; the generation bumps only when
    something was actually retired (ADR-0004: a no-op must not invalidate
    caches).
+5. Identity is load-bearing, so it is carried, not inferred: crawl failures
+   return their `ServerSpec` (whether a failed spec was named must not be
+   guessed from a display label — an unnamed spec's command can collide
+   with another spec's name), and a crawl pass where two servers claim the
+   same graph name is rejected before any load (two specs MERGEing into
+   one node would last-load-wins reconcile each other's tools away, prune
+   or no prune).
+6. Manifest ingest deletes degree-0 `Tool` nodes, mirroring the ADR-0001
+   resource rule. A tool kept only for its authored governance loses its
+   last edge when the manifest stops mentioning it, and no crawl will ever
+   reconcile a retired server's name again — without this, the documented
+   exit path ("remove it from the manifest and re-ingest") would leave a
+   ghost twin in bare-name resolution forever. Live crawled tools always
+   carry EXPOSES and never match.
 
 ## Consequences
 

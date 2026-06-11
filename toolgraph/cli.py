@@ -11,8 +11,11 @@ from toolgraph import config
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
+    duplicate_identities,
+    duplicate_name_overrides,
     fleet_keep_names,
     load_servers_config,
+    spec_label,
 )
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
@@ -59,9 +62,28 @@ def crawl(
     """
     path = servers or config.settings.servers_config
     specs = load_servers_config(path)
+    dupes = duplicate_name_overrides(specs)
+    if dupes:
+        # Two specs claiming one name would MERGE into one MCPServer node and
+        # last-load-wins reconcile each other's tools away — reject before
+        # connecting to anything.
+        typer.echo(
+            f"  ✗ duplicate name override(s) in {path}: {', '.join(sorted(dupes))}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     typer.echo(f"Crawling {len(specs)} server(s) from {path} ...")
 
     results, failures = crawl_all(specs, timeout=timeout)
+    dupes = duplicate_identities(results, failures)
+    if dupes:
+        typer.echo(
+            "  ✗ multiple servers claim the same graph identity: "
+            f"{', '.join(sorted(dupes))} — add distinct `name:` overrides in "
+            f"{path}; nothing was loaded",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     schema.init_schema()
     for result in results:
         warnings = loader.load_crawl_result(result)
@@ -71,8 +93,8 @@ def crawl(
         )
         for w in warnings:
             typer.echo(f"    ⚠ {w}")
-    for label, error in failures:
-        typer.echo(f"  ✗ {label}: {error}")
+    for spec, error in failures:
+        typer.echo(f"  ✗ {spec_label(spec)}: {error}")
 
     if prune:
         keep, blockers = fleet_keep_names(specs, results, failures)
