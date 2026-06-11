@@ -115,9 +115,29 @@ def serve(
 
 
 @app.command("check-access")
-def check_access(agent: str, tool: str) -> None:
-    """Is AGENT allowed to call TOOL, and does the call cross a DENY policy?"""
-    typer.echo(json.dumps(queries.check_access(agent, tool), indent=2))
+def check_access(
+    agent: str,
+    tool: str,
+    fail_on_deny: bool = typer.Option(
+        False, "--fail-on-deny",
+        help="CI gate (ADR-0003): exit 1 on a DENY that isn't fully covered "
+             "by operator exceptions, 2 on a not-found/ambiguous verdict. "
+             "Default: always exit 0.",
+    ),
+) -> None:
+    """Is AGENT allowed to call TOOL, and does the call cross a DENY policy?
+
+    Exit codes are advisory (always 0) unless ``--fail-on-deny`` is passed.
+    """
+    result = queries.check_access(agent, tool)
+    typer.echo(json.dumps(result, indent=2))
+    if not fail_on_deny:
+        return
+    if result["verdict"] in ("AGENT_NOT_FOUND", "TOOL_NOT_FOUND", "AMBIGUOUS_TOOL"):
+        # A typo'd name must not pass a CI gate as a clean run.
+        raise typer.Exit(code=2)
+    if result["verdict"] == "DENY" and not result["all_authorized"]:
+        raise typer.Exit(code=1)
 
 
 @app.command("unsafe-tools")
@@ -127,6 +147,11 @@ def unsafe_tools(
         False, "--all",
         help="Include authorized_but_governed rows (operator-declared exceptions).",
     ),
+    fail_on_violation: bool = typer.Option(
+        False, "--fail-on-violation",
+        help="CI gate (ADR-0003): exit 1 when any violation row remains in "
+             "the output. Default: exit 0 regardless of findings.",
+    ),
 ) -> None:
     """Tools AGENT can call that touch a DENY-governed resource.
 
@@ -134,15 +159,18 @@ def unsafe_tools(
     exceptions (``authorized_but_governed``) are filtered out so reviewers
     don't drown in by-design grants. Pass ``--all`` to see both.
 
-    A typo'd agent prints AGENT_NOT_FOUND and exits 1 — not silently empty.
+    A typo'd agent prints AGENT_NOT_FOUND on stderr and exits 1 — not
+    silently empty. Stdout carries only the JSON (ADR-0003).
     """
     if not queries.agent_exists(agent):
-        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph")
+        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph", err=True)
         raise typer.Exit(code=1)
     rows = queries.unsafe_callable_tools(agent)
     if not all:
         rows = [r for r in rows if r.get("classification") == "violation"]
     typer.echo(json.dumps(rows, indent=2))
+    if fail_on_violation and any(r.get("classification") == "violation" for r in rows):
+        raise typer.Exit(code=1)
 
 
 @app.command("blast-radius")
