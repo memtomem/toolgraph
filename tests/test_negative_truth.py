@@ -14,6 +14,7 @@ from toolgraph.models import (
     AccessGrant,
     CrawlResult,
     DataAccess,
+    ExpectedException,
     Governance,
     GovernedByBinding,
     Policy,
@@ -355,3 +356,124 @@ def test_drift_data_access_is_empty_when_only_grant_exists(graph):
             "data_access": [],
         }
     ]
+
+
+# --- audit_report ---------------------------------------------------------
+
+
+def test_audit_report_aggregates_whole_graph_findings(graph):
+    csv = "file:///data/customers.csv"
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[
+                ToolRecord(name="read_file"),
+                ToolRecord(name="write_file"),
+                ToolRecord(name="delete_file", destructive_hint=True),
+                ToolRecord(name="status", read_only_hint=True),
+            ],
+            resources=[ResourceRecord(uri=csv)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner", "reviewer"],
+            policies=[
+                Policy(id="pii", effect="DENY"),
+                Policy(id="orphan", effect="DENY"),
+            ],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::read_file"),
+                AccessGrant(agent="reviewer", tool="sample::read_file"),
+                AccessGrant(agent="planner", tool="sample::write_file"),
+                AccessGrant(agent="planner", tool="sample::delete_file"),
+            ],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource=csv, mode="READS"),
+                DataAccess(
+                    tool="sample::status",
+                    resource=csv,
+                    mode="WRITES",
+                    provenance=Provenance(evidence="tests/status-writes.md:1"),
+                ),
+            ],
+            governed_by={csv: ["pii"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="reviewer",
+                    tool="sample::read_file",
+                    policy="pii",
+                    resource=csv,
+                    reason="break-glass review",
+                )
+            ],
+        )
+    )
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[
+                ToolRecord(name="read_file"),
+                ToolRecord(name="delete_file", destructive_hint=True),
+                ToolRecord(name="status", read_only_hint=True),
+            ],
+            resources=[ResourceRecord(uri=csv)],
+        )
+    )
+
+    report = queries.audit_report()
+
+    assert report["status"] == "fail"
+    assert report["summary"]["agents"] == 2
+    assert report["summary"]["blocking_findings"] == [
+        "unsafe_violations",
+        "drifted_tools",
+    ]
+    assert report["summary"]["counts"] == {
+        "unsafe_violations": 1,
+        "authorized_but_governed": 1,
+        "drifted_tools": 1,
+        "unmapped_tools": 2,
+        "unbacked_edges": 2,
+        "orphan_policies": 1,
+        "destructive_unsafeguarded": 1,
+        "annotation_contradictions": 1,
+    }
+    assert report["findings"]["unsafe_violations"][0]["agent"] == "planner"
+    assert report["findings"]["authorized_but_governed"][0]["agent"] == "reviewer"
+
+    with_grants = queries.audit_report(include_grants=True)
+    assert with_grants["summary"]["include_grants"] is True
+    assert with_grants["summary"]["counts"]["unbacked_edges"] > 2
+
+
+def test_audit_report_passes_empty_graph(graph):
+    report = queries.audit_report()
+    assert report["status"] == "pass"
+    assert report["summary"]["blocking_findings"] == []
+    assert all(count == 0 for count in report["summary"]["counts"].values())
+
+
+def test_audit_report_warns_on_advisory_findings_only(graph):
+    _seed_three_tools(graph)
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[
+                DataAccess(
+                    tool="sample::read_file",
+                    resource="file:///data/customers.csv",
+                    mode="READS",
+                )
+            ],
+        )
+    )
+
+    report = queries.audit_report()
+
+    assert report["status"] == "warn"
+    assert report["summary"]["blocking_findings"] == []
+    assert report["summary"]["counts"]["unbacked_edges"] == 1

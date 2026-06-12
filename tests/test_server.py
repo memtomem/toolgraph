@@ -87,6 +87,7 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
             "drifted_tools",
             "destructive_unsafeguarded",
             "annotation_contradictions",
+            "audit_report",
             "rank_features",
             "eligible_tools",
             "selection_explain",
@@ -192,3 +193,14 @@ async def test_mcp_unbacked_edges_respects_include_grants(graph, neo4j_container
         ))
     assert wider["count"] >= default["count"]
     assert {e["edge_type"] for e in default["edges"]}.isdisjoint({"CAN_CALL"})
+
+
+async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
+    _seed()
+    async with open_session(_spec(neo4j_container)) as session:
+        await session.initialize()
+        got = _structured(await session.call_tool("audit_report", {}))
+
+    expected = queries.audit_report()
+    expected["graph_generation"] = queries.graph_generation()
+    assert got == expected

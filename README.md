@@ -128,6 +128,8 @@ uv run toolgraph unbacked-edges --include-grants    # also audit CAN_CALL grants
 uv run toolgraph drift                              # tools w/ governance but no live EXPOSES
 uv run toolgraph destructive-unsafeguarded          # destructive-hinted tools w/ no policy path
 uv run toolgraph annotation-contradictions          # authored WRITES vs readOnlyHint claims
+uv run toolgraph audit-report                       # whole-graph operational audit summary
+uv run toolgraph audit-report --format markdown     # human-readable audit report
 
 # selector surface (ADR-0005) — batch, deterministic, no relevance scoring
 uv run toolgraph rank-features planner git_status read_file export_data
