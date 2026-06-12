@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
 
 import typer
@@ -20,6 +21,12 @@ from toolgraph.crawler.crawl import (
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
+
+
+class AuditReportFormat(str, Enum):
+    json = "json"
+    markdown = "markdown"
+
 
 app = typer.Typer(
     add_completion=False,
@@ -290,6 +297,63 @@ def annotation_contradictions() -> None:
     Both sides cite their provenance; the operator picks the stronger evidence.
     """
     typer.echo(json.dumps(queries.annotation_contradictions(), indent=2))
+
+
+def _audit_report_markdown(report: dict) -> str:
+    lines = [
+        "# toolgraph audit report",
+        "",
+        f"Status: **{report['status'].upper()}**",
+        "",
+        "| Finding | Count | Blocking |",
+        "| --- | ---: | --- |",
+    ]
+    blocking = set(report["summary"]["blocking_findings"])
+    for name, count in report["summary"]["counts"].items():
+        lines.append(f"| `{name}` | {count} | {'yes' if name in blocking else 'no'} |")
+    lines.append("")
+    for name, rows in report["findings"].items():
+        if not rows:
+            continue
+        lines.extend(
+            [
+                f"## {name.replace('_', ' ').title()}",
+                "",
+                "```json",
+                json.dumps(rows, indent=2),
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@app.command("audit-report")
+def audit_report(
+    format: AuditReportFormat = typer.Option(
+        AuditReportFormat.json,
+        "--format",
+        help="Output format: json (automation) or markdown (human review).",
+    ),
+    include_grants: bool = typer.Option(
+        False,
+        "--include-grants",
+        help="Include CAN_CALL grants in the unbacked-edge evidence audit.",
+    ),
+    fail_on_blocking: bool = typer.Option(
+        False,
+        "--fail-on-blocking",
+        help="CI gate: exit 1 when blocking findings remain. Default: exit 0.",
+    ),
+) -> None:
+    """Whole-graph operational audit summary."""
+    report = queries.audit_report(include_grants=include_grants)
+    if format is AuditReportFormat.markdown:
+        typer.echo(_audit_report_markdown(report), nl=False)
+    else:
+        typer.echo(json.dumps(report, indent=2))
+    if fail_on_blocking and report["status"] == "fail":
+        raise typer.Exit(code=1)
 
 
 def _selector_profile(profile: str) -> str:

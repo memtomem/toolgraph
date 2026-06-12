@@ -174,6 +174,19 @@ def annotation_contradictions() -> dict:
 
 
 @mcp.tool()
+def audit_report(include_grants: bool = False) -> dict:
+    """Whole-graph operational audit summary.
+
+    Aggregates unsafe DENY violations, operator-authorized DENY paths, drift,
+    unmapped tools, unbacked evidence, orphan policies, destructive annotation
+    gaps, and annotation contradictions. ``status`` is ``fail`` only for
+    blocking findings (unsafe violations or drifted governed tools), ``warn``
+    for advisory findings, and ``pass`` when the graph is clean.
+    """
+    return _with_generation(lambda: queries.audit_report(include_grants=include_grants))
+
+
+@mcp.tool()
 def rank_features(agent: str, candidates: list[str]) -> dict:
     """Batch selection features for every candidate, in input order (ADR-0005).
 

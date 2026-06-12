@@ -204,6 +204,33 @@ def test_unsafe_tools_without_flag_still_exits_0_on_violation(violating):
     assert json.loads(result.stdout)
 
 
+# --- audit-report --------------------------------------------------------
+
+
+def test_audit_report_stdout_is_json_by_default(violating):
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["audit-report"])
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "fail"
+    assert payload["summary"]["counts"]["unsafe_violations"] == 1
+
+
+def test_audit_report_markdown_format(violating):
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["audit-report", "--format", "markdown"])
+    assert result.exit_code == 0
+    assert result.stdout.startswith("# toolgraph audit report")
+    assert "| `unsafe_violations` | 1 | yes |" in result.stdout
+
+
+def test_audit_report_fail_on_blocking(violating):
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["audit-report", "--fail-on-blocking"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["status"] == "fail"
+
+
 # --- stdout purity (ADR-0003 §1) ----------------------------------------
 
 

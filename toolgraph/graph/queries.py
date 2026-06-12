@@ -58,6 +58,11 @@ def agent_exists(agent: str) -> bool:
         ).single()["ok"]
 
 
+def _agent_ids() -> list[str]:
+    with session() as s:
+        return [r["id"] for r in s.run("MATCH (a:Agent) RETURN a.id AS id ORDER BY id")]
+
+
 def _resource_path(tool: str, mode: str, resource: str, policy: str) -> str:
     return f"({tool}) -{mode}-> ({resource}) -GOVERNED_BY-> ({policy}:DENY)"
 
@@ -402,6 +407,58 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
                 d.pop("exception_reason", None)
             rows.append(d)
     return rows
+
+
+def audit_report(include_grants: bool = False) -> dict:
+    """Whole-graph operational audit summary.
+
+    This is an aggregation layer over the existing advisory queries. It keeps
+    their row shapes intact and adds counts/status so operators and CI can see
+    the graph's current risk posture without stitching six commands together.
+    """
+    unsafe_violations: list[dict] = []
+    authorized_but_governed: list[dict] = []
+    agents = _agent_ids()
+    for agent in agents:
+        for row in unsafe_callable_tools(agent):
+            row = {"agent": agent, **row}
+            if row.get("classification") == "violation":
+                unsafe_violations.append(row)
+            else:
+                authorized_but_governed.append(row)
+
+    findings = {
+        "unsafe_violations": unsafe_violations,
+        "authorized_but_governed": authorized_but_governed,
+        "drifted_tools": drifted_tools(),
+        "unmapped_tools": unmapped_tools(),
+        "unbacked_edges": unbacked_edges(include_grants=include_grants),
+        "orphan_policies": orphan_policies(),
+        "destructive_unsafeguarded": destructive_unsafeguarded(),
+        "annotation_contradictions": annotation_contradictions(),
+    }
+    counts = {name: len(rows) for name, rows in findings.items()}
+    blocking = [
+        name
+        for name in ("unsafe_violations", "drifted_tools")
+        if counts[name] > 0
+    ]
+    if blocking:
+        status = "fail"
+    elif any(counts.values()):
+        status = "warn"
+    else:
+        status = "pass"
+    return {
+        "status": status,
+        "summary": {
+            "agents": len(agents),
+            "counts": counts,
+            "blocking_findings": blocking,
+            "include_grants": include_grants,
+        },
+        "findings": findings,
+    }
 
 
 # --- Negative-truth / drift queries -------------------------------------
