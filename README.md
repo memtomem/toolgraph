@@ -56,8 +56,9 @@ nothing is LLM-guessed.
 
 ## Quickstart
 
-New to toolgraph? Start with the Korean beginner guide:
-[`docs/ko-beginner-guide.md`](docs/ko-beginner-guide.md).
+New to toolgraph? Start with the first-time user guides:
+[`docs/beginner-guide.md`](docs/beginner-guide.md) (English) or
+[`docs/ko-beginner-guide.md`](docs/ko-beginner-guide.md) (Korean).
 
 For the context-engineering and tool-selection roadmap, see
 [`docs/context-engineering-tool-selection-report.md`](docs/context-engineering-tool-selection-report.md).
