@@ -37,7 +37,28 @@ sets from outside. A learned model may never override a hard reject
 - Every selector answer stays explainable as a graph path — the product
   thesis extends to selection instead of diluting into ML infra.
 - Build order is gated: telemetry schema and offline eval are design-doc-only
-  until a real consumer integrates `eligible_tools` (acceptance: the
-  agent-harness demo passes the report's regression criteria).
+  until a real consumer integrates `eligible_tools` (acceptance criterion
+  met — see Postscript).
 - Latency work (batching, `graph_generation` caching — ADR-0004) belongs to
   this surface; model serving never will.
+
+## Postscript (2026-07-09) — consumer gate satisfied
+
+The "real consumer" gate in Consequences is met, by memtomem-stm rather than
+the agent-harness demo named above: the memtomem-stm proxy consumes
+`eligible_tools` + `rank_features` over MCP stdio at startup
+(memtomem-stm#465, shipped via its PRs #491/#492/#495/#500) and feeds the
+verdicts into its tool-exposure hard filter. Selection telemetry now exists
+on the consumer side, where this ADR puts it — memtomem-stm pins
+`graph_generation` per consult and keeps a reject-code translation table
+(its `docs/selection-telemetry.md`).
+
+Unblocked by this: latency/batching work on the surface, and contract-level
+change control — the response shapes and the seven reject-reason literals
+are now pinned by `tests/test_selector_contract.py`; changing them is a
+breaking change for a shipped consumer, not a refactor.
+
+Still deferred/unchanged: offline eval and any learning remain outside
+toolgraph permanently (the Decision boundary is untouched), and
+toolgraph-side telemetry storage stays out of scope — the consumer records
+its own.
