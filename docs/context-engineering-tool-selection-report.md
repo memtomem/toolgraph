@@ -293,6 +293,14 @@ ranking입니다.
 
 selector 연동을 쉽게 하려면 다음 API가 유용합니다.
 
+> **Erratum (2026-07-09)**: 이 섹션의 API는 2026-06-11에 구현·출하되었습니다.
+> 규범적 형태는 `toolgraph/graph/selector.py`이며
+> `tests/test_selector_contract.py`가 소비자(memtomem-stm) 계약으로 고정합니다.
+> 초안 대비 변경: `path`(단수) → `paths`(리스트), `provenance_score` 필드는
+> `rank_features` 출력에서 제외(unbacked 신호는 `has_unbacked_edges` +
+> risk_score 0.4로 흡수), `risk_score`는 고정 테이블 값. 아래 표본은 구현
+> 형태로 갱신되었습니다.
+
 ### `rank_features(agent, candidates)`
 
 여러 candidate tool에 대해 selection feature를 batch로 반환합니다.
@@ -300,8 +308,10 @@ selector 연동을 쉽게 하려면 다음 API가 유용합니다.
 ```json
 {
   "agent": "planner",
+  "agent_found": true,
   "features": [
     {
+      "candidate": "filesystem::read_file",
       "tool_key": "filesystem::read_file",
       "found": true,
       "permitted": true,
@@ -310,25 +320,28 @@ selector 연동을 쉽게 하려면 다음 API가 유용합니다.
       "is_drifted": false,
       "is_unmapped": false,
       "has_unbacked_edges": true,
-      "provenance_score": 0.4,
-      "risk_score": 0.9
+      "risk_score": 1.0
     }
   ]
 }
 ```
 
-### `eligible_tools(agent, candidates, policy)`
+### `eligible_tools(agent, candidates, profile)`
 
 hard filter 결과와 reject reason을 반환합니다.
 
 ```json
 {
+  "agent": "planner",
+  "agent_found": true,
+  "profile": "strict",
   "eligible": ["git::git_status"],
   "rejected": [
     {
+      "candidate": "filesystem::read_file",
       "tool_key": "filesystem::read_file",
       "reason": "DENY_VIOLATION",
-      "path": "(read_file) -READS-> (file:///private/secrets.env) -GOVERNED_BY-> (secrets-deny:DENY)"
+      "paths": ["(read_file) -READS-> (file:///private/secrets.env) -GOVERNED_BY-> (secrets-deny:DENY)"]
     }
   ]
 }

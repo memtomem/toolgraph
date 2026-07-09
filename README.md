@@ -93,7 +93,8 @@ write the join themselves.
 The same wedge appears for **proxy/surfacing servers**. `examples/servers-gate.yaml`
 crawls memtomem + memtomem-stm (a docs proxy whose `surfacing` engine injects
 results from the operator's memtomem LTM into every proxied response — see
-`memtomem_stm/proxy/manager.py:674`). `examples/governance-gate.yaml` flags
+`memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing`).
+`examples/governance-gate.yaml` flags
 an agent whose only grants are on proxied docs tools (`langchain__*`,
 `langfuse__*`) — because surfacing makes every such call indirectly read the
 operator's personal LTM namespace, which their descriptions never mention.
@@ -200,7 +201,9 @@ This replaces the bare "unsafe" framing: review tooling can filter to
 
 Each edge — crawled or authored — carries `source` (`crawled` |
 `operator_asserted` | `inferred`), `confidence` (`high` | `medium` | `low`),
-and `evidence` (free-text pointer: file:line, URL, ticket id, commit SHA).
+and `evidence` (free-text pointer: URL, ticket id, commit SHA, source
+location — prefer symbol anchors like `path/to/file.py::Class.method` over
+`file:line`, which rots as the cited source evolves).
 Queries surface this on every result so a reviewer can see whether a DENY
 verdict rests on a crawled fact or an unverified assertion:
 
@@ -212,7 +215,7 @@ data_access:
     provenance:
       source: inferred
       confidence: high
-      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"
+      evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing -> memtomem_stm/surfacing/engine.py::SurfacingEngine.surface"
 ```
 
 `governed_by` bindings carry their own provenance — *why* this resource is
@@ -300,6 +303,46 @@ a typo'd agent is a context-construction error, not an empty catalog.
 
 MCP responses carry `graph_generation` (ADR-0004) so consumers can cache
 features per graph state with one integer comparison.
+
+### Wiring the shipped consumer (memtomem-stm)
+
+The first consumer of this surface is the memtomem-stm proxy
+(memtomem-stm#465): at startup it consults `eligible_tools` +
+`rank_features` over MCP stdio (`toolgraph serve`) and feeds the verdicts
+into its tool-exposure hard filter. The gate exhibit carries the consumer's
+default `agent_id` (`stm-proxy`) as a wiring fixture, so the consult path
+is demoable against the exhibit graph:
+
+```bash
+uv run toolgraph eligible-tools stm-proxy \
+  "memtomem-stm::langchain__search_docs_by_lang_chain" --profile strict
+# -> rejected: DENY_GOVERNED (fail closed — the consumer's production default)
+uv run toolgraph eligible-tools stm-proxy \
+  "memtomem-stm::langchain__search_docs_by_lang_chain" --profile review
+# -> eligible (the operator-declared exception passes under review)
+```
+
+Live wiring differs from the exhibit in one important way: the proxy builds
+candidate refs as `"<upstream-connection-name>::<raw-tool-name>"` from its
+own upstream config, while the exhibit crawls the proxy itself (server
+`memtomem-stm`, prefixed tool names like `langchain__…`). For a live
+deployment, crawl the proxy's *upstreams* directly so graph server names
+match the STM connection keys — or map them in the consumer's config:
+
+```json
+"toolgraph": {
+  "enabled": true,
+  "agent_id": "stm-proxy",
+  "query_profile": "strict",
+  "server_name_map": { "docs-langchain": "langchain-docs" }
+}
+```
+
+(`"docs-langchain"` is the STM upstream connection key; `"langchain-docs"`
+is the name that upstream was crawled under in this graph.) Refs that don't
+resolve come back `TOOL_NOT_FOUND` and are handled by the consumer's
+`on_tool_not_found` knob — if every candidate is rejected as not-found, the
+name mapping (not governance) is what's wrong.
 
 ## toolgraph as an MCP server
 

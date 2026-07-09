@@ -78,15 +78,15 @@ data_access:
   - tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
     resource: "memory:claude:toolgraph"
     mode: READS
-    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing"}
   - tool: "memtomem-stm::langfuse__searchLangfuseDocs"
     resource: "memory:claude:toolgraph"
     mode: READS
-    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing"}
   - tool: "memtomem-stm::langfuse__getLangfuseOverview"
     resource: "memory:claude:toolgraph"
     mode: READS
-    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing)"}
+    provenance: {source: inferred, confidence: high, evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing"}
 
   # fetch is by definition external HTTP egress. NOTE: "https://*" is an
   # AUTHORING PLACEHOLDER for "any outbound URL" — it's a single Resource
