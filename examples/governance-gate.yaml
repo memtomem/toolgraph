@@ -2,10 +2,10 @@
 #
 # The wedge: memtomem-stm's `surfacing` engine (memtomem_stm/surfacing/engine.py)
 # is invoked on EVERY proxied tool response via
-# `ProxyManager._apply_surfacing` (memtomem_stm/proxy/manager.py:674) and
+# `memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing` and
 # calls `mem_search` on the upstream memtomem server through
-# `surfacing.mcp_client.McpClientSearchAdapter` (mcp_client.py:189). The result
-# is injected into the proxied response.
+# `memtomem_stm/surfacing/mcp_client.py::McpClientSearchAdapter.search`.
+# The result is injected into the proxied response.
 #
 # Concretely on this host: ~/.memtomem/stm_proxy.json declares
 # `docs-langchain` and `langfuse-docs` as upstreams. ~/.memtomem/config.json
@@ -25,6 +25,13 @@ agents:
   - owner        # the user — full LTM access
   - planner      # subagent that may read project-scoped LTM and use docs+surfacing
   - helper       # docs-only agent: MUST NOT surface operator personal LTM
+  - stm-proxy    # consumer wiring fixture, NOT part of the leakage story:
+                 # the memtomem-stm process itself, the shipped eligible_tools
+                 # consumer (memtomem-stm#465), which consults this graph at
+                 # proxy startup under agent_id "stm-proxy". Present so
+                 # `eligible-tools stm-proxy …` runs against the exhibit
+                 # instead of aborting on agent_found=false. See README
+                 # "Wiring the shipped consumer" — live refs differ in shape.
 
 policies:
   - id: operator-ltm-confidentiality
@@ -57,12 +64,28 @@ grants:
   - {agent: helper, tool: "memtomem-stm::langfuse__getLangfuseDocsPage", granted_by: user}
   - {agent: helper, tool: "memtomem-stm::langfuse__getLangfuseOverview", granted_by: user}
 
+  # stm-proxy (wiring fixture): the proxy's own selection surface — the docs
+  # tools it fronts plus the mem_search dependency its surfacing engine calls
+  # on every response. With the expected_exceptions below, every candidate
+  # classifies authorized_but_governed: `--profile strict` rejects them all
+  # as DENY_GOVERNED (the consumer's production default fails closed) while
+  # `--profile review` passes them with the operator's stated reason.
+  # `unsafe-tools stm-proxy` stays empty (violations only) — helper remains
+  # this exhibit's only violation signal.
+  - {agent: stm-proxy, tool: "memtomem::mem_search", granted_by: user}
+  - {agent: stm-proxy, tool: "memtomem-stm::langchain__search_docs_by_lang_chain", granted_by: user}
+  - {agent: stm-proxy, tool: "memtomem-stm::langfuse__searchLangfuseDocs", granted_by: user}
+  - {agent: stm-proxy, tool: "memtomem-stm::langfuse__getLangfuseDocsPage", granted_by: user}
+  - {agent: stm-proxy, tool: "memtomem-stm::langfuse__getLangfuseOverview", granted_by: user}
+
 # Tool -[:READS|WRITES]-> Resource (declared data effects).
 #
 # The READS edges from proxied tools to memtomem namespaces are source-backed:
 #   ProxyManager._apply_surfacing -> SurfacingEngine.surface -> mem_search
-# applied to *every* proxied tool response (manager.py:674 unconditionally).
-# Default surfacing enabled=True per surfacing/config.py:33.
+# applied to *every* proxied tool response (unconditionally in
+# memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing).
+# Default surfacing enabled=True per
+# memtomem_stm/surfacing/config.py::SurfacingConfig.enabled.
 data_access:
   # direct memtomem reads/writes
   - {tool: "memtomem::mem_add", resource: "memory:claude:toolgraph", mode: WRITES}
@@ -81,28 +104,28 @@ data_access:
     provenance:
       source: inferred
       confidence: high
-      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+      evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing -> memtomem_stm/surfacing/engine.py::SurfacingEngine.surface"
   - tool: "memtomem-stm::langfuse__searchLangfuseDocs"
     resource: "memory:claude:toolgraph"
     mode: READS
     provenance:
       source: inferred
       confidence: high
-      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+      evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing -> memtomem_stm/surfacing/engine.py::SurfacingEngine.surface"
   - tool: "memtomem-stm::langfuse__getLangfuseDocsPage"
     resource: "memory:claude:toolgraph"
     mode: READS
     provenance:
       source: inferred
       confidence: high
-      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+      evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing -> memtomem_stm/surfacing/engine.py::SurfacingEngine.surface"
   - tool: "memtomem-stm::langfuse__getLangfuseOverview"
     resource: "memory:claude:toolgraph"
     mode: READS
     provenance:
       source: inferred
       confidence: high
-      evidence: "memtomem_stm/proxy/manager.py:674 (_apply_surfacing) -> surfacing/engine.py:136"
+      evidence: "memtomem_stm/proxy/manager.py::ProxyManager._apply_surfacing -> memtomem_stm/surfacing/engine.py::SurfacingEngine.surface"
 
   # the proxied upstreams themselves (for completeness in blast-radius)
   - {tool: "memtomem-stm::langchain__search_docs_by_lang_chain", resource: "https://docs.langchain.com/mcp", mode: READS}
@@ -148,3 +171,35 @@ expected_exceptions:
     resource: "memory:claude:toolgraph"
     policy: operator-ltm-confidentiality
     reason: "planner uses docs+surfacing; project-memory injection is expected"
+
+  # stm-proxy (wiring fixture): the proxy IS the surfacing pipeline — reading
+  # project memory is its mechanism, not leakage. These declarations make its
+  # reach authorized_but_governed, so strict still fails closed while review
+  # passes; they prove agent_found no longer aborts and governed rejects are
+  # classified — NOT that an out-of-box live consumer works (live refs are
+  # built from upstream connection names, a different shape; see README).
+  - agent: stm-proxy
+    tool: "memtomem::mem_search"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "stm-proxy IS the surfacing pipeline; reading project memory is its mechanism, not leakage"
+  - agent: stm-proxy
+    tool: "memtomem-stm::langchain__search_docs_by_lang_chain"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "stm-proxy IS the surfacing pipeline; reading project memory is its mechanism, not leakage"
+  - agent: stm-proxy
+    tool: "memtomem-stm::langfuse__searchLangfuseDocs"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "stm-proxy IS the surfacing pipeline; reading project memory is its mechanism, not leakage"
+  - agent: stm-proxy
+    tool: "memtomem-stm::langfuse__getLangfuseDocsPage"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "stm-proxy IS the surfacing pipeline; reading project memory is its mechanism, not leakage"
+  - agent: stm-proxy
+    tool: "memtomem-stm::langfuse__getLangfuseOverview"
+    resource: "memory:claude:toolgraph"
+    policy: operator-ltm-confidentiality
+    reason: "stm-proxy IS the surfacing pipeline; reading project memory is its mechanism, not leakage"
