@@ -16,10 +16,31 @@ vs a policy id.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from neo4j import Session
 
 from toolgraph.graph.driver import session
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
+
+
+_GENERATION_RETRIES = 5
+
+
+def with_generation(fetch: Callable[[], dict]) -> dict:
+    """Return ``fetch`` with a generation that brackets the graph reads.
+
+    Neo4j is read-committed rather than snapshot-isolated.  Reading the
+    generation before and after the query and retrying on a change prevents a
+    result from being labelled with a generation that committed midway
+    through it.  MCP and CLI artifact producers share this exact seam.
+    """
+    for _ in range(_GENERATION_RETRIES):
+        before = graph_generation()
+        result = fetch()
+        if graph_generation() == before:
+            return {**result, "graph_generation": before}
+    raise RuntimeError("graph generation changed during every read attempt")
 
 
 def resolve_tool_keys(s: Session, ref: str) -> list[str]:
