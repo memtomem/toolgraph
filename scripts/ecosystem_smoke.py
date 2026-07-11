@@ -297,7 +297,10 @@ def main() -> int:
     roots = {"toolgraph": ROOT, "syncmill": args.syncmill_root.resolve(), "tracegraph": args.tracegraph_root.resolve()}
     refs = {"toolgraph": "origin/main", "syncmill": "origin/main", "tracegraph": "origin/tracegraph-mvp"}
     shas = {name: fetched_sha(root, refs[name]) for name, root in roots.items()}
-    workspace = Path(tempfile.mkdtemp(prefix="toolgraph-ecosystem-smoke-", dir="/private/tmp"))
+    # Prefer the short, predictable macOS scratch root when present; fall back to
+    # the platform temp dir (e.g. Linux CI) so the smoke stays portable.
+    tmp_root = "/private/tmp" if Path("/private/tmp").is_dir() else None
+    workspace = Path(tempfile.mkdtemp(prefix="toolgraph-ecosystem-smoke-", dir=tmp_root))
     container = f"toolgraph-smoke-{uuid4().hex[:12]}"
     success = False
     try:
