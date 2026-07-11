@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 from enum import Enum
+import os
 from pathlib import Path
+import tempfile
 
 import typer
 
@@ -21,6 +23,7 @@ from toolgraph.crawler.crawl import (
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
+from toolgraph.preflight import build_preflight
 
 
 class AuditReportFormat(str, Enum):
@@ -420,6 +423,50 @@ def selection_explain(
     typer.echo(
         json.dumps(selector.selection_explain(agent, tool, profile=profile), indent=2)
     )
+
+
+@app.command("preflight")
+def preflight(
+    agent: str,
+    candidates: list[str],
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE, "--profile",
+        help="Named selector profile: strict / review / explore.",
+    ),
+    run_id: str = typer.Option(..., "--run-id", help="Stable ecosystem run identifier."),
+    features: bool = typer.Option(False, "--features", help="Include selector feature rows."),
+    out: Path | None = typer.Option(None, "--out", help="Write the JSON artifact to this path."),
+) -> None:
+    """Produce an advisory preflight artifact for a candidate tool batch."""
+    _selector_profile(profile)
+    artifact = build_preflight(
+        agent=agent,
+        candidates=candidates,
+        profile=profile,
+        run_id=run_id,
+        include_features=features,
+    )
+    payload = json.dumps(artifact, indent=2) + "\n"
+    if out is None:
+        typer.echo(payload, nl=False)
+        return
+    out.parent.mkdir(parents=True, exist_ok=True)
+    temporary: str | None = None
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=out.parent, prefix=f".{out.name}.", delete=False
+    ) as handle:
+        temporary = handle.name
+        try:
+            handle.write(payload)
+        except Exception:
+            handle.close()
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temporary, out)
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":

@@ -8,39 +8,13 @@ stamp lives HERE, not in the query layer — CLI output stays unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from mcp.server.fastmcp import FastMCP
 
 from toolgraph.graph import queries, selector
 
 mcp = FastMCP("toolgraph")
 
-_GENERATION_RETRIES = 5
-
-
-def _with_generation(fetch: Callable[[], dict]) -> dict:
-    """Run ``fetch`` and stamp a generation that actually brackets it.
-
-    Neo4j is read-committed, not snapshot-isolated: the result and the
-    generation are separate reads, so a concurrent crawl/ingest could commit
-    between them and mispair graph state with generation — exactly what
-    ADR-0004's cache/replay consumers must never see. Bracket the fetch with
-    two generation reads and retry while they disagree; equality proves no
-    successful write committed in between (every write bumps the counter in
-    its own transaction).
-    """
-    for _ in range(_GENERATION_RETRIES):
-        before = queries.graph_generation()
-        result = fetch()
-        if queries.graph_generation() == before:
-            result["graph_generation"] = before
-            return result
-    # Write churn outlasted every retry (a long crawl burst). Stamp the
-    # freshest value: at worst the label trails the still-in-flight burst,
-    # and generation-keyed caches self-heal on their next read.
-    result["graph_generation"] = queries.graph_generation()
-    return result
+_with_generation = queries.with_generation
 
 
 @mcp.tool()

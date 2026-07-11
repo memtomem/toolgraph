@@ -22,6 +22,14 @@ increments it in the same transaction as the mutation. Query results that
 feed the selector surface (and the MCP server responses) include
 `graph_generation`. Failed/rejected operations do not increment.
 
+Because Neo4j reads are read-committed, producers bracket a query with two
+generation reads and retry when they differ. Live MCP queries retain the
+historical availability-first fallback after bounded retry exhaustion: they
+return the last query result stamped with the freshest generation so caches
+self-heal on their next read. Persisted artifacts use strict bracketing and
+fail instead, because a potentially mislabelled replay artifact is worse than
+no artifact.
+
 ## Consequences
 
 - Cache invalidation is one integer comparison; telemetry rows pin

@@ -137,7 +137,18 @@ uv run toolgraph audit-report --format markdown     # human-readable audit repor
 uv run toolgraph rank-features planner git_status read_file export_data
 uv run toolgraph eligible-tools planner git_status read_file --profile strict
 uv run toolgraph selection-explain planner git_status
+
+# advisory run artifact for syncmill/tracegraph correlation
+uv run toolgraph preflight planner git_status read_file \
+  --profile review --run-id "$RUN_ID" --out preflight.json
 ```
+
+`preflight` wraps the same deterministic selector rules and stamps the result
+with a bracketed `graph_generation`. It remains advisory: rejected candidates
+produce `decision: advisory_warn` and exit 0. Unknown agents produce
+`unresolved_identity`, never a false allow. Resource URIs in evidence are
+scrubbed of userinfo and query strings before the artifact is written. Pass
+`--features` only when the consumer needs the full selector feature rows.
 
 ### Exit codes
 
@@ -149,6 +160,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | --- | --- |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
+| `preflight` | 0 for advisory allow, warn, and unresolved identity; operational/argument errors are non-zero |
 | `ingest-manifest` (manifest REJECTED) | 1 |
 | `crawl` (any server failed) | 1 |
 | `check-access --fail-on-deny` | 1 on `DENY` with `all_authorized: false` · 2 on `AGENT_NOT_FOUND` / `TOOL_NOT_FOUND` / `AMBIGUOUS_TOOL` · 0 otherwise (`ALLOW`, `NOT_GRANTED`, authorized-only `DENY`) |

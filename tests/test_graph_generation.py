@@ -8,6 +8,8 @@ the graph AND the generation untouched, so caches keyed on it stay valid.
 
 from __future__ import annotations
 
+import pytest
+
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
@@ -126,3 +128,18 @@ def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
     got = fn("support-bot", "read_file")
     assert got["graph_generation"] == 3
     assert fetches == 2  # first bracket discarded, second accepted
+
+
+def test_generation_bracket_fails_instead_of_mislabelling_after_retry_exhaustion(monkeypatch):
+    seq = iter(range(20))
+    monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
+    with pytest.raises(RuntimeError, match="generation changed"):
+        queries.with_generation(lambda: {"value": "from-moving-graph"}, strict=True)
+
+
+def test_generation_bracket_live_query_self_heals_after_retry_exhaustion(monkeypatch):
+    seq = iter(range(20))
+    monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
+    assert queries.with_generation(lambda: {"value": "live"}) == {
+        "value": "live", "graph_generation": 10,
+    }
