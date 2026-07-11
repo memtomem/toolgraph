@@ -18,9 +18,10 @@ def _redact_uri(value: str) -> str:
     if "://" not in value:
         return value
     parts = urlsplit(value)
-    host = parts.hostname or ""
-    if parts.port is not None:
-        host = f"{host}:{parts.port}"
+    # Use the original netloc rather than ``parts.hostname``: urlsplit
+    # lowercases hostname accessors, while graph resource identity preserves
+    # the authored case. Only userinfo and query data are sensitive here.
+    host = parts.netloc.rsplit("@", 1)[-1]
     return urlunsplit((parts.scheme, host, parts.path, "", parts.fragment))
 
 
@@ -66,7 +67,7 @@ def build_preflight(
             result["features"] = selector.rank_features(agent, candidates)["features"]
         return result
 
-    verdict = queries.with_generation(fetch)
+    verdict = queries.with_generation(fetch, strict=True)
     if not verdict["agent_found"]:
         decision = "unresolved_identity"
     elif verdict["rejected"]:
@@ -83,7 +84,7 @@ def build_preflight(
         "agent": agent,
         "agent_found": verdict["agent_found"],
         "profile": profile,
-        "mode": "advisory",
+        "mode": "advisory",  # v1 emits advisory artifacts only
         "eligible": verdict["eligible"],
         "rejected": verdict["rejected"],
         "features": verdict.get("features", []),

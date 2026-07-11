@@ -18,7 +18,7 @@ NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
 def _bracket(monkeypatch, payload, generation=42):
     monkeypatch.setattr(
         "toolgraph.preflight.queries.with_generation",
-        lambda fetch: {**fetch(), "graph_generation": generation},
+        lambda fetch, **kwargs: {**fetch(), "graph_generation": generation},
     )
     monkeypatch.setattr(
         "toolgraph.preflight.selector.eligible_tools", lambda *a, **k: payload
@@ -84,8 +84,8 @@ def test_warn_and_recursive_redaction(monkeypatch):
 
 
 def test_redaction_preserves_fragment_and_surrounding_text():
-    assert redact("x (mcp://user:pw@host:8080/r?a=b#frag) y") == (
-        "x (mcp://host:8080/r#frag) y"
+    assert redact("x (mcp://user:pw@CaseHost:8080/r?a=b#frag) y") == (
+        "x (mcp://CaseHost:8080/r#frag) y"
     )
 
 
@@ -105,3 +105,46 @@ def test_cli_writes_artifact(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert json.loads(out.read_text()) == artifact
+
+
+def test_cli_stdout_emits_json(monkeypatch):
+    artifact = {"decision": "advisory_allow", "eligible": ["alpha::read"]}
+    monkeypatch.setattr(cli, "build_preflight", lambda **kwargs: artifact)
+    result = CliRunner().invoke(
+        cli.app, ["preflight", "codex", "alpha::read", "--run-id", "r"],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == artifact
+
+
+def test_cli_file_path_composes_producer_redaction(monkeypatch, tmp_path):
+    _bracket(monkeypatch, {
+        "agent": "codex", "agent_found": True, "profile": "review", "eligible": [],
+        "rejected": [{
+            "candidate": "alpha::write", "tool_key": "alpha::write",
+            "reason": "DENY_VIOLATION",
+            "paths": ["(write) -> (mcp://user:secret@CaseHost/data?token=bad)"],
+        }],
+    })
+    out = tmp_path / "preflight.json"
+    result = CliRunner().invoke(
+        cli.app, ["preflight", "codex", "alpha::write", "--profile", "review",
+                  "--run-id", "r", "--out", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    raw = out.read_text()
+    assert "secret" not in raw and "token=bad" not in raw
+    assert "mcp://CaseHost/data" in raw
+
+
+def test_cli_atomic_replace_failure_cleans_temporary(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "build_preflight", lambda **kwargs: {"decision": "advisory_allow"})
+    monkeypatch.setattr(cli.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("full")))
+    out = tmp_path / "preflight.json"
+    result = CliRunner().invoke(
+        cli.app, ["preflight", "codex", "alpha::read", "--run-id", "r",
+                  "--out", str(out)],
+    )
+    assert result.exit_code == 1
+    assert not out.exists()
+    assert list(tmp_path.iterdir()) == []

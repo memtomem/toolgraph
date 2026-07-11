@@ -134,4 +134,12 @@ def test_generation_bracket_fails_instead_of_mislabelling_after_retry_exhaustion
     seq = iter(range(20))
     monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
     with pytest.raises(RuntimeError, match="generation changed"):
-        queries.with_generation(lambda: {"value": "from-moving-graph"})
+        queries.with_generation(lambda: {"value": "from-moving-graph"}, strict=True)
+
+
+def test_generation_bracket_live_query_self_heals_after_retry_exhaustion(monkeypatch):
+    seq = iter(range(20))
+    monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
+    assert queries.with_generation(lambda: {"value": "live"}) == {
+        "value": "live", "graph_generation": 10,
+    }

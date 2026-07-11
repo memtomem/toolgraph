@@ -451,12 +451,22 @@ def preflight(
         typer.echo(payload, nl=False)
         return
     out.parent.mkdir(parents=True, exist_ok=True)
+    temporary: str | None = None
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", dir=out.parent, prefix=f".{out.name}.", delete=False
     ) as handle:
-        handle.write(payload)
         temporary = handle.name
-    os.replace(temporary, out)
+        try:
+            handle.write(payload)
+        except Exception:
+            handle.close()
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temporary, out)
+    except Exception:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 if __name__ == "__main__":
