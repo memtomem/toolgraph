@@ -1,0 +1,153 @@
+# toolgraph, tracegraph, syncmill 연계 계획
+
+**상태:** 첫 통합 마일스톤 완료 (2026-07-11)
+**작성일:** 2026-07-11
+**정본:** [전체 계획](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/integration-plan.md) · [구현 설계](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/implementation-design.md) · [smoke runbook](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/smoke-runbook.md)
+
+> 실제 landed 순서와 설계 라벨은 정본에서 구분한다. P0/P1과 첫 마일스톤,
+> dashboard rendering을 제외한 P2, 실제 identity/qualified-tool advisory P3/Gate D는
+> 완료됐다. strict P3.1, T3/G3, P4는 열려 있다.
+
+## 요약
+
+세 프로젝트는 경쟁 관계가 아니라 에이전트 실행 수명주기의 서로 다른 지점을 담당한다.
+
+| 프로젝트 | 역할 | 시점 |
+| --- | --- | --- |
+| toolgraph | MCP 도구 접근, 정책, 영향 분석 | 실행 전 |
+| syncmill | 여러 코딩 에이전트의 격리 실행과 결과 조율 | 실행 중 |
+| tracegraph | 실행 이력의 인과 분석과 회귀 탐지 | 실행 후 |
+
+toolgraph의 권장 위치는 syncmill이 작업을 분배하기 전에 사용할 수 있는 도구 후보를
+검사하는 advisory preflight이다. tracegraph에서 관측한 실패 신호는 이후 정책과 도구
+선택을 개선하는 근거가 될 수 있지만 자동으로 ALLOW/DENY 정책을 바꾸어서는 안 된다.
+
+## 현재 기준선
+
+- MCP 서버를 크롤링해 `Agent -> Tool -> Resource -> Policy` 경로를 구성한다.
+- `check-access`, `unsafe-tools`, `blast-radius`와 negative-truth 감사를 제공한다.
+- 판정은 provenance가 포함된 설명 가능한 결과지만 런타임 enforcement는 아니다.
+- selector surface는 deterministic filtering과 feature 산출에 한정한다.
+
+## 목표
+
+1. syncmill 실행 전에 사용할 도구 집합의 정책 위험과 drift를 검사한다.
+2. 판정 근거를 run 단위 artifact로 남겨 실행 결과 및 trace와 연결한다.
+3. tracegraph에서 발견된 실패 패턴을 정책 검토 후보로 환류한다.
+4. toolgraph를 런타임 게이트웨이 또는 학습 시스템으로 확장하지 않는다.
+
+## 비목표
+
+- toolgraph가 agent subprocess 실행을 직접 중재하거나 차단하는 것
+- tracegraph의 원시 span 또는 syncmill의 prompt 전체를 Neo4j에 저장하는 것
+- 관측된 실패 한 건을 근거로 governance manifest를 자동 수정하는 것
+- 세 저장소를 하나의 패키지나 데이터베이스로 합치는 것
+
+## 제안 인터페이스
+
+구현체는 기존 selector surface(`eligible_tools`/`rank_features`, ADR-0005)를 wrapping
+하는 신규 CLI 명령이다. MCP의 `_with_generation` bracketing을 `graph/queries.py`로
+추출해 CLI와 공유한다.
+
+```
+toolgraph preflight AGENT [CANDIDATES...] --profile strict|review|explore
+                    --run-id RUN_ID [--features] [--out preflight.json]
+```
+
+### Preflight 요청
+
+```json
+{
+  "schema_version": 1,
+  "run_id": "stable-run-id",
+  "agent": "codex",
+  "candidate_tools": ["filesystem::read_file"],
+  "policy_profile": "review"
+}
+```
+
+### Preflight 결과 (`contracts/preflight.schema.json`)
+
+```json
+{
+  "schema_version": 1,
+  "kind": "toolgraph.preflight",
+  "run_id": "stable-run-id",
+  "created_at": "2026-07-11T00:00:00+00:00",
+  "graph_generation": 42,
+  "agent": "codex",
+  "agent_found": true,
+  "profile": "review",
+  "mode": "advisory",
+  "eligible": ["filesystem::read_file"],
+  "rejected": [{"candidate": "…", "tool_key": "…", "reason": "DENY_GOVERNED", "paths": ["…"]}],
+  "features": [],
+  "decision": "advisory_allow | advisory_warn | unresolved_identity"
+}
+```
+
+`schema_version`은 **정수**다(생태계 공통 — tracegraph artifact 계약과 일치).
+`decision` 유도: `agent_found` false → `unresolved_identity`; rejected 행 존재 →
+`advisory_warn`; 그 외 `advisory_allow`. exit code는 `advisory_warn`에도 0이다
+(advisory는 enforcement가 아님 — ADR-0003의 opt-in gating 계약 유지).
+
+계약에는 `graph_generation`, qualified tool key, verdict, classification 및 provenance를
+포함한다. prompt, credential, 민감한 resource payload는 포함하지 않는다.
+`paths`/provenance 문자열에는 **redaction pass**(resource URI의 userinfo/query 제거)를
+적용한다 — provenance evidence에 credential이 실릴 수 있는 위험을 이 명령이 소유한다.
+redaction fixture를 contract test에 포함한다.
+
+## 단계별 계획
+
+### 0단계: 계약 고정
+
+- [ ] qualified tool key와 agent identity 매핑을 문서화한다.
+- [ ] preflight JSON Schema와 버전 정책을 정의한다.
+- [ ] `DENY`, `NOT_GRANTED`, drift, unmapped 상태별 소비자 정책을 정한다.
+- [ ] syncmill이 MCP 도구를 직접 사용하지 않는 현재 구조에서 적용 범위를 확인한다.
+
+### 1단계: 수동 artifact 연계
+
+- [ ] 기존 CLI로 preflight 결과를 JSON artifact로 내보내는 예제를 추가한다.
+- [ ] artifact에 `run_id`와 `graph_generation`을 기록한다.
+- [ ] provenance/path 문자열 redaction pass와 redaction fixture를 추가한다.
+- [ ] syncmill 실행 보고서가 해당 artifact 경로 또는 digest를 참조하게 한다.
+- [ ] stale graph와 unknown agent가 성공으로 오인되지 않는 계약 테스트를 추가한다.
+
+### 2단계: 선택적 syncmill adapter
+
+- [ ] syncmill 측의 opt-in preflight hook 요구사항을 공동 정의한다.
+- [ ] 기본은 advisory로 두고 strict profile만 실행 중단을 허용한다.
+- [ ] toolgraph 장애 시 fail-open/fail-closed 동작을 profile에 명시한다.
+- [ ] 기존 syncmill 실행 경로와 agent isolation이 바뀌지 않는지 검증한다.
+
+### 3단계: trace feedback
+
+- [ ] tracegraph pattern 결과를 정책 변경이 아닌 review candidate로 가져온다.
+- [ ] `run_id`, tool key, pattern id, artifact digest만 저장한다.
+- [ ] 운영자 승인 후에만 manifest 또는 selector feature를 수정한다.
+- [ ] 변경 전후 blast radius와 regression fixture를 보존한다.
+
+## 검증 기준
+
+- 같은 graph generation과 입력은 같은 preflight 결과를 만든다.
+- 결과의 모든 거부 사유는 graph path와 provenance로 설명 가능하다.
+- trace 또는 syncmill이 없어도 toolgraph의 기존 CLI와 MCP API가 그대로 동작한다.
+- 연계 기능이 꺼져 있으면 현재 성능과 exit-code 계약이 변하지 않는다.
+- secret-bearing 입력이 artifact, 로그, provenance에 기록되지 않는다.
+
+## 주요 위험과 대응
+
+| 위험 | 대응 |
+| --- | --- |
+| advisory 결과가 enforcement로 오해됨 | artifact와 UI에 decision mode 명시 |
+| graph가 실행 시점보다 오래됨 | `graph_generation`과 crawl timestamp 검증 |
+| agent/tool 식별자 불일치 | server-qualified key와 명시적 mapping 사용 |
+| trace 실패가 잘못된 정책으로 자동 승격됨 | review-only feedback와 운영자 승인 유지 |
+| 분석 계층 간 강결합 | JSON artifact와 선택적 adapter만 공유 |
+
+## 완료 정의
+
+0단계와 1단계가 완료되고 실제 한 개 실행에서 preflight artifact, syncmill run 결과,
+tracegraph artifact를 동일한 `run_id`로 추적할 수 있으면 첫 통합 마일스톤을 완료한 것으로
+본다. 자동 정책 변경이나 런타임 gateway는 이 계획의 완료 조건이 아니다.
