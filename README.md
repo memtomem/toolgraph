@@ -164,8 +164,9 @@ Unknown additive v1 fields are discarded; unknown major versions fail closed.
 The original report is never edited. `annotate` appends `open` / `accepted` /
 `dismissed` events to `<REPORT>.toolgraph-review.json`, bound to the SHA-256 of
 the exact report bytes and written under a local lock with atomic replacement.
-The lock is derived from the resolved sidecar path, and successful replacement
-fsyncs both the file and its parent directory where the platform supports it.
+The sidecar path is resolved before load, lock, and replacement so symlink
+aliases cannot split history. Successful replacement fsyncs both the file and
+its parent directory where the platform supports it.
 Local review notes may cite paths but reject credential-shaped content.
 
 Candidate ids use the same exact-tuple UUIDv5 as SyncMill's merged

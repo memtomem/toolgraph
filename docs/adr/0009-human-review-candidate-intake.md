@@ -32,8 +32,10 @@ boundary.
    reopened by a later event; the last event is current.
 5. The sidecar writer serializes concurrent writers and uses temp-file,
    file plus parent-directory `fsync` (where supported), and atomic replacement.
-   A stale source binding, broken event chain, unknown candidate, or failed
-   write preserves both source and prior sidecar.
+   It resolves the sidecar target before loading, locking, or replacing so a
+   symlink alias cannot fork history. A stale source binding, broken event
+   chain, unknown candidate, or failed write preserves both source and prior
+   sidecar.
 6. These commands are artifact-only. They do not connect to Neo4j, alter a
    manifest or policy, affect preflight/selector behavior, or increment
    `graph_generation`. `accepted` authorizes no automatic apply path.

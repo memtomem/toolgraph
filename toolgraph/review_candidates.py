@@ -137,12 +137,18 @@ class AnnotationEvent(BaseModel):
     @field_validator("reviewer")
     @classmethod
     def _reviewer_is_safe_metadata(cls, value: str) -> str:
-        return _normalized_reviewer(value)
+        normalized = _normalized_reviewer(value)
+        if normalized != value:
+            raise ValueError("must not contain leading or trailing whitespace")
+        return value
 
     @field_validator("note")
     @classmethod
     def _note_is_safe_metadata(cls, value: str | None) -> str | None:
-        return _normalized_note(value)
+        normalized = _normalized_note(value)
+        if normalized != value:
+            raise ValueError("must not contain leading or trailing whitespace")
+        return value
 
     @field_validator("candidate_id")
     @classmethod
@@ -354,6 +360,7 @@ def list_candidates(
     )
     if _same_path(report_file, annotation_file):
         raise ReviewCandidateError("review annotations must not overwrite the source report")
+    annotation_file = annotation_file.resolve()
     report = load_report(report_file)
     annotations = _load_annotations(annotation_file, report)
     states, histories = _validate_events(annotations, report)
@@ -493,6 +500,10 @@ def annotate_candidate(
     )
     if _same_path(report_file, annotation_file):
         raise ReviewCandidateError("review annotations must not overwrite the source report")
+    # From this point forward, load, lock, temp-file placement, and replacement
+    # must all address one canonical target.  Replacing a symlink path would
+    # otherwise split the alias from the original sidecar after the first write.
+    annotation_file = annotation_file.resolve()
     try:
         annotation_file.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:

@@ -264,6 +264,40 @@ def test_externally_authored_sidecar_metadata_is_revalidated(
     assert "do-not-echo" not in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("reviewer", " operator "), ("note", " prior decision ")],
+)
+def test_existing_event_whitespace_is_rejected_without_rewriting_history(
+    tmp_path, field, value
+):
+    source = _source(tmp_path)
+    annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
+        note="prior decision",
+        recorded_at=_at(6),
+    )
+    sidecar = default_annotations_path(source)
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["events"][0][field] = value
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    before = sidecar.read_bytes()
+
+    with pytest.raises(ReviewCandidateError, match=field):
+        annotate_candidate(
+            source,
+            CANDIDATE_ID,
+            disposition="dismissed",
+            reviewer="reviewer-two",
+            recorded_at=_at(7),
+        )
+
+    assert sidecar.read_bytes() == before
+
+
 def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
     source = _source(tmp_path)
     annotate_candidate(
@@ -407,6 +441,37 @@ def test_writer_lock_uses_resolved_sidecar_path(tmp_path):
     with _writer_lock(alias):
         assert Path(f"{target.resolve()}.lock").exists()
         assert not Path(f"{alias}.lock").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation requires Windows privileges")
+def test_symlink_sidecar_is_updated_at_resolved_target_without_splitting(tmp_path):
+    source = _source(tmp_path)
+    target = tmp_path / "annotations.json"
+    annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
+        annotations_path=target,
+        recorded_at=_at(6),
+    )
+    alias = tmp_path / "annotations-alias.json"
+    alias.symlink_to(target)
+
+    annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="dismissed",
+        reviewer="reviewer-two",
+        annotations_path=alias,
+        recorded_at=_at(7),
+    )
+
+    assert alias.is_symlink()
+    assert alias.read_bytes() == target.read_bytes()
+    candidate = list_candidates(source, annotations_path=target)["candidates"][0]
+    assert candidate["disposition"] == "dismissed"
+    assert [event["sequence"] for event in candidate["history"]] == [1, 2]
 
 
 def test_source_and_sidecar_must_be_distinct(tmp_path):

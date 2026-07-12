@@ -69,6 +69,22 @@ def test_toolgraph_sidecar_rejects_unknown_fields():
         AnnotationReport.model_validate(fixture)
 
 
+@pytest.mark.parametrize("field", ["reviewer", "note"])
+def test_sidecar_schema_rejects_surrounding_metadata_whitespace(field):
+    schema = json.loads(
+        (CONTRACTS / "review-annotations.schema.json").read_text(encoding="utf-8")
+    )
+    fixture = json.loads(
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    fixture["events"][0][field] = " padded "
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate(fixture)
+
+
 def test_candidate_identity_matches_syncmill_pr57():
     report = load_report(GOLDEN)
     assert candidate_id(report.candidates[0]) == "167379e8-3436-546b-9dbb-5fa087ab0493"
