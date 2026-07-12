@@ -120,8 +120,9 @@ redaction fixture를 contract test에 포함한다.
 - [x] syncmill 측의 opt-in preflight enforcement 요구사항을 공동 정의한다.
 - [x] Toolgraph producer는 advisory로 유지하고 SyncMill mode가 선택 profile을 enforcement한다.
 - [x] unknown/drift/unavailable 정책과 fail-open/fail-closed override를 명시한다.
-- [x] strict block의 agent/worktree 이전 실행 보장은
-  [SyncMill companion PR #56](https://github.com/memtomem/syncmill/pull/56)의 테스트로 검증한다.
+- [ ] strict block의 agent/worktree 이전 실행 보장은
+  [SyncMill companion PR #56](https://github.com/memtomem/syncmill/pull/56)의 테스트로
+  검증됐으며, 해당 PR merge 후 완료로 전환한다.
 
 ### 3단계: trace feedback
 
