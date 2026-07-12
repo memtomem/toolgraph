@@ -52,6 +52,40 @@ class ReviewCandidateError(ValueError):
     """A review report or annotation sidecar violated the G3 contract."""
 
 
+def _normalized_reviewer(value: str) -> str:
+    reviewer = value.strip()
+    if (
+        not reviewer
+        or len(reviewer) > 256
+        or "\n" in reviewer
+        or "\r" in reviewer
+        or "\0" in reviewer
+    ):
+        raise ValueError(
+            "reviewer must be a non-empty single line of at most 256 characters"
+        )
+    return reviewer
+
+
+def _normalized_note(value: str | None) -> str | None:
+    if value is None:
+        return None
+    note = value.strip()
+    if (
+        not note
+        or len(note) > 500
+        or "\n" in note
+        or "\r" in note
+        or "\0" in note
+    ):
+        raise ValueError(
+            "note must be a non-empty single line of at most 500 characters"
+        )
+    if _CREDENTIAL.search(note) or _ABSOLUTE_PATH.search(note):
+        raise ValueError("note must not contain credentials or absolute paths")
+    return note
+
+
 class ReviewCandidate(BaseModel):
     """The body-free fields Toolgraph consumes from one Tracegraph finding."""
 
@@ -77,7 +111,7 @@ class TracegraphReviewReport(BaseModel):
 
     schema_version: Literal[1]
     kind: Literal["tracegraph.review-candidates"]
-    candidates: list[ReviewCandidate] = Field(default_factory=list)
+    candidates: list[ReviewCandidate]
 
 
 class AnnotationSource(BaseModel):
@@ -99,6 +133,16 @@ class AnnotationEvent(BaseModel):
     reviewer: str = Field(min_length=1, max_length=256)
     recorded_at: str
     note: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reviewer")
+    @classmethod
+    def _reviewer_is_safe_metadata(cls, value: str) -> str:
+        return _normalized_reviewer(value)
+
+    @field_validator("note")
+    @classmethod
+    def _note_is_safe_metadata(cls, value: str | None) -> str | None:
+        return _normalized_note(value)
 
     @field_validator("candidate_id")
     @classmethod
@@ -133,7 +177,7 @@ class AnnotationReport(BaseModel):
     schema_version: Literal[1]
     kind: Literal["toolgraph.review-annotations"]
     source: AnnotationSource
-    events: list[AnnotationEvent] = Field(default_factory=list)
+    events: list[AnnotationEvent]
 
 
 class LoadedReviewReport(BaseModel):
@@ -329,37 +373,17 @@ def list_candidates(
 
 
 def normalize_reviewer(value: str) -> str:
-    reviewer = value.strip()
-    if (
-        not reviewer
-        or len(reviewer) > 256
-        or "\n" in reviewer
-        or "\r" in reviewer
-        or "\0" in reviewer
-    ):
-        raise ReviewCandidateError(
-            "reviewer must be a non-empty single line of at most 256 characters"
-        )
-    return reviewer
+    try:
+        return _normalized_reviewer(value)
+    except ValueError as exc:
+        raise ReviewCandidateError(str(exc)) from exc
 
 
 def normalize_note(value: str | None) -> str | None:
-    if value is None:
-        return None
-    note = value.strip()
-    if (
-        not note
-        or len(note) > 500
-        or "\n" in note
-        or "\r" in note
-        or "\0" in note
-    ):
-        raise ReviewCandidateError(
-            "note must be a non-empty single line of at most 500 characters"
-        )
-    if _CREDENTIAL.search(note) or _ABSOLUTE_PATH.search(note):
-        raise ReviewCandidateError("note must not contain credentials or absolute paths")
-    return note
+    try:
+        return _normalized_note(value)
+    except ValueError as exc:
+        raise ReviewCandidateError(str(exc)) from exc
 
 
 @contextmanager

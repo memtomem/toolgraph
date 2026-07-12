@@ -22,6 +22,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+from toolgraph.preflight import build_preflight
 from toolgraph.review_candidates import (
     LoadedReviewReport,
     ReviewCandidateError,
@@ -205,6 +206,39 @@ def test_invalid_event_chain_and_unknown_candidate_fail_closed(tmp_path):
         list_candidates(source)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reviewer", "operator\npassword=secret"),
+        ("note", "token=do-not-echo"),
+        ("note", "/private/result.txt"),
+    ],
+)
+def test_externally_authored_sidecar_metadata_is_revalidated(
+    tmp_path, field, value
+):
+    source = _source(tmp_path)
+    annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
+        recorded_at=_at(6),
+    )
+    sidecar = default_annotations_path(source)
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["events"][0][field] = value
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ReviewCandidateError) as exc_info:
+        list_candidates(source)
+
+    assert field in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "do-not-echo" not in str(exc_info.value)
+    assert "/private/result.txt" not in str(exc_info.value)
+
+
 def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
     source = _source(tmp_path)
     annotate_candidate(
@@ -335,6 +369,13 @@ def test_review_workflow_does_not_mutate_governance_graph_or_manifest(graph, tmp
         "generation": queries.graph_generation(),
         "counts": governance_counts(),
         "blast_radius": queries.blast_radius(CSV),
+        "preflight": build_preflight(
+            agent="planner",
+            candidates=["sample::read_file"],
+            profile="review",
+            run_id="g3-regression",
+            created_at=_at(5),
+        ),
     }
 
     list_candidates(source)
@@ -351,4 +392,11 @@ def test_review_workflow_does_not_mutate_governance_graph_or_manifest(graph, tmp
         "generation": queries.graph_generation(),
         "counts": governance_counts(),
         "blast_radius": queries.blast_radius(CSV),
+        "preflight": build_preflight(
+            agent="planner",
+            candidates=["sample::read_file"],
+            profile="review",
+            run_id="g3-regression",
+            created_at=_at(5),
+        ),
     } == graph_before

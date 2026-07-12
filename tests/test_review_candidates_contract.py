@@ -93,6 +93,25 @@ def test_additive_v1_fields_are_accepted_but_not_retained(tmp_path):
     assert "must not survive" not in repr(report)
 
 
+def test_required_candidate_and_event_collections_cannot_be_omitted(tmp_path):
+    producer = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    producer.pop("candidates")
+    source = tmp_path / "missing-candidates.json"
+    source.write_text(json.dumps(producer), encoding="utf-8")
+
+    with pytest.raises(ReviewCandidateError, match="candidates"):
+        load_report(source)
+
+    annotations = json.loads(
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    annotations.pop("events")
+    with pytest.raises(ValidationError):
+        AnnotationReport.model_validate(annotations)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("schema_version", 2), ("kind", "tracegraph.other")],
