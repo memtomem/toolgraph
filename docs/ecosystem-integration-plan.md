@@ -1,13 +1,15 @@
 # toolgraph, tracegraph, syncmill 연계 계획
 
-**상태:** 첫 통합 마일스톤 완료 (2026-07-11)
+**상태:** 첫 통합 마일스톤, P3.1 preview, T3, SyncMill board import 및 Toolgraph G3 완료 (2026-07-12)
 **작성일:** 2026-07-11
 **정본:** [전체 계획](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/integration-plan.md) · [구현 설계](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/implementation-design.md) · [smoke runbook](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/smoke-runbook.md)
 
 > 실제 landed 순서와 설계 라벨은 정본에서 구분한다. P0/P1과 첫 마일스톤,
-> dashboard rendering을 제외한 P2, 실제 identity/qualified-tool advisory P3/Gate D는
+> P2 shared CLI/dashboard rendering, 실제 identity/qualified-tool advisory P3/Gate D는
 > 완료됐다. strict P3.1 consumer enforcement는 SyncMill opt-in preview로 구현됐고
-> Gate E 운영 evidence 승인은 열려 있다. T3/G3와 P4도 열려 있다.
+> Gate E 운영 evidence 승인은 열려 있다. Tracegraph T3 producer, SyncMill board import
+> slice와 Toolgraph G3 artifact review도 완료됐지만 live qualified-tool telemetry와
+> 자동 적용 없는 운영 검토 평가는 전체 P4 후속 범위로 남아 있다.
 
 ## 요약
 
@@ -126,10 +128,16 @@ redaction fixture를 contract test에 포함한다.
 
 ### 3단계: trace feedback
 
-- [ ] tracegraph pattern 결과를 정책 변경이 아닌 review candidate로 가져온다.
-- [ ] `run_id`, tool key, pattern id, artifact digest만 저장한다.
-- [ ] 운영자 승인 후에만 manifest 또는 selector feature를 수정한다.
-- [ ] 변경 전후 blast radius와 regression fixture를 보존한다.
+- [x] Tracegraph PR #10의 producer-derived v1 pattern 결과를 review candidate로 가져온다.
+- [x] `run_id`, qualified tool key, pattern id/version, artifact digest만 투영한다.
+- [x] 원본 report는 불변으로 두고 별도 sidecar에 operator disposition 이력을 기록한다.
+- [x] SyncMill PR #57과 같은 exact-tuple UUIDv5로 candidate/board item을 상호 참조한다.
+- [x] `accepted`도 manifest, policy, selector, Neo4j를 수정하지 않으며 blast radius와
+  `graph_generation`이 보존됨을 regression test로 고정한다.
+
+G3 annotation과 SyncMill board 상태는 독립적이다. 둘은 candidate id로 correlation만
+가능하며 자동 동기화되지 않는다. 이후 실제 manifest 수정이 필요하면 별도 명시적
+workflow에서 변경 전후 blast radius와 regression evidence를 남겨야 한다.
 
 ## 검증 기준
 
