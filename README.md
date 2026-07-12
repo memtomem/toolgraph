@@ -141,6 +141,11 @@ uv run toolgraph selection-explain planner git_status
 # advisory run artifact for syncmill/tracegraph correlation
 uv run toolgraph preflight planner git_status read_file \
   --profile review --run-id "$RUN_ID" --out preflight.json
+
+# human review of Tracegraph T3 findings (no Neo4j or policy mutation)
+uv run toolgraph review-candidates list candidates.json
+uv run toolgraph review-candidates annotate candidates.json CANDIDATE_ID \
+  --status accepted --reviewer operator --note "manual policy review approved"
 ```
 
 `preflight` wraps the same deterministic selector rules and stamps the result
@@ -151,6 +156,21 @@ scrubbed of userinfo and query strings before the artifact is written. Pass
 `--features` only when the consumer needs the full selector feature rows.
 SyncMill P3.1 may enforce this evidence before orchestration, but the producer
 artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
+
+`review-candidates` is the G3 human-review boundary (ADR-0009). It consumes
+Tracegraph's body-free schema-v1 report and projects only `run_id`, versioned
+pattern identity, qualified `tool_key`, and the analyzed artifact digest.
+Unknown additive v1 fields are discarded; unknown major versions fail closed.
+The original report is never edited. `annotate` appends `open` / `accepted` /
+`dismissed` events to `<REPORT>.toolgraph-review.json`, bound to the SHA-256 of
+the exact report bytes and written under a local lock with atomic replacement.
+
+Candidate ids use the same exact-tuple UUIDv5 as SyncMill's merged
+`board import-review-candidates` consumer (SyncMill PR #57), so the two human
+review surfaces can be correlated without sharing storage. Their states remain
+independent: Toolgraph `accepted` is only a policy-review disposition. It does
+not complete a SyncMill board item, modify governance, change selector output,
+or increment `graph_generation`.
 
 ### Exit codes
 
@@ -163,6 +183,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `preflight` | 0 for advisory allow, warn, and unresolved identity; operational/argument errors are non-zero |
+| `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
 | `ingest-manifest` (manifest REJECTED) | 1 |
 | `crawl` (any server failed) | 1 |
 | `check-access --fail-on-deny` | 1 on `DENY` with `all_authorized: false` · 2 on `AGENT_NOT_FOUND` / `TOOL_NOT_FOUND` / `AMBIGUOUS_TOOL` · 0 otherwise (`ALLOW`, `NOT_GRANTED`, authorized-only `DENY`) |

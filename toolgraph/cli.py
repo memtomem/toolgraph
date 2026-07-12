@@ -24,6 +24,13 @@ from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.preflight import build_preflight
+from toolgraph.review_candidates import (
+    ReviewCandidateError,
+    annotate_candidate,
+    list_candidates,
+    normalize_note,
+    normalize_reviewer,
+)
 
 
 class AuditReportFormat(str, Enum):
@@ -31,10 +38,21 @@ class AuditReportFormat(str, Enum):
     markdown = "markdown"
 
 
+class ReviewDisposition(str, Enum):
+    open = "open"
+    accepted = "accepted"
+    dismissed = "dismissed"
+
+
 app = typer.Typer(
     add_completion=False,
     help="Graph-native MCP/tool registry for advisory governance analysis.",
 )
+review_candidates_app = typer.Typer(
+    add_completion=False,
+    help="List and annotate Tracegraph governance review candidates.",
+)
+app.add_typer(review_candidates_app, name="review-candidates")
 
 
 @app.command()
@@ -467,6 +485,83 @@ def preflight(
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+def _review_candidate_failure(exc: ReviewCandidateError) -> None:
+    typer.echo(f"ERROR: {exc}", err=True)
+    raise typer.Exit(code=1)
+
+
+@review_candidates_app.command("list")
+def review_candidates_list(
+    report: Path = typer.Argument(..., help="Tracegraph review-candidate report."),
+    annotations: Path | None = typer.Option(
+        None,
+        "--annotations",
+        help="Annotation sidecar path (default: REPORT.toolgraph-review.json).",
+    ),
+    status: ReviewDisposition | None = typer.Option(
+        None,
+        "--status",
+        help="Filter by current disposition: open / accepted / dismissed.",
+    ),
+) -> None:
+    """List validated candidates merged with Toolgraph's local review history."""
+    try:
+        payload = list_candidates(
+            report,
+            annotations_path=annotations,
+            status=status.value if status is not None else None,
+        )
+    except ReviewCandidateError as exc:
+        _review_candidate_failure(exc)
+    typer.echo(json.dumps(payload, indent=2))
+
+
+@review_candidates_app.command("annotate")
+def review_candidates_annotate(
+    report: Path = typer.Argument(..., help="Tracegraph review-candidate report."),
+    candidate_id: str = typer.Argument(
+        ..., help="Stable UUIDv5 candidate id printed by `review-candidates list`."
+    ),
+    status: ReviewDisposition = typer.Option(
+        ...,
+        "--status",
+        help="New disposition: open / accepted / dismissed.",
+    ),
+    reviewer: str = typer.Option(..., "--reviewer", help="Human reviewer identity."),
+    note: str | None = typer.Option(
+        None,
+        "--note",
+        help="Optional body-free review note (single line, at most 500 characters).",
+    ),
+    annotations: Path | None = typer.Option(
+        None,
+        "--annotations",
+        help="Annotation sidecar path (default: REPORT.toolgraph-review.json).",
+    ),
+) -> None:
+    """Append a human disposition; never change graph policy or manifests."""
+    try:
+        reviewer = normalize_reviewer(reviewer)
+    except ReviewCandidateError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--reviewer") from exc
+    try:
+        note = normalize_note(note)
+    except ReviewCandidateError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--note") from exc
+    try:
+        payload = annotate_candidate(
+            report,
+            candidate_id,
+            disposition=status.value,
+            reviewer=reviewer,
+            note=note,
+            annotations_path=annotations,
+        )
+    except ReviewCandidateError as exc:
+        _review_candidate_failure(exc)
+    typer.echo(json.dumps(payload, indent=2))
 
 
 if __name__ == "__main__":

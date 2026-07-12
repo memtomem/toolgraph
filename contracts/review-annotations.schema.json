@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toolgraph.dev/contracts/review-annotations.schema.json",
+  "title": "toolgraph review annotations",
+  "description": "Append-only, human-authored dispositions bound to one immutable Tracegraph review-candidate report.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "source", "events"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "toolgraph.review-annotations"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "source_report_digest"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "kind": {"const": "tracegraph.review-candidates"},
+        "source_report_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event"}
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "pattern_id", "pattern_version", "tool_key", "artifact_digest"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^\\S+$"},
+        "pattern_id": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"},
+        "pattern_version": {"type": "integer", "minimum": 1},
+        "tool_key": {"type": "string", "minLength": 4, "maxLength": 512, "pattern": "^\\S+::\\S+$"},
+        "artifact_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "candidate_id",
+        "candidate",
+        "from_disposition",
+        "disposition",
+        "reviewer",
+        "recorded_at"
+      ],
+      "properties": {
+        "sequence": {"type": "integer", "minimum": 1},
+        "candidate_id": {"type": "string", "format": "uuid"},
+        "candidate": {"$ref": "#/$defs/candidate"},
+        "from_disposition": {"enum": ["open", "accepted", "dismissed"]},
+        "disposition": {"enum": ["open", "accepted", "dismissed"]},
+        "reviewer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n\\u0000]+$"
+        },
+        "recorded_at": {"type": "string", "format": "date-time"},
+        "note": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "^[^\\r\\n\\u0000]+$"
+        }
+      }
+    }
+  }
+}

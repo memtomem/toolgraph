@@ -13,6 +13,7 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0006](0006-crawl-tool-annotations-as-self-claims.md) | Crawl tool annotations as self-claims (`confidence: medium`) | Accepted |
 | [0007](0007-fleet-level-crawl-reconciliation.md) | Fleet-level crawl reconciliation: servers.yaml declares the fleet | Accepted |
 | [0008](0008-syncmill-enforcement-boundary.md) | SyncMill enforcement consumes advisory Toolgraph evidence | Accepted |
+| [0009](0009-human-review-candidate-intake.md) | Trace feedback is immutable evidence with separate human annotations | Accepted |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.
