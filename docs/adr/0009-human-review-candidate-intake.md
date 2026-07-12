@@ -35,7 +35,9 @@ boundary.
    It resolves the sidecar target before loading, locking, or replacing so a
    symlink alias cannot fork history. A stale source binding, broken event
    chain, unknown candidate, or failed write preserves both source and prior
-   sidecar.
+   sidecar. A genuine parent-directory fsync error after successful replacement
+   emits a durability warning rather than reporting that the persisted event
+   failed, which would invite a duplicate retry.
 6. These commands are artifact-only. They do not connect to Neo4j, alter a
    manifest or policy, affect preflight/selector behavior, or increment
    `graph_generation`. `accepted` authorizes no automatic apply path.

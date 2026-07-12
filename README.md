@@ -168,6 +168,9 @@ The sidecar path is resolved before load, lock, and replacement so symlink
 aliases cannot split history. Successful replacement fsyncs both the file and
 its parent directory where the platform supports it.
 Local review notes may cite paths but reject credential-shaped content.
+If a genuine parent-directory fsync error occurs after replacement, the event
+remains successful and visible while a durability warning is written to stderr;
+retrying would append a duplicate event.
 
 Candidate ids use the same exact-tuple UUIDv5 as SyncMill's merged
 `board import-review-candidates` consumer (SyncMill PR #57), so the two human

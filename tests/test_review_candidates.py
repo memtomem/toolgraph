@@ -29,6 +29,7 @@ from toolgraph.preflight import build_preflight
 from toolgraph.review_candidates import (
     LoadedReviewReport,
     ReviewCandidateError,
+    ReviewCandidateDurabilityWarning,
     _writer_lock,
     annotate_candidate,
     default_annotations_path,
@@ -370,6 +371,32 @@ def test_unsupported_directory_fsync_degrades_after_atomic_replace(tmp_path, mon
     )
 
     assert result["disposition"] == "accepted"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directory fsync is POSIX-only")
+def test_directory_fsync_io_error_warns_but_reports_persisted_event(
+    tmp_path, monkeypatch
+):
+    source = _source(tmp_path)
+    real_fsync = os.fsync
+
+    def failed_directory_fsync(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EIO, "injected directory I/O failure")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr("toolgraph.review_candidates.os.fsync", failed_directory_fsync)
+    with pytest.warns(ReviewCandidateDurabilityWarning, match="event is persisted"):
+        result = annotate_candidate(
+            source,
+            CANDIDATE_ID,
+            disposition="accepted",
+            reviewer="operator",
+            recorded_at=_at(6),
+        )
+
+    assert result["disposition"] == "accepted"
+    assert list_candidates(source)["candidates"][0]["disposition"] == "accepted"
 
 
 def test_source_race_is_detected_before_sidecar_replace(tmp_path, monkeypatch):

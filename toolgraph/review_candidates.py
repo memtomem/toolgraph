@@ -18,6 +18,7 @@ import re
 import tempfile
 from typing import Iterator, Literal
 import uuid
+import warnings
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -50,6 +51,10 @@ _CREDENTIAL = re.compile(
 
 class ReviewCandidateError(ValueError):
     """A review report or annotation sidecar violated the G3 contract."""
+
+
+class ReviewCandidateDurabilityWarning(RuntimeWarning):
+    """The sidecar was replaced, but crash durability could not be confirmed."""
 
 
 def _normalized_reviewer(value: str) -> str:
@@ -470,7 +475,18 @@ def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        _fsync_parent(path)
+        try:
+            _fsync_parent(path)
+        except OSError:
+            # The event is already atomically visible.  Reporting total failure
+            # would invite a retry that appends a duplicate event; surface the
+            # narrower durability uncertainty while returning persisted state.
+            warnings.warn(
+                "review annotations were replaced, but parent-directory fsync "
+                "failed; the event is persisted but crash durability is uncertain",
+                ReviewCandidateDurabilityWarning,
+                stacklevel=2,
+            )
     except BaseException:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
