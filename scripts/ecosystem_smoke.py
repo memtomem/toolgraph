@@ -80,7 +80,14 @@ def fetched_sha(root: Path, ref: str) -> str:
 
 
 def clone_at(source: Path, target: Path, sha: str) -> None:
-    run(["git", "clone", "--no-local", "--quiet", str(source), str(target)])
+    # Clone from the configured remote, not the live checkout. A fetched remote
+    # ref can be newer than the checkout's local branch (deliberately so for a
+    # dirty worktree we must not switch/reset); cloning the checkout itself only
+    # advertises local heads and may omit that fetched commit entirely.
+    remote = run(["git", "remote", "get-url", "origin"], cwd=source).stdout.strip()
+    if not remote:
+        raise SmokeError(f"origin has no URL: {source}")
+    run(["git", "clone", "--quiet", remote, str(target)])
     run(["git", "checkout", "--quiet", "--detach", sha], cwd=target)
 
 
