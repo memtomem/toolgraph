@@ -402,7 +402,6 @@ def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
             }
             continue
         for attempt in (1, 2):
-            attempts = attempt
             spool.unlink(missing_ok=True)
             command = _provider_command(provider, root, spool)
             try:
@@ -410,6 +409,7 @@ def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
             except FileNotFoundError:
                 versions[provider] = {"available": False, "version": "missing"}
                 break
+            attempts = attempt
             observed = []
             if spool.exists():
                 for line in spool.read_text(encoding="utf-8").splitlines():
@@ -597,9 +597,6 @@ def main() -> int:
             toolgraph=clones["toolgraph"], env=env, workspace=workspace,
         )
         retained = p4.pop("retained")
-        args.artifacts_dir.mkdir(parents=True, exist_ok=True)
-        for path in retained:
-            shutil.copy2(path, args.artifacts_dir / path.name)
         summary = {
             "schema_version": 1,
             "refs": shas,
@@ -615,9 +612,14 @@ def main() -> int:
             "p4": {"verdict": "go", **p4, "automatic_governance_change": False},
             "privacy_scan": "pass",
         }
-        summary_path = args.artifacts_dir / "gate-e-p4-summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        assert_body_free([*retained, summary_path])
+        summary_source = workspace / "gate-e-p4-summary.json"
+        summary_source.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        assert_body_free([*retained, summary_source])
+        args.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        for path in [*retained, summary_source]:
+            shutil.copy2(path, args.artifacts_dir / path.name)
         print(json.dumps(summary, indent=2, sort_keys=True))
         success = summary["gate_e"]["verdict"] == "go" and summary["p4"]["verdict"] == "go"
         return 0 if success else 1
