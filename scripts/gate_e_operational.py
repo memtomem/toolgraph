@@ -34,7 +34,7 @@ from ecosystem_smoke import (
 
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_NAME = "governance-syncmill-smoke.yaml"
-PROVIDERS = ("codex", "claude", "kimi", "agy")
+REQUIRED_PROVIDERS = ("codex", "claude", "kimi")
 FORBIDDEN_BODY_KEYS = {
     "prompt", "patch", "stdout", "stderr", "arguments", "input", "result", "output",
 }
@@ -311,7 +311,6 @@ def provider_versions() -> dict[str, dict[str, Any]]:
         "codex": ["codex", "--version"],
         "claude": ["claude", "--version"],
         "kimi": ["kimi", "--version"],
-        "agy": ["agy", "--version"],
     }
     values = {}
     for provider, command in commands.items():
@@ -373,18 +372,33 @@ def _provider_command(provider: str, workdir: Path, spool: Path) -> list[str]:
         path = workdir / ".mcp.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         return ["kimi", "-p", prompt, "--output-format", "stream-json"]
-    if provider == "agy":
-        agents = workdir / ".agents"
-        agents.mkdir(exist_ok=True)
-        (agents / "mcp_config.json").write_text(json.dumps(config), encoding="utf-8")
-        return ["agy", "--print", prompt, "--dangerously-skip-permissions"]
     raise SmokeError(f"unknown provider: {provider}")
+
+
+def provider_scope() -> dict[str, Any]:
+    return {
+        "required": list(REQUIRED_PROVIDERS),
+        "excluded": [{
+            "provider": "agy",
+            "classification": "compatibility_only",
+            "reason": "not_syncmill_agent_runner",
+        }],
+    }
+
+
+def _has_exact_outcomes(observed: list[dict[str, str]]) -> bool:
+    return [
+        (row.get("tool_key"), row.get("outcome")) for row in observed
+    ] == [
+        ("gate_e::always_ok", "succeeded"),
+        ("gate_e::always_fail", "failed"),
+    ]
 
 
 def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
     versions = provider_versions()
-    for provider in PROVIDERS:
+    for provider in REQUIRED_PROVIDERS:
         root = workspace / "providers" / provider
         root.mkdir(parents=True)
         run(["git", "init", "--quiet", "-b", "main"], cwd=root)
@@ -416,20 +430,18 @@ def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
                     value = json.loads(line)
                     if isinstance(value, dict):
                         observed.append(value)
-            expected = {
-                ("gate_e::always_ok", "succeeded"),
-                ("gate_e::always_fail", "failed"),
-            }
-            actual = {(row.get("tool_key"), row.get("outcome")) for row in observed}
-            if last_proc.returncode == 0 and expected <= actual:
+            if last_proc.returncode == 0 and _has_exact_outcomes(observed):
                 passed = True
                 results[provider] = {
                     **versions[provider],
                     "live_canary": "pass",
                     "attempts": attempt,
                     "observed": [
-                        {"tool_key": key, "outcome": outcome}
-                        for key, outcome in sorted(expected)
+                        {"tool_key": row[0], "outcome": row[1]}
+                        for row in [
+                            ("gate_e::always_ok", "succeeded"),
+                            ("gate_e::always_fail", "failed"),
+                        ]
                     ],
                 }
                 break
@@ -598,8 +610,9 @@ def main() -> int:
         )
         retained = p4.pop("retained")
         summary = {
-            "schema_version": 1,
+            "schema_version": 2,
             "refs": shas,
+            "provider_scope": provider_scope(),
             "providers": providers,
             "gate_e": {
                 "verdict": "go" if (

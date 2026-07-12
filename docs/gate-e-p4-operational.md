@@ -21,13 +21,20 @@ SyncMill board, verifies the shared UUIDv5, records a synthetic `dismissed`
 Toolgraph disposition, and confirms preflight, graph generation, blast radius,
 source report bytes, and independent board state are unchanged.
 
-Before the P4 slice, Codex, Claude Code, Kimi Code, and Antigravity CLI each run
-against the disposable `gate_e` MCP server. The canary requires one observed
-`always_ok/succeeded` and one `always_fail/failed` pair per CLI, retries at most
-once, and uses the server-side body-free outcome spool as the common oracle.
+Before the P4 slice, the three SyncMill AgentRunner providers — Codex, Claude
+Code, and Kimi Code — each run against the disposable `gate_e` MCP server. The
+canary requires exactly one ordered `always_ok/succeeded` and
+`always_fail/failed` pair per CLI, retries at most once, and uses the server-side
+body-free outcome spool as the common oracle.
 Provider stdout and stderr stay private and are deleted on success. Missing
 authentication, a missing tool call, or an untyped outcome makes Gate E NO-GO;
 it is never reported as a skipped pass.
+
+Antigravity CLI is an experimental compatibility surface, not a SyncMill
+AgentRunner, and is explicitly excluded from the Gate E verdict. The version-2
+summary records that policy in `provider_scope`; Antigravity is never presented
+as passed, skipped, or unavailable, and the operational harness does not invoke
+`agy` or read its user configuration.
 
 The output is a body-free GO/NO-GO recommendation. It never approves Gate E,
 enables strict by default, accepts a synthetic finding as governance, or edits a
