@@ -7,6 +7,7 @@ from enum import Enum
 import os
 from pathlib import Path
 import tempfile
+from typing import NoReturn
 
 import typer
 
@@ -487,7 +488,7 @@ def preflight(
         raise
 
 
-def _review_candidate_failure(exc: ReviewCandidateError) -> None:
+def _review_candidate_failure(exc: ReviewCandidateError) -> NoReturn:
     typer.echo(f"ERROR: {exc}", err=True)
     raise typer.Exit(code=1)
 
@@ -533,7 +534,7 @@ def review_candidates_annotate(
     note: str | None = typer.Option(
         None,
         "--note",
-        help="Optional body-free review note (single line, at most 500 characters).",
+        help="Optional local review note (single line, at most 500 characters).",
     ),
     annotations: Path | None = typer.Option(
         None,

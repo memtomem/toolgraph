@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import errno
 import hashlib
 import json
 import os
@@ -45,7 +46,6 @@ _CREDENTIAL = re.compile(
     r"://[^/\s]+:[^/\s]+@|\b(?:password|token|api[_-]?key|credential)\s*=",
     re.IGNORECASE,
 )
-_ABSOLUTE_PATH = re.compile(r"(?:^|\s)(?:/[A-Za-z0-9_.~-]|[A-Za-z]:[\\/])")
 
 
 class ReviewCandidateError(ValueError):
@@ -81,8 +81,8 @@ def _normalized_note(value: str | None) -> str | None:
         raise ValueError(
             "note must be a non-empty single line of at most 500 characters"
         )
-    if _CREDENTIAL.search(note) or _ABSOLUTE_PATH.search(note):
-        raise ValueError("note must not contain credentials or absolute paths")
+    if _CREDENTIAL.search(note):
+        raise ValueError("note must not contain credentials")
     return note
 
 
@@ -389,7 +389,9 @@ def normalize_note(value: str | None) -> str | None:
 @contextmanager
 def _writer_lock(path: Path) -> Iterator[None]:
     """Serialize local writers; the OS releases this lock after a crash."""
-    lock_path = Path(f"{path}.lock")
+    # Resolve aliases before deriving the lock name.  Otherwise two processes
+    # can address one sidecar through real/symlink paths and take distinct locks.
+    lock_path = Path(f"{path.resolve()}.lock")
     try:
         handle = lock_path.open("a+b")
     except OSError as exc:
@@ -419,6 +421,28 @@ def _writer_lock(path: Path) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def _fsync_parent(path: Path) -> None:
+    """Make the atomic rename durable on filesystems that support dir fsync."""
+    if os.name == "nt":  # pragma: no cover - Windows has no directory fd
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path.parent, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        unsupported = {
+            errno.EINVAL,
+            errno.ENOTSUP,
+            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+            errno.EROFS,
+        }
+        if exc.errno not in unsupported:
+            raise
+
+
 def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
     payload = json.dumps(
         annotations.model_dump(mode="json"), indent=2, sort_keys=True
@@ -439,6 +463,7 @@ def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        _fsync_parent(path)
     except BaseException:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)

@@ -27,11 +27,13 @@ boundary.
    `toolgraph.review-annotations` v1 sidecar bound to the SHA-256 of the exact
    report bytes. Events form a contiguous, append-only disposition chain.
 4. Dispositions are `open`, `accepted`, and `dismissed`. Every event requires
-   a reviewer and may include one bounded, body-free note. Any disposition may
-   be corrected or reopened by a later event; the last event is current.
+   a reviewer and may include one bounded local note. Notes may cite paths but
+   credential-shaped content is rejected. Any disposition may be corrected or
+   reopened by a later event; the last event is current.
 5. The sidecar writer serializes concurrent writers and uses temp-file,
-   `fsync`, and atomic replacement. A stale source binding, broken event chain,
-   unknown candidate, or failed write preserves both source and prior sidecar.
+   file plus parent-directory `fsync` (where supported), and atomic replacement.
+   A stale source binding, broken event chain, unknown candidate, or failed
+   write preserves both source and prior sidecar.
 6. These commands are artifact-only. They do not connect to Neo4j, alter a
    manifest or policy, affect preflight/selector behavior, or increment
    `graph_generation`. `accepted` authorizes no automatic apply path.

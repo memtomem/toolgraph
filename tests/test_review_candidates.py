@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+import errno
 import json
+import os
 from pathlib import Path
+import stat
 
 import pytest
 from typer.testing import CliRunner
@@ -26,6 +29,7 @@ from toolgraph.preflight import build_preflight
 from toolgraph.review_candidates import (
     LoadedReviewReport,
     ReviewCandidateError,
+    _writer_lock,
     annotate_candidate,
     default_annotations_path,
     list_candidates,
@@ -140,7 +144,6 @@ def test_cli_annotate_supports_override_and_emits_json(tmp_path):
     [
         (["--reviewer", "   "], "reviewer"),
         (["--reviewer", "operator", "--note", "token=secret"], "note"),
-        (["--reviewer", "operator", "--note", "/private/result.txt"], "note"),
     ],
 )
 def test_cli_rejects_invalid_human_metadata_as_bad_parameters(tmp_path, args, message):
@@ -161,6 +164,30 @@ def test_cli_rejects_invalid_human_metadata_as_bad_parameters(tmp_path, args, me
     assert result.exit_code == 2
     assert message in result.output
     assert not default_annotations_path(source).exists()
+
+
+def test_local_review_note_may_cite_an_absolute_path(tmp_path):
+    source = _source(tmp_path)
+    result = runner.invoke(
+        cli.app,
+        [
+            "review-candidates",
+            "annotate",
+            str(source),
+            CANDIDATE_ID,
+            "--status",
+            "accepted",
+            "--reviewer",
+            "operator",
+            "--note",
+            "see /etc/toolgraph/policy.yaml for context",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["history"][0]["note"] == (
+        "see /etc/toolgraph/policy.yaml for context"
+    )
 
 
 def test_stale_source_binding_fails_without_changing_sidecar(tmp_path):
@@ -211,7 +238,6 @@ def test_invalid_event_chain_and_unknown_candidate_fail_closed(tmp_path):
     [
         ("reviewer", "operator\npassword=secret"),
         ("note", "token=do-not-echo"),
-        ("note", "/private/result.txt"),
     ],
 )
 def test_externally_authored_sidecar_metadata_is_revalidated(
@@ -236,7 +262,6 @@ def test_externally_authored_sidecar_metadata_is_revalidated(
     assert field in str(exc_info.value)
     assert "secret" not in str(exc_info.value)
     assert "do-not-echo" not in str(exc_info.value)
-    assert "/private/result.txt" not in str(exc_info.value)
 
 
 def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
@@ -266,6 +291,51 @@ def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
 
     assert sidecar.read_bytes() == before
     assert list(sidecar.parent.glob(f".{sidecar.name}.*.tmp")) == []
+
+
+def test_atomic_write_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
+    source = _source(tmp_path)
+    calls: list[bool] = []
+    real_fsync = os.fsync
+
+    def tracked_fsync(descriptor):
+        calls.append(stat.S_ISDIR(os.fstat(descriptor).st_mode))
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr("toolgraph.review_candidates.os.fsync", tracked_fsync)
+    annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
+        recorded_at=_at(6),
+    )
+
+    assert calls == ([False] if os.name == "nt" else [False, True])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="directory fsync is POSIX-only")
+def test_unsupported_directory_fsync_degrades_after_atomic_replace(tmp_path, monkeypatch):
+    source = _source(tmp_path)
+    real_fsync = os.fsync
+
+    def unsupported_directory_fsync(descriptor):
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(errno.EINVAL, "directory fsync unsupported")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        "toolgraph.review_candidates.os.fsync", unsupported_directory_fsync
+    )
+    result = annotate_candidate(
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
+        recorded_at=_at(6),
+    )
+
+    assert result["disposition"] == "accepted"
 
 
 def test_source_race_is_detected_before_sidecar_replace(tmp_path, monkeypatch):
@@ -325,6 +395,18 @@ def test_concurrent_annotations_are_serialized_without_lost_events(tmp_path):
         "disposition"
     ]
     assert candidate["disposition"] in {"accepted", "dismissed"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation requires Windows privileges")
+def test_writer_lock_uses_resolved_sidecar_path(tmp_path):
+    target = tmp_path / "annotations.json"
+    target.write_text("{}", encoding="utf-8")
+    alias = tmp_path / "annotations-alias.json"
+    alias.symlink_to(target)
+
+    with _writer_lock(alias):
+        assert Path(f"{target.resolve()}.lock").exists()
+        assert not Path(f"{alias}.lock").exists()
 
 
 def test_source_and_sidecar_must_be_distinct(tmp_path):
