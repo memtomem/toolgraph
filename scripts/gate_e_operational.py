@@ -69,7 +69,6 @@ def write_agent_stubs(bin_dir: Path) -> None:
 def syncmill_env(
     base: dict[str, str],
     *,
-    syncmill: Path,
     toolgraph: Path,
     bin_dir: Path,
     scenario_dir: Path,
@@ -129,7 +128,6 @@ def strict_scenario(
     scenario_dir.mkdir(parents=True)
     env = syncmill_env(
         base_env,
-        syncmill=syncmill,
         toolgraph=toolgraph,
         bin_dir=bin_dir,
         scenario_dir=scenario_dir,
@@ -317,7 +315,11 @@ def provider_versions() -> dict[str, dict[str, Any]]:
     }
     values = {}
     for provider, command in commands.items():
-        proc = run(command, check=False, timeout=20)
+        try:
+            proc = run(command, check=False, timeout=20)
+        except FileNotFoundError:
+            values[provider] = {"available": False, "version": "missing"}
+            continue
         text = (proc.stdout or proc.stderr).strip().splitlines()
         values[provider] = {
             "available": proc.returncode == 0,
@@ -373,7 +375,7 @@ def _provider_command(provider: str, workdir: Path, spool: Path) -> list[str]:
         return ["kimi", "-p", prompt, "--output-format", "stream-json"]
     if provider == "agy":
         agents = workdir / ".agents"
-        agents.mkdir()
+        agents.mkdir(exist_ok=True)
         (agents / "mcp_config.json").write_text(json.dumps(config), encoding="utf-8")
         return ["agy", "--print", prompt, "--dangerously-skip-permissions"]
     raise SmokeError(f"unknown provider: {provider}")
@@ -390,10 +392,24 @@ def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
         passed = False
         last_proc: subprocess.CompletedProcess[str] | None = None
         observed: list[dict[str, str]] = []
+        attempts = 0
+        if not versions[provider]["available"]:
+            results[provider] = {
+                **versions[provider],
+                "live_canary": "fail",
+                "attempts": attempts,
+                "observed": observed,
+            }
+            continue
         for attempt in (1, 2):
+            attempts = attempt
             spool.unlink(missing_ok=True)
             command = _provider_command(provider, root, spool)
-            last_proc = run(command, cwd=root, check=False, timeout=300)
+            try:
+                last_proc = run(command, cwd=root, check=False, timeout=300)
+            except FileNotFoundError:
+                versions[provider] = {"available": False, "version": "missing"}
+                break
             observed = []
             if spool.exists():
                 for line in spool.read_text(encoding="utf-8").splitlines():
@@ -418,17 +434,18 @@ def run_provider_canaries(workspace: Path) -> dict[str, dict[str, Any]]:
                 }
                 break
         if not passed:
-            assert last_proc is not None
             # Raw provider output is private failure evidence only and is never retained.
-            (root / "stdout.private").write_text(last_proc.stdout, encoding="utf-8")
-            (root / "stderr.private").write_text(last_proc.stderr, encoding="utf-8")
+            if last_proc is not None:
+                (root / "stdout.private").write_text(last_proc.stdout, encoding="utf-8")
+                (root / "stderr.private").write_text(last_proc.stderr, encoding="utf-8")
             results[provider] = {
                 **versions[provider],
                 "live_canary": "fail",
-                "attempts": 2,
-                "exit_code": last_proc.returncode,
+                "attempts": attempts,
                 "observed": observed,
             }
+            if last_proc is not None:
+                results[provider]["exit_code"] = last_proc.returncode
     return results
 
 
@@ -580,7 +597,6 @@ def main() -> int:
             toolgraph=clones["toolgraph"], env=env, workspace=workspace,
         )
         retained = p4.pop("retained")
-        assert_body_free(retained)
         args.artifacts_dir.mkdir(parents=True, exist_ok=True)
         for path in retained:
             shutil.copy2(path, args.artifacts_dir / path.name)
@@ -601,9 +617,10 @@ def main() -> int:
         }
         summary_path = args.artifacts_dir / "gate-e-p4-summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        success = True
+        assert_body_free([*retained, summary_path])
         print(json.dumps(summary, indent=2, sort_keys=True))
-        return 0
+        success = summary["gate_e"]["verdict"] == "go" and summary["p4"]["verdict"] == "go"
+        return 0 if success else 1
     finally:
         run(["docker", "rm", "-f", container], check=False, timeout=30)
         if success:
