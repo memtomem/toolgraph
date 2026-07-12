@@ -6,7 +6,8 @@
 
 > 실제 landed 순서와 설계 라벨은 정본에서 구분한다. P0/P1과 첫 마일스톤,
 > dashboard rendering을 제외한 P2, 실제 identity/qualified-tool advisory P3/Gate D는
-> 완료됐다. strict P3.1, T3/G3, P4는 열려 있다.
+> 완료됐다. strict P3.1 consumer enforcement는 SyncMill opt-in preview로 구현됐고
+> Gate E 운영 evidence 승인은 열려 있다. T3/G3와 P4도 열려 있다.
 
 ## 요약
 
@@ -116,10 +117,12 @@ redaction fixture를 contract test에 포함한다.
 
 ### 2단계: 선택적 syncmill adapter
 
-- [ ] syncmill 측의 opt-in preflight hook 요구사항을 공동 정의한다.
-- [ ] 기본은 advisory로 두고 strict profile만 실행 중단을 허용한다.
-- [ ] toolgraph 장애 시 fail-open/fail-closed 동작을 profile에 명시한다.
-- [ ] 기존 syncmill 실행 경로와 agent isolation이 바뀌지 않는지 검증한다.
+- [x] syncmill 측의 opt-in preflight enforcement 요구사항을 공동 정의한다.
+- [x] Toolgraph producer는 advisory로 유지하고 SyncMill mode가 선택 profile을 enforcement한다.
+- [x] unknown/drift/unavailable 정책과 fail-open/fail-closed override를 명시한다.
+- [x] strict block의 agent/worktree 이전 실행 보장은
+  [SyncMill companion PR #56](https://github.com/memtomem/syncmill/pull/56)의 테스트로
+  검증됐으며, 해당 PR merge로 완료됐다.
 
 ### 3단계: trace feedback
 
