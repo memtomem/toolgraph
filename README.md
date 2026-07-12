@@ -149,6 +149,8 @@ produce `decision: advisory_warn` and exit 0. Unknown agents produce
 `unresolved_identity`, never a false allow. Resource URIs in evidence are
 scrubbed of userinfo and query strings before the artifact is written. Pass
 `--features` only when the consumer needs the full selector feature rows.
+SyncMill P3.1 may enforce this evidence before orchestration, but the producer
+artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
 
 ### Exit codes
 
