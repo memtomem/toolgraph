@@ -1,0 +1,48 @@
+name: Policy bundle gateway smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      memtomem_stm_ref:
+        description: memtomem-stm git ref to exercise
+        required: false
+        default: main
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Toolgraph
+        uses: actions/checkout@v4
+        with:
+          path: toolgraph
+      - name: Checkout memtomem-stm
+        uses: actions/checkout@v4
+        with:
+          repository: memtomem/memtomem-stm
+          ref: ${{ github.event.inputs.memtomem_stm_ref || 'main' }}
+          path: memtomem-stm
+      - uses: astral-sh/setup-uv@v5
+      - name: Sync Toolgraph
+        run: uv sync --project toolgraph --frozen --extra dev --extra ladybug
+      - name: Sync memtomem-stm
+        run: uv sync --project memtomem-stm --frozen
+      - name: Run advisory cross-repository smoke
+        run: >-
+          uv run --project toolgraph --frozen --extra dev --extra ladybug python
+          toolgraph/scripts/policy_bundle_gateway_smoke.py
+          --memtomem-stm-root memtomem-stm
+          --artifacts-dir "${{ runner.temp }}/policy-gateway-evidence"
+      - name: Upload body-free evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-bundle-gateway-evidence
+          path: ${{ runner.temp }}/policy-gateway-evidence/
+          if-no-files-found: warn
+          retention-days: 14

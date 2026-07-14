@@ -1,224 +1,130 @@
 # toolgraph Beginner Guide
 
-This guide is for first-time users who want to run toolgraph locally, read the
-results, and make a small change to the example governance files.
+This guide takes a first-time user from an empty checkout to one verified
+policy bundle. The default path uses the embedded Ladybug graph and a bundled
+MCP fixture, so it needs neither Docker nor Node.js.
 
 Korean version: [`docs/ko-beginner-guide.md`](ko-beginner-guide.md)
 
-toolgraph is not a runtime gateway that blocks MCP tool calls. It is an
-advisory analyzer. It crawls MCP servers into a Neo4j graph, combines those
-facts with operator-authored grants and data-access rules, then answers:
-"Which agents can reach which sensitive resources, through which tools, and
-why?"
-
-## Concepts to Know First
-
-- `MCPServer`: an MCP server that exposes tools and resources.
-- `Tool`: a callable capability exposed by an MCP server.
-- `Resource`: something a tool reads or writes, such as a file, memory
-  namespace, or API dataset.
-- `Agent`: the caller that may be granted access to tools. The examples use
-  names such as `public-bot` and `ops-agent`.
-- `Policy`: a rule attached to a resource or tool. In the default example,
-  `secrets-deny` marks a secret file as DENY-governed.
-- `CAN_CALL`: an operator-authored grant from an agent to a tool.
-- `READS` / `WRITES`: operator-authored data-flow edges from a tool to a
-  resource.
-- `GOVERNED_BY`: the edge that attaches a resource or tool to a policy.
-
-The main path shape is:
-
-```text
-Agent -> Tool -> Resource -> Policy
-```
-
-For example, this path means `public-bot` can call a tool that reaches a
-DENY-governed secret file:
-
-```text
-public-bot -> filesystem::read_file -> file:///private/secrets.env -> secrets-deny
-```
+Toolgraph is an advisory analyzer and policy compiler, not a runtime proxy. It
+crawls MCP tool contracts, combines them with operator-authored grants and data
+flows, and explains `Agent -> Tool -> Resource -> Policy` paths. A gateway such
+as memtomem-stm consumes the resulting JSON bundle and performs the actual
+runtime enforcement.
 
 ## Prerequisites
 
 - Python 3.12 or newer
-- Docker or Docker Desktop
-- `uv`
-- Node.js and `npx`
+- [`uv`](https://docs.astral.sh/uv/)
 
-The default demo crawls the filesystem MCP server from `examples/servers.yaml`.
-That server is launched with `npx`, so the first run may need network access to
-download the npm package.
-
-## 1. Install and Start Neo4j
+## 1. Initialize a local graph
 
 ```bash
-uv sync --extra dev
-cp .env.example .env
-docker compose up -d --wait
+uv sync --extra dev --extra ladybug
+uv run toolgraph init
 ```
 
-The default values in `.env.example` match `docker-compose.yml`. You only need
-to edit `.env` if you are using a separate Neo4j instance.
+`init` creates `.toolgraph/config.json` and a local Ladybug database. Toolgraph
+commands own that database sequentially; the gateway never opens it.
 
-Check connectivity and initialize constraints:
+## 2. Crawl the offline MCP fixture
 
 ```bash
-uv run toolgraph check
-uv run toolgraph init-schema
+uv run toolgraph crawl --servers examples/servers-policy-gateway.yaml
 ```
 
-You should see a successful connection message and the graph constraints.
+The fixture exposes two tools:
 
-## 2. Run the Demo
+- `policy-gateway::read_note` — a read-only, idempotent tool.
+- `policy-gateway::publish_note` — a mutating tool that writes to a governed
+  draft resource.
 
-The fastest first run is the demo script:
+## 3. Load the authored policy
 
 ```bash
-bash scripts/demo.sh
+uv run toolgraph ingest-manifest \
+  --governance examples/governance-policy-gateway.yaml \
+  --strict-drift
 ```
 
-The script does four things:
+The example grants `vibe-coder` both tools but places the draft resource under
+a DENY policy. Every authored edge includes a local evidence pointer.
 
-1. Clears the current graph data.
-2. Crawls the MCP servers listed in `examples/servers.yaml`.
-3. Loads the operator-authored rules in `examples/governance.yaml`.
-4. Runs three audit questions.
-
-## 3. Run the Same Flow Manually
-
-Running each step yourself makes the data flow easier to understand:
+## 4. Inspect the decision
 
 ```bash
-uv run toolgraph reset --yes
-uv run toolgraph crawl --servers examples/servers.yaml
-uv run toolgraph ingest-manifest --governance examples/governance.yaml
+uv run toolgraph eligible-tools vibe-coder \
+  policy-gateway::read_note policy-gateway::publish_note \
+  --profile review
+uv run toolgraph selection-explain vibe-coder policy-gateway::publish_note
 ```
 
-`crawl` loads factual server state: which MCP server exposes which tools and
-resources. `ingest-manifest` loads operator-authored governance: agents,
-policies, grants, and data-access rules.
+`read_note` is eligible. `publish_note` is rejected with an explainable policy
+path. Toolgraph is reporting the decision here; it has not intercepted a call.
 
-## 4. Read the Results
-
-Find tools that `public-bot` can call and that reach a DENY-governed resource:
+## 5. Compile the gateway bundle
 
 ```bash
-uv run toolgraph unsafe-tools public-bot
+uv run toolgraph policy compile \
+  --agent vibe-coder \
+  --profile review \
+  --output .toolgraph/policy-bundle.json
 ```
 
-In the default example, `public-bot` has a grant to
-`filesystem::read_file`. The governance file also declares that
-`filesystem::read_file` reads `file:///private/secrets.env`, and that resource
-is governed by `secrets-deny`. The result includes fields like:
+Success prints JSON containing the output path, exact byte digest, graph
+instance/generation, and eligible/rejected counts. The artifact is canonical
+UTF-8 JSON, written privately with atomic replacement.
 
-- `tool`: the reachable tool.
-- `resource`: the resource the tool reaches.
-- `policy`: the DENY policy on that resource.
-- `classification`: usually `violation` unless the operator declared an
-  expected exception.
-- `path`: the graph path used as evidence.
-- `provenance`: where the relevant edge claims came from.
+Start with `review`: the reference gateway keeps rejected tools visible and
+records would-block calls. After inspecting the decisions, compile a matching
+`strict` bundle to hide and block rejected tools.
 
-Check whether one agent can call one tool:
+## 6. Enforce it with memtomem-stm
+
+Toolgraph and the gateway remain separate packages. Follow the
+[memtomem-stm Toolgraph policy gateway guide](https://github.com/memtomem/memtomem-stm/blob/main/docs/guides/toolgraph-policy-gateway.md)
+to point STM at this bundle, run `mms gateway status` and `explain`, and connect
+it to Codex or Claude Code.
+
+The server name used by STM should match the name crawled by Toolgraph
+(`policy-gateway` here). If they differ, configure STM's `server_name_map`.
+
+## Useful audits and experiments
 
 ```bash
-uv run toolgraph check-access public-bot read_file
-```
-
-The most important field is `verdict`:
-
-- `ALLOW`: the agent has a grant and no DENY policy path was found.
-- `DENY`: the agent has a grant, but the tool reaches a DENY-governed target.
-- `NOT_GRANTED`: the agent exists but has no grant for that tool.
-- `AGENT_NOT_FOUND`: the agent name is not in the graph.
-- `TOOL_NOT_FOUND`: the tool name is not in the graph.
-- `AMBIGUOUS_TOOL`: the bare tool name matches tools on multiple servers.
-
-Find who would be affected if a resource changed:
-
-```bash
-uv run toolgraph blast-radius "file:///private/secrets.env"
-```
-
-If the response has `found: false`, toolgraph could not find that resource or
-policy node. Check this before treating an empty impact list as safe.
-
-## 5. Edit the Example Governance
-
-The default rules live in `examples/governance.yaml`:
-
-```yaml
-agents:
-  - ops-agent
-  - public-bot
-
-policies:
-  - id: secrets-deny
-    effect: DENY
-    scope: secrets
-
-grants:
-  - {agent: public-bot, tool: "filesystem::read_file", granted_by: platform-team}
-
-data_access:
-  - {tool: "filesystem::read_file", resource: "file:///private/secrets.env", mode: READS}
-
-governed_by:
-  "file:///private/secrets.env": [secrets-deny]
-```
-
-Good first experiments:
-
-- Remove the `public-bot` grant for `filesystem::read_file`, then rerun
-  `unsafe-tools public-bot`.
-- Change the `data_access` resource URI, then rerun `check-access`.
-- Add another `Policy`, attach it under `governed_by`, and inspect the new
-  evidence path.
-
-After every change, reload the manifest:
-
-```bash
-uv run toolgraph ingest-manifest --governance examples/governance.yaml
-```
-
-If the manifest references a missing tool or policy, ingestion is rejected and
-the previous graph state is preserved.
-
-## 6. Find Missing or Weak Governance
-
-toolgraph can also show what the graph does not know yet:
-
-```bash
+uv run toolgraph unsafe-tools vibe-coder
 uv run toolgraph unmapped-tools
-uv run toolgraph orphan-policies
 uv run toolgraph unbacked-edges
 uv run toolgraph drift
+uv run toolgraph blast-radius draft-publish-deny
 ```
 
-- `unmapped-tools`: granted tools with no declared `READS` or `WRITES` edges.
-- `orphan-policies`: policies that no currently reachable path touches.
-- `unbacked-edges`: operator-authored edges without evidence strings.
-- `drift`: tools that governance still references but the latest crawl no
-  longer sees.
+Good first experiments are removing the `read_note` grant, changing the draft
+policy binding, and recompiling. Always rerun `ingest-manifest` before
+compilation. Invalid manifests are rejected without replacing the previous
+graph state; failed compilation leaves the previous bundle intact.
 
-Start with `unsafe-tools`, `check-access`, and `blast-radius`. Then use these
-audit commands once you are ready to improve coverage.
+## Shared or fleet operation
+
+Ladybug is the default single-process local backend. Use Neo4j when multiple
+processes or operators need a shared graph:
+
+```bash
+docker compose up -d --wait
+cp .env.example .env
+uv run toolgraph init --backend neo4j
+```
+
+The larger `scripts/demo.sh` and `scripts/demo-public.sh` examples use real MCP
+servers and may require Docker, Node.js, `npx`, and network access.
 
 ## Troubleshooting
 
-If `docker compose up -d --wait` fails, confirm Docker is running.
-
-If `crawl` fails with an `npx` error, confirm Node.js is installed and that the
-machine can download npm packages.
-
-If you see `AGENT_NOT_FOUND`, check that the same agent name appears under
-`agents:` and `grants:` in `examples/governance.yaml`.
-
-If you see `TOOL_NOT_FOUND`, confirm that `crawl` succeeded and that you are
-using the right tool name. Some cases need the server prefix, such as
-`filesystem::read_file`.
-
-If you see `DENY`, that is not a runtime block. toolgraph is reporting an
-advisory finding. Runtime blocking would need to happen in a separate gateway
-or MCP proxy.
+- `AGENT_NOT_FOUND`: the same agent must exist in `agents` and the relevant
+  grants.
+- `TOOL_NOT_FOUND`: rerun crawl and use the qualified
+  `server::tool` identifier.
+- `DRIFTED`: governance references a tool the latest crawl no longer exposes.
+- Bundle compilation refuses missing governance state or graph identity rather
+  than publishing a misleading artifact.
+- A `DENY` result is enforced only after a gateway consumes the bundle.

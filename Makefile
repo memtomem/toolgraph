@@ -1,9 +1,11 @@
 # toolgraph dev shortcuts. Run `make` (or `make help`) to list targets.
 .DEFAULT_GOAL := help
-.PHONY: help install up down clean init crawl ingest demo demo-public serve check reset test lint fmt
+.PHONY: help install up down clean init crawl ingest demo demo-public smoke-policy-gateway serve check reset test lint fmt
 
 SERVERS ?= examples/servers.yaml
 GOVERNANCE ?= examples/governance.yaml
+STM_ROOT ?= ../memtomem-stm
+ARTIFACTS_DIR ?= /tmp/toolgraph-policy-gateway-evidence
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -44,6 +46,10 @@ demo: ## End-to-end demo (real filesystem server)
 
 demo-public: ## Cross-server demo (7 real public servers)
 	bash scripts/demo-public.sh
+
+smoke-policy-gateway: ## Run Toolgraph -> STM policy-bundle smoke
+	uv run --extra dev --extra ladybug python scripts/policy_bundle_gateway_smoke.py \
+		--memtomem-stm-root "$(STM_ROOT)" --artifacts-dir "$(ARTIFACTS_DIR)"
 
 test: ## Run the test suite (real Neo4j via testcontainers)
 	uv run pytest -q

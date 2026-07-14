@@ -141,6 +141,26 @@ def test_golden_contract_and_bundle_bytes_pin_cross_repo_encoding():
     Draft202012Validator(schema, format_checker=None).validate(bundle)
 
 
+def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
+    bundle_path = ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.json"
+    payload = bundle_path.read_bytes()
+    bundle = json.loads(payload)
+    assert canonical_json_bytes(bundle) == payload
+    expected = (
+        ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.sha256"
+    ).read_text().strip()
+    assert sha256_bytes(payload) == expected
+    decision = bundle["tools"][0]
+    assert decision["decision"] == "rejected"
+    assert decision["reason"] == "DENY_VIOLATION"
+    assert decision["paths"] == [
+        "(fixture-agent)-[:CAN_CALL]->(도구-서버::publish)-[:WRITES]->"
+        "(file:///demo/drafts)-[:GOVERNED_BY]->(draft-publish-deny)"
+    ]
+    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
 def test_unknown_agent_never_produces_bundle(monkeypatch):
     _mock_graph(monkeypatch, agent_found=False)
     with pytest.raises(PolicyBundleError, match="not found"):

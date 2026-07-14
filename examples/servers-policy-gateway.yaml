@@ -1,0 +1,5 @@
+servers:
+  - name: policy-gateway
+    transport: stdio
+    command: uv
+    args: ["run", "python", "examples/policy_gateway_server.py"]
