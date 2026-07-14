@@ -1,0 +1,48 @@
+agents:
+  - vibe-coder
+
+policies:
+  - id: draft-publish-deny
+    effect: DENY
+    scope: demo-drafts
+    description: Publishing demo drafts requires an explicit policy review.
+
+grants:
+  - agent: vibe-coder
+    tool: "policy-gateway::read_note"
+    granted_by: quickstart
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: examples/governance-policy-gateway.yaml:read-grant
+  - agent: vibe-coder
+    tool: "policy-gateway::publish_note"
+    granted_by: quickstart
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: examples/governance-policy-gateway.yaml:publish-grant
+
+data_access:
+  - tool: "policy-gateway::read_note"
+    resource: "file:///demo/notes"
+    mode: READS
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: examples/governance-policy-gateway.yaml:read-effect
+  - tool: "policy-gateway::publish_note"
+    resource: "file:///demo/drafts"
+    mode: WRITES
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: examples/governance-policy-gateway.yaml:publish-effect
+
+governed_by:
+  "file:///demo/drafts":
+    - policy: draft-publish-deny
+      provenance:
+        source: operator_asserted
+        confidence: high
+        evidence: examples/governance-policy-gateway.yaml:draft-policy

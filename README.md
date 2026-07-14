@@ -65,37 +65,29 @@ For the context-engineering and tool-selection roadmap, see
 [`docs/context-engineering-tool-selection-report.md`](docs/context-engineering-tool-selection-report.md).
 Contract-shaping decisions are recorded in [`docs/adr/`](docs/adr/README.md).
 
-For a Docker-free local graph, initialize the embedded Ladybug backend:
+The first bundle needs only Python and `uv`:
 
 ```bash
 uv sync --extra ladybug --extra dev
-uv run toolgraph init                    # writes .toolgraph/config.json
-uv run toolgraph crawl --servers examples/servers.yaml
-uv run toolgraph ingest-manifest --governance examples/governance.yaml
-uv run toolgraph policy compile --agent public-bot --profile strict \
+uv run toolgraph init
+uv run toolgraph crawl --servers examples/servers-policy-gateway.yaml
+uv run toolgraph ingest-manifest \
+  --governance examples/governance-policy-gateway.yaml --strict-drift
+uv run toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
 
 Ladybug is the local single-process backend. Toolgraph commands own the DB
 sequentially; gateways read only the generated JSON bundle. Use Neo4j for a
-shared service or multiple concurrent processes.
+shared service or multiple concurrent processes. The beginner guides explain
+the decision output and the memtomem-stm handoff.
+
+For the larger shared/fleet demos:
 
 ```bash
-# Shared/team backend: start Neo4j (pinned 5.26 community)
-docker compose up -d
-
-# 2. install
-uv sync --extra dev
-cp .env.example .env            # defaults match docker-compose
-
-# 3. run the end-to-end demo (crawls the real filesystem MCP server)
+docker compose up -d --wait
+cp .env.example .env
 bash scripts/demo.sh
-
-# (or use the Makefile shortcuts: `make` lists targets, e.g. `make up`,
-#  `make demo`, `make demo-public`, `make test`, `make lint`)
-
-# or the cross-server demo: 7 real public servers (npm + uvx), and a secret
-# reachable via tools on two different servers (filesystem AND git)
 bash scripts/demo-public.sh
 ```
 
