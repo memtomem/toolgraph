@@ -20,7 +20,8 @@ from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import resolve_tool_keys
-from toolgraph.graph.schema import BUMP_GENERATION, exception_key
+from toolgraph.graph.schema import bump_generation, exception_key
+from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
@@ -81,7 +82,10 @@ def _resolve_problem(ref: str, matches: list[str]) -> str:
 
 
 def _ingest(
-    tx: ManagedTransaction, gov: Governance, strict_drift: bool = False
+    tx: ManagedTransaction,
+    gov: Governance,
+    strict_drift: bool = False,
+    digest: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Two phases in one transaction; returns (warnings, notices).
 
@@ -300,7 +304,7 @@ def _ingest(
         return warnings, notices
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
-    tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]-() DELETE r")
+    tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]->() DELETE r")
     # ExpectedException nodes are pure authored bookkeeping — clear and re-apply
     # alongside the edges so a removed exception promotes the row back to violation.
     tx.run("MATCH (e:ExpectedException) DETACH DELETE e")
@@ -308,14 +312,14 @@ def _ingest(
     tx.run("UNWIND $ids AS id MERGE (:Agent {id:id})", ids=sorted(known_agents))
     # Policy provenance lives on the GOVERNED_BY binding (per-edge), not the
     # node — see GovernedByBinding. Policy nodes carry only declaration data.
-    # REMOVE drops the legacy ``prov_*`` properties left over from the
+    # Null assignments drop the legacy ``prov_*`` properties left over from the
     # pre-completion-round shape, so an upgrading graph cleans itself up.
     tx.run(
         """
         UNWIND $policies AS p
         MERGE (pol:Policy {id:p.id})
         SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
-        REMOVE pol.prov_source, pol.prov_confidence, pol.prov_evidence
+        SET pol.prov_source=null, pol.prov_confidence=null, pol.prov_evidence=null
         """,
         policies=[p.model_dump() for p in gov.policies],
     )
@@ -437,9 +441,18 @@ def _ingest(
     # tools always carry EXPOSES and never match.
     tx.run("MATCH (t:Tool) WHERE NOT EXISTS { MATCH (t)--() } DELETE t")
 
+    # The authored manifest is the source of truth. Persist its semantic
+    # digest in the same transaction as the derived graph and generation so a
+    # policy-bundle compiler can reject stale graph/file combinations.
+    tx.run(
+        "MERGE (m:GraphMeta {id:'singleton'}) "
+        "SET m.governance_digest=$digest",
+        digest=digest,
+    )
+
     # ADR-0004: only a manifest that actually applied bumps the generation —
     # the rejected path returned before Phase 2, leaving caches valid.
-    tx.run(BUMP_GENERATION)
+    bump_generation(tx)
 
     return [], notices
 
@@ -451,21 +464,24 @@ def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestRepo
     ``report.notices`` are non-fatal drift advisories (see IngestReport).
     """
     with session() as s:
-        warnings, notices = s.execute_write(_ingest, gov, strict_drift)
+        warnings, notices = s.execute_write(
+            _ingest, gov, strict_drift, governance_digest(gov)
+        )
         return IngestReport(warnings=warnings, notices=notices)
 
 
 def governance_counts() -> dict[str, int]:
-    query = """
-    CALL () { MATCH (a:Agent)  RETURN count(a) AS agent }
-    CALL () { MATCH (p:Policy) RETURN count(p) AS policy }
-    CALL () { MATCH ()-[c:CAN_CALL]->()    RETURN count(c) AS can_call }
-    CALL () { MATCH ()-[r:READS]->()       RETURN count(r) AS reads }
-    CALL () { MATCH ()-[w:WRITES]->()      RETURN count(w) AS writes }
-    CALL () { MATCH ()-[g:GOVERNED_BY]->() RETURN count(g) AS governed_by }
-    CALL () { MATCH (e:ExpectedException)  RETURN count(e) AS expected_exception }
-    RETURN agent, policy, can_call, reads, writes, governed_by, expected_exception
-    """
+    queries = {
+        "agent": "MATCH (n:Agent) RETURN count(n) AS count",
+        "policy": "MATCH (n:Policy) RETURN count(n) AS count",
+        "can_call": "MATCH ()-[r:CAN_CALL]->() RETURN count(r) AS count",
+        "reads": "MATCH ()-[r:READS]->() RETURN count(r) AS count",
+        "writes": "MATCH ()-[r:WRITES]->() RETURN count(r) AS count",
+        "governed_by": "MATCH ()-[r:GOVERNED_BY]->() RETURN count(r) AS count",
+        "expected_exception": "MATCH (n:ExpectedException) RETURN count(n) AS count",
+    }
     with session() as s:
-        rec = s.run(query).single()
-        return dict(rec) if rec else {}
+        return {
+            name: (record["count"] if (record := s.run(query).single()) else 0)
+            for name, query in queries.items()
+        }

@@ -67,7 +67,7 @@ def build_preflight(
             result["features"] = selector.rank_features(agent, candidates)["features"]
         return result
 
-    verdict = queries.with_generation(fetch, strict=True)
+    verdict = queries.with_graph_state(fetch, strict=True)
     if not verdict["agent_found"]:
         decision = "unresolved_identity"
     elif verdict["rejected"]:
@@ -81,6 +81,8 @@ def build_preflight(
         "run_id": run_id,
         "created_at": timestamp.isoformat(),
         "graph_generation": verdict["graph_generation"],
+        "graph_instance_id": verdict["graph_instance_id"],
+        "graph_state": verdict["graph_state"],
         "agent": agent,
         "agent_found": verdict["agent_found"],
         "profile": profile,

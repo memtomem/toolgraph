@@ -25,6 +25,16 @@
     "run_id": {"type": "string", "minLength": 1},
     "created_at": {"type": "string", "format": "date-time"},
     "graph_generation": {"type": "integer", "minimum": 0},
+    "graph_instance_id": {"type": ["string", "null"]},
+    "graph_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "generation"],
+      "properties": {
+        "instance_id": {"type": ["string", "null"]},
+        "generation": {"type": "integer", "minimum": 0}
+      }
+    },
     "agent": {"type": "string", "minLength": 1},
     "agent_found": {"type": "boolean"},
     "profile": {"enum": ["strict", "review", "explore"]},

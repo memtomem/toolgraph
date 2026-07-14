@@ -15,8 +15,9 @@ with a free-text evidence pointer) so reviewers can verify the claim.
 
 > **Advisory, not enforcement.** toolgraph analyzes and explains; it does **not**
 > sit in the traffic path and does not block calls at runtime. Think of it as a
-> risk/impact analyzer for your MCP tool estate. (For runtime enforcement you'd
-> pair it with a gateway.)
+> risk/impact analyzer and policy compiler for your MCP tool estate. Runtime
+> enforcement consumes its product-neutral policy bundle in a gateway;
+> memtomem-stm is the first reference consumer, not a required dependency.
 
 ## Why a graph (and what the alternatives are)
 
@@ -64,8 +65,23 @@ For the context-engineering and tool-selection roadmap, see
 [`docs/context-engineering-tool-selection-report.md`](docs/context-engineering-tool-selection-report.md).
 Contract-shaping decisions are recorded in [`docs/adr/`](docs/adr/README.md).
 
+For a Docker-free local graph, initialize the embedded Ladybug backend:
+
 ```bash
-# 1. start Neo4j (pinned 5.26 community)
+uv sync --extra ladybug --extra dev
+uv run toolgraph init                    # writes .toolgraph/config.json
+uv run toolgraph crawl --servers examples/servers.yaml
+uv run toolgraph ingest-manifest --governance examples/governance.yaml
+uv run toolgraph policy compile --agent public-bot --profile strict \
+  --output .toolgraph/policy-bundle.json
+```
+
+Ladybug is the local single-process backend. Toolgraph commands own the DB
+sequentially; gateways read only the generated JSON bundle. Use Neo4j for a
+shared service or multiple concurrent processes.
+
+```bash
+# Shared/team backend: start Neo4j (pinned 5.26 community)
 docker compose up -d
 
 # 2. install
@@ -142,10 +158,18 @@ uv run toolgraph selection-explain planner git_status
 uv run toolgraph preflight planner git_status read_file \
   --profile review --run-id "$RUN_ID" --out preflight.json
 
+# portable control-plane artifact for memtomem-stm or another MCP gateway
+uv run toolgraph policy compile --agent planner --profile strict \
+  --output policy-bundle.json
+
 # human review of Tracegraph T3 findings (no Neo4j or policy mutation)
 uv run toolgraph review-candidates list candidates.json
 uv run toolgraph review-candidates annotate candidates.json CANDIDATE_ID \
   --status accepted --reviewer operator --note "manual policy review approved"
+
+# accepted evidence -> current-policy work plan (still no policy mutation)
+uv run toolgraph policy review-plan candidates.json --agent planner \
+  --profile review --output policy-review-plan.json
 ```
 
 `preflight` wraps the same deterministic selector rules and stamps the result
@@ -156,6 +180,15 @@ scrubbed of userinfo and query strings before the artifact is written. Pass
 `--features` only when the consumer needs the full selector feature rows.
 SyncMill P3.1 may enforce this evidence before orchestration, but the producer
 artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
+
+`policy compile` evaluates every currently exposed qualified tool, fingerprints
+the crawled tool contract, and writes canonical JSON with private permissions
+and atomic replacement. The bundle carries a collision-safe
+`graph_state: {instance_id, generation}` plus governance and catalog digests.
+Toolgraph still does not claim that it blocked a call: a gateway consumes the
+bundle, chooses review or strict behavior, and records the enforcement action
+(ADR-0010). Re-run `ingest-manifest` before compilation when upgrading a graph
+that predates the governance-digest field.
 
 `review-candidates` is the G3 human-review boundary (ADR-0009). It consumes
 Tracegraph's body-free schema-v1 report and projects only `run_id`, versioned
@@ -179,6 +212,15 @@ independent: Toolgraph `accepted` is only a policy-review disposition. It does
 not complete a SyncMill board item, modify governance, change selector output,
 or increment `graph_generation`.
 
+`policy review-plan` is the explicit next step after acceptance (ADR-0012).
+It selects only currently accepted candidates, evaluates their qualified tool
+keys against one agent/profile, binds the result to the current graph instance
+and generation, and writes a private atomic work-plan artifact. It deliberately
+sets `decision_mode: "human_required"` and `automatic_change: false`: an
+operator still edits the governance manifest, runs `ingest-manifest`, reviews
+the resulting decision/blast radius, and then runs `policy compile`. Trace
+evidence never grants, denies, or creates an exception by itself.
+
 ### Exit codes
 
 Per [ADR-0003](docs/adr/0003-cli-output-and-exit-code-contract.md) this table
@@ -190,6 +232,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `preflight` | 0 for advisory allow, warn, and unresolved identity; operational/argument errors are non-zero |
+| `policy compile` | 0 after atomic bundle replacement · 1 on unresolved identity/state or I/O failure |
 | `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
 | `ingest-manifest` (manifest REJECTED) | 1 |
 | `crawl` (any server failed) | 1 |

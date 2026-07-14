@@ -11,7 +11,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra dev
+      - run: uv sync --extra dev --extra ladybug
       - run: uv run ruff check .
+      # Keep the optional local backend from silently disappearing behind
+      # pytest.importorskip() in the required CI job.
+      - run: uv run python -c "import ladybug"
       # Real Neo4j via testcontainers — docker is preinstalled on ubuntu runners.
       - run: uv run pytest -q
