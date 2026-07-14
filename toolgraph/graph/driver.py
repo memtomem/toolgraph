@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+import re
 from typing import Any
 
 from neo4j import Driver, GraphDatabase, Session
@@ -43,21 +44,42 @@ class _LadybugResult:
         return self._rows[0]
 
 
+_IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+_DATETIME_CALL = re.compile(r"(?<![A-Za-z0-9_])datetime\s*\(\s*\)")
+_TYPE_CALL = re.compile(rf"(?<![A-Za-z0-9_])type\s*\(\s*({_IDENTIFIER})\s*\)")
+_LABELS_HEAD = re.compile(
+    rf"(?<![A-Za-z0-9_])labels\s*\(\s*({_IDENTIFIER})\s*\)\s*\[\s*0\s*\]"
+)
+_UNSUPPORTED_NEO4J_EXPRESSION = re.compile(
+    r"(?<![A-Za-z0-9_])(?:datetime|type|labels)\s*\("
+)
+
+
 def _ladybug_query(query: str) -> str:
-    """Translate the small remaining cross-dialect expression differences."""
-    translated = query.replace("datetime()", "current_timestamp()")
-    translated = translated.replace("type(", "label(")
-    translated = translated.replace("labels(src)[0]", "label(src)")
-    translated = translated.replace("labels(dst)[0]", "label(dst)")
+    """Translate only the explicitly supported Neo4j expression shapes.
+
+    This is intentionally a narrow dialect contract, not a Cypher parser.
+    Identifier boundaries prevent incidental substrings from being rewritten;
+    a remaining Neo4j-only function fails fast instead of reaching Ladybug as
+    a subtly different query.
+    """
+    translated = _DATETIME_CALL.sub("current_timestamp()", query)
+    translated = _TYPE_CALL.sub(r"label(\1)", translated)
+    translated = _LABELS_HEAD.sub(r"label(\1)", translated)
     for field in (
         "read_only_hint",
         "destructive_hint",
         "idempotent_hint",
         "open_world_hint",
     ):
-        translated = translated.replace(
-            f"tool.{field}=t.{field}",
+        translated = re.sub(
+            rf"\btool\.{field}\s*=\s*t\.{field}\b",
             f"tool.{field}=CAST(t.{field} AS BOOLEAN)",
+            translated,
+        )
+    if match := _UNSUPPORTED_NEO4J_EXPRESSION.search(translated):
+        raise BackendConfigurationError(
+            f"unsupported Neo4j expression for Ladybug near {match.group(0)!r}"
         )
     return translated
 

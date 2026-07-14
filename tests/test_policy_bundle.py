@@ -16,14 +16,20 @@ from toolgraph.artifacts import canonical_json_bytes, sha256_bytes
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import AccessGrant, CrawlResult, Governance, ToolRecord
-from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
+from toolgraph.policy_bundle import (
+    PolicyBundleError,
+    build_policy_bundle,
+    tool_contract_digest,
+)
 
 NOW = datetime(2026, 7, 14, tzinfo=timezone.utc)
 ROOT = Path(__file__).parent.parent
 
 
-def _mock_graph(monkeypatch, *, agent_found: bool = True) -> None:
-    state = queries.GraphState("graph-instance-1", 7, "a" * 64)
+def _mock_graph(
+    monkeypatch, *, agent_found: bool = True, instance_id: str | None = "graph-instance-1"
+) -> None:
+    state = queries.GraphState(instance_id, 7, "a" * 64)
     contracts = [
         {
             "tool_key": "alpha::read",
@@ -117,10 +123,34 @@ def test_bundle_schema_accepts_producer(monkeypatch):
     )
 
 
+def test_golden_contract_and_bundle_bytes_pin_cross_repo_encoding():
+    fixture = json.loads(
+        (ROOT / "contracts" / "fixtures" / "tool-contract-v1.json").read_text()
+    )
+    assert tool_contract_digest(fixture["contract"]) == fixture["expected_digest"]
+
+    bundle_path = ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json"
+    payload = bundle_path.read_bytes()
+    bundle = json.loads(payload)
+    assert canonical_json_bytes(bundle) == payload
+    expected = (
+        ROOT / "contracts" / "fixtures" / "policy-bundle-v1.sha256"
+    ).read_text().strip()
+    assert sha256_bytes(payload) == expected
+    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
 def test_unknown_agent_never_produces_bundle(monkeypatch):
     _mock_graph(monkeypatch, agent_found=False)
     with pytest.raises(PolicyBundleError, match="not found"):
         build_policy_bundle(agent="ghost", created_at=NOW)
+
+
+def test_missing_graph_instance_id_never_produces_bundle(monkeypatch):
+    _mock_graph(monkeypatch, instance_id=None)
+    with pytest.raises(PolicyBundleError, match="no instance id"):
+        build_policy_bundle(agent="codex", created_at=NOW)
 
 
 def test_policy_compile_writes_private_exact_bytes(monkeypatch, tmp_path):

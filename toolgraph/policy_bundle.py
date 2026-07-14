@@ -85,6 +85,11 @@ def build_policy_bundle(
         }
 
     compiled = queries.with_graph_state(fetch, strict=True)
+    graph_state = compiled["graph_state"]
+    if not isinstance(graph_state.get("instance_id"), str) or not graph_state["instance_id"]:
+        raise PolicyBundleError(
+            "graph has no instance id — run init-schema before compiling"
+        )
     governance_digest = compiled["governance_digest"]
     if not governance_digest:
         raise PolicyBundleError(
