@@ -17,6 +17,8 @@ vs a policy id.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import asdict, dataclass
+import json
 
 from neo4j import Session
 
@@ -25,6 +27,18 @@ from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 
 _GENERATION_RETRIES = 5
+
+
+@dataclass(frozen=True)
+class GraphState:
+    """Collision-safe identity for one concrete graph state."""
+
+    instance_id: str | None
+    generation: int
+    governance_digest: str | None = None
+
+    def token(self) -> dict[str, str | int | None]:
+        return asdict(self)
 
 
 def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
@@ -45,6 +59,33 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     if strict:
         raise RuntimeError("graph generation changed during every read attempt")
     return {**result, "graph_generation": graph_generation()}
+
+
+def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
+    """Return ``fetch`` bracketed by the collision-safe graph state token."""
+    for _ in range(_GENERATION_RETRIES):
+        before = graph_state()
+        result = fetch()
+        if graph_state() == before:
+            token = {"instance_id": before.instance_id, "generation": before.generation}
+            return {
+                **result,
+                "graph_generation": before.generation,
+                "graph_instance_id": before.instance_id,
+                "graph_state": token,
+            }
+    if strict:
+        raise RuntimeError("graph state changed during every read attempt")
+    current = graph_state()
+    return {
+        **result,
+        "graph_generation": current.generation,
+        "graph_instance_id": current.instance_id,
+        "graph_state": {
+            "instance_id": current.instance_id,
+            "generation": current.generation,
+        },
+    }
 
 
 def resolve_tool_keys(s: Session, ref: str) -> list[str]:
@@ -71,6 +112,51 @@ def graph_generation() -> int:
             "RETURN coalesce(m.generation, 0) AS generation"
         ).single()
         return rec["generation"] if rec else 0
+
+
+def graph_state() -> GraphState:
+    """Return the current collision-safe graph state and governance digest."""
+    with session() as s:
+        rec = s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) "
+            "RETURN m.instance_id AS instance_id, "
+            "coalesce(m.generation, 0) AS generation, "
+            "m.governance_digest AS governance_digest"
+        ).single()
+    if rec is None:
+        return GraphState(instance_id=None, generation=0)
+    return GraphState(
+        instance_id=rec["instance_id"],
+        generation=rec["generation"],
+        governance_digest=rec["governance_digest"],
+    )
+
+
+def exposed_tool_contracts() -> list[dict]:
+    """Canonical crawl facts for every tool currently exposed by a server."""
+    with session() as s:
+        rows = s.run(
+            """
+            MATCH (server:MCPServer)-[:EXPOSES]->(tool:Tool)
+            RETURN tool.key AS tool_key,
+                   server.name AS server,
+                   tool.name AS name,
+                   tool.description AS description,
+                   tool.input_schema AS input_schema,
+                   tool.read_only_hint AS read_only_hint,
+                   tool.destructive_hint AS destructive_hint,
+                   tool.idempotent_hint AS idempotent_hint,
+                   tool.open_world_hint AS open_world_hint
+            ORDER BY tool.key
+            """
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            raw_schema = item.get("input_schema")
+            item["input_schema"] = json.loads(raw_schema) if raw_schema else None
+            result.append(item)
+        return result
 
 
 def agent_exists(agent: str) -> bool:
@@ -144,13 +230,11 @@ def _deny_evidence_batch(
         WITH t.key AS key, type(acc) AS mode, r.uri AS resource, p.id AS policy,
              acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
              gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-             collect(DISTINCT exc) AS excs
-        WITH key, mode, resource, policy, source, confidence, evidence,
-             gov_source, gov_confidence, gov_evidence,
-             coalesce(head([e IN excs WHERE e.resource IS NOT NULL]), head(excs)) AS exc
+             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+               {resource: exc.resource, reason: exc.reason} END) AS exceptions
         RETURN key, mode, resource, policy, source, confidence, evidence,
                gov_source, gov_confidence, gov_evidence,
-               exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
+               exceptions
         ORDER BY key, resource, policy
         """,
         keys=keys,
@@ -169,11 +253,12 @@ def _deny_evidence_batch(
         if policy_prov is not None:
             d["policy_provenance"] = policy_prov
         if agent is not None:
+            exception = _picked_exception(r)
             d["classification"] = (
-                "authorized_but_governed" if r["has_exception"] else "violation"
+                "authorized_but_governed" if exception else "violation"
             )
-            if r["exception_reason"] is not None:
-                d["exception_reason"] = r["exception_reason"]
+            if exception and exception.get("reason") is not None:
+                d["exception_reason"] = exception["reason"]
         evidence[key].append(d)
     for r in s.run(
         """
@@ -184,10 +269,10 @@ def _deny_evidence_batch(
             AND ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
         WITH t.key AS key, p.id AS policy,
              g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-             collect(DISTINCT exc) AS excs
-        WITH key, policy, source, confidence, evidence, head(excs) AS exc
+             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+               {resource: exc.resource, reason: exc.reason} END) AS exceptions
         RETURN key, policy, source, confidence, evidence,
-               exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
+               exceptions
         ORDER BY key, policy
         """,
         keys=keys,
@@ -201,11 +286,12 @@ def _deny_evidence_batch(
             "provenance": _prov(r),
         }
         if agent is not None:
+            exception = _picked_exception(r)
             d["classification"] = (
-                "authorized_but_governed" if r["has_exception"] else "violation"
+                "authorized_but_governed" if exception else "violation"
             )
-            if r["exception_reason"] is not None:
-                d["exception_reason"] = r["exception_reason"]
+            if exception and exception.get("reason") is not None:
+                d["exception_reason"] = exception["reason"]
         evidence[key].append(d)
     return evidence
 
@@ -246,6 +332,15 @@ def _gov_prov(row) -> dict | None:
         "confidence": row["gov_confidence"],
         "evidence": evidence,
     }
+
+
+def _picked_exception(row) -> dict | None:
+    """Prefer a resource-specific exception over a wildcard."""
+    exceptions = [item for item in (row.get("exceptions") or []) if item]
+    return next(
+        (item for item in exceptions if item.get("resource") is not None),
+        exceptions[0] if exceptions else None,
+    )
 
 
 def _name(key: str) -> str:
@@ -376,13 +471,11 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
                  type(acc) AS mode, res.uri AS resource, p.id AS policy,
                  acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
                  gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-                 collect(DISTINCT exc) AS excs
-            WITH tool_key, tool, server, mode, resource, policy,
-                 source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
-                 coalesce(head([e IN excs WHERE e.resource IS NOT NULL]), head(excs)) AS exc
+                 collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+                   {resource: exc.resource, reason: exc.reason} END) AS exceptions
             RETURN tool_key, tool, server, 'resource' AS via, mode, resource, policy,
                    source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
-                   exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
+                   exceptions
             ORDER BY tool, resource
             """,
             agent=agent,
@@ -390,15 +483,17 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             d = dict(r)
             d["path"] = _resource_path(d["tool"], d["mode"], d["resource"], d["policy"])
             d["provenance"] = _prov(r)
+            exception = _picked_exception(r)
             policy_prov = _gov_prov(r)
             if policy_prov is not None:
                 d["policy_provenance"] = policy_prov
             d["classification"] = (
-                "authorized_but_governed" if r["has_exception"] else "violation"
+                "authorized_but_governed" if exception else "violation"
             )
+            d["exception_reason"] = exception.get("reason") if exception else None
             for k in ("source", "confidence", "evidence",
                       "gov_source", "gov_confidence", "gov_evidence",
-                      "has_exception"):
+                      "exceptions"):
                 d.pop(k, None)
             if d.get("exception_reason") is None:
                 d.pop("exception_reason", None)
@@ -410,12 +505,11 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
               WHERE exc.resource IS NULL
             WITH t.key AS tool_key, t.name AS tool, t.server AS server, p.id AS policy,
                  g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-                 collect(DISTINCT exc) AS excs
-            WITH tool_key, tool, server, policy, source, confidence, evidence,
-                 head(excs) AS exc
+                 collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+                   {resource: exc.resource, reason: exc.reason} END) AS exceptions
             RETURN tool_key, tool, server, 'tool' AS via, null AS mode, null AS resource,
                    policy, source, confidence, evidence,
-                   exc IS NOT NULL AS has_exception, exc.reason AS exception_reason
+                   exceptions
             ORDER BY tool
             """,
             agent=agent,
@@ -423,10 +517,12 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
             d = dict(r)
             d["path"] = _tool_path(d["tool"], d["policy"])
             d["provenance"] = _prov(r)
+            exception = _picked_exception(r)
             d["classification"] = (
-                "authorized_but_governed" if r["has_exception"] else "violation"
+                "authorized_but_governed" if exception else "violation"
             )
-            for k in ("source", "confidence", "evidence", "has_exception"):
+            d["exception_reason"] = exception.get("reason") if exception else None
+            for k in ("source", "confidence", "evidence", "exceptions"):
                 d.pop(k, None)
             if d.get("exception_reason") is None:
                 d.pop("exception_reason", None)
@@ -573,14 +669,16 @@ def unbacked_edges(include_grants: bool = False) -> list[dict]:
     cypher = f"""
     MATCH (src)-[r:{edge_types}]->(dst)
     WHERE r.evidence IS NULL OR trim(r.evidence) = ''
-    RETURN type(r) AS edge_type,
-           labels(src)[0] AS src_label,
-           coalesce(src.id, src.key, src.uri, src.name) AS src,
-           labels(dst)[0] AS dst_label,
-           coalesce(dst.id, dst.key, dst.uri, dst.name) AS dst,
-           coalesce(r.source, 'operator_asserted') AS source,
-           coalesce(r.confidence, 'high') AS confidence
-    ORDER BY edge_type, src, dst
+    WITH type(r) AS edge_type,
+         labels(src)[0] AS src_label,
+         coalesce(src.id, src.key, src.uri, src.name) AS src_id,
+         labels(dst)[0] AS dst_label,
+         coalesce(dst.id, dst.key, dst.uri, dst.name) AS dst_id,
+         coalesce(r.source, 'operator_asserted') AS source,
+         coalesce(r.confidence, 'high') AS confidence
+    RETURN edge_type, src_label, src_id AS src, dst_label, dst_id AS dst,
+           source, confidence
+    ORDER BY edge_type, src_id, dst_id
     """
     with session() as s:
         return [dict(r) for r in s.run(cypher)]
@@ -601,12 +699,21 @@ def drifted_tools() -> list[dict]:
     OPTIONAL MATCH (t)-[acc:READS|WRITES]->(res:Resource)
     RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
            collect(DISTINCT a.id) AS granted_to,
-           [x IN collect(DISTINCT {mode:type(acc), resource:res.uri})
-            WHERE x.mode IS NOT NULL AND x.resource IS NOT NULL] AS data_access
+           collect(DISTINCT {mode:type(acc), resource:res.uri}) AS data_access
     ORDER BY tool_key
     """
     with session() as s:
-        return [dict(r) for r in s.run(cypher)]
+        rows = []
+        for row in s.run(cypher):
+            item = dict(row)
+            item["granted_to"] = [value for value in (item["granted_to"] or []) if value]
+            item["data_access"] = [
+                value
+                for value in (item["data_access"] or [])
+                if value and value.get("mode") is not None and value.get("resource") is not None
+            ]
+            rows.append(item)
+        return rows
 
 
 def _annotation_provenance(exposes_evidence: str | None) -> dict:
@@ -640,14 +747,19 @@ def destructive_unsafeguarded() -> list[dict]:
     RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
            e.evidence AS exposes_evidence,
            collect(DISTINCT a.id) AS granted_to,
-           [x IN collect(DISTINCT {mode:type(acc), resource:res.uri})
-            WHERE x.mode IS NOT NULL AND x.resource IS NOT NULL] AS data_access
+           collect(DISTINCT {mode:type(acc), resource:res.uri}) AS data_access
     ORDER BY tool_key
     """
     rows: list[dict] = []
     with session() as s:
         for r in s.run(cypher):
             d = dict(r)
+            d["granted_to"] = [value for value in (d["granted_to"] or []) if value]
+            d["data_access"] = [
+                value
+                for value in (d["data_access"] or [])
+                if value and value.get("mode") is not None and value.get("resource") is not None
+            ]
             d["annotation_claim"] = "destructiveHint: true"
             d["annotation_provenance"] = _annotation_provenance(r["exposes_evidence"])
             d.pop("exposes_evidence", None)

@@ -1,7 +1,7 @@
 [project]
 name = "toolgraph"
 version = "0.1.0"
-description = "Graph-native MCP/tool registry — advisory governance & impact analysis over a Neo4j graph"
+description = "Graph-native MCP/tool registry, policy compiler, and impact analyzer"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,6 +17,9 @@ dependencies = [
 toolgraph = "toolgraph.cli:app"
 
 [project.optional-dependencies]
+ladybug = [
+    "ladybug>=0.18.1",
+]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toolgraph.dev/contracts/policy-review-plan.schema.json",
+  "title": "toolgraph policy review plan",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "kind", "created_at", "source_report_digest", "graph_state", "agent", "profile", "decision_mode", "candidates"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "kind": {"const": "toolgraph.policy-review-plan"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "source_report_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+    "graph_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instance_id", "generation"],
+      "properties": {
+        "instance_id": {"type": "string", "minLength": 1},
+        "generation": {"type": "integer", "minimum": 0}
+      }
+    },
+    "agent": {"type": "string", "minLength": 1},
+    "profile": {"enum": ["strict", "review", "explore"]},
+    "decision_mode": {"const": "human_required"},
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["candidate_id", "run_id", "pattern_id", "pattern_version", "tool_key", "artifact_digest", "current_decision", "current_reason", "current_paths", "recommended_action", "automatic_change"],
+        "properties": {
+          "candidate_id": {"type": "string", "format": "uuid"},
+          "run_id": {"type": "string", "minLength": 1},
+          "pattern_id": {"type": "string", "minLength": 1},
+          "pattern_version": {"type": "integer", "minimum": 1},
+          "tool_key": {"type": "string", "pattern": "^\\S+::\\S+$"},
+          "artifact_digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+          "current_decision": {"enum": ["eligible", "rejected"]},
+          "current_reason": {"type": ["string", "null"]},
+          "current_paths": {"type": "array", "items": {"type": "string"}},
+          "recommended_action": {"const": "review_governance_manifest"},
+          "automatic_change": {"const": false}
+        }
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ from typing import NoReturn
 import typer
 
 from toolgraph import config
+from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -25,6 +26,8 @@ from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.preflight import build_preflight
+from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
+from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
 from toolgraph.review_candidates import (
     ReviewCandidateError,
     annotate_candidate,
@@ -53,14 +56,58 @@ review_candidates_app = typer.Typer(
     add_completion=False,
     help="List and annotate Tracegraph governance review candidates.",
 )
+policy_app = typer.Typer(
+    add_completion=False,
+    help="Compile and review portable policy artifacts.",
+)
 app.add_typer(review_candidates_app, name="review-candidates")
+app.add_typer(policy_app, name="policy")
 
 
 @app.command()
 def check() -> None:
-    """Verify Neo4j connectivity."""
+    """Verify the configured graph backend."""
     driver.verify_connectivity()
-    typer.echo(f"OK: connected to {config.settings.neo4j_uri}")
+    if driver.backend_name() == "ladybug":
+        typer.echo(f"OK: backend=ladybug path={config.settings.db_path}")
+    else:
+        typer.echo(f"OK: backend=neo4j uri={config.settings.neo4j_uri}")
+
+
+@app.command("init")
+def init_backend(
+    backend: str = typer.Option(
+        "ladybug", "--backend", help="Local backend: ladybug (default) or neo4j."
+    ),
+    state_dir: Path = typer.Option(
+        Path(".toolgraph"), "--state-dir", help="Local config/database directory."
+    ),
+) -> None:
+    """Initialize a versioned local backend configuration."""
+    normalized = backend.lower().strip()
+    if normalized not in {"ladybug", "neo4j"}:
+        raise typer.BadParameter("expected ladybug or neo4j", param_hint="--backend")
+    state_dir = state_dir.expanduser().resolve()
+    runtime_path = state_dir / "config.json"
+    db_path = state_dir / "toolgraph.lbug"
+    previous = config.settings
+    config.settings = config.Settings(backend=normalized, db_path=db_path)
+    driver.close_driver()
+    try:
+        schema.init_schema()
+        payload = canonical_json_bytes(
+            {
+                "schema_version": 1,
+                "backend": normalized,
+                "db_path": str(db_path),
+            }
+        )
+        atomic_write_private(runtime_path, payload)
+    except Exception:
+        config.settings = previous
+        driver.close_driver()
+        raise
+    typer.echo(f"Initialized backend={normalized} config={runtime_path}")
 
 
 @app.command("init-schema")
@@ -186,6 +233,9 @@ def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL
         raise typer.Exit(code=1)
     with driver.session() as s:
         s.run("MATCH (n) DETACH DELETE n")
+    # Recreate GraphMeta at generation 0 with a fresh instance id. A reset may
+    # reuse generation numbers but must never reuse an external graph-state key.
+    schema.init_schema()
     typer.echo("Graph cleared.")
 
 
@@ -486,6 +536,88 @@ def preflight(
     except Exception:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+@policy_app.command("compile")
+def policy_compile(
+    agent: str = typer.Option(..., "--agent", help="Authored agent identity."),
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE,
+        "--profile",
+        help="Named selector profile: strict / review / explore.",
+    ),
+    output: Path = typer.Option(..., "--output", help="Private policy bundle path."),
+) -> None:
+    """Compile a product-neutral policy bundle for an enforcement gateway."""
+    _selector_profile(profile)
+    try:
+        artifact = build_policy_bundle(agent=agent, profile=profile)
+        payload = canonical_json_bytes(artifact)
+        digest = atomic_write_private(output, payload)
+    except (PolicyBundleError, RuntimeError, OSError, ValueError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "kind": artifact["kind"],
+                "output": str(output),
+                "bundle_digest": digest,
+                "graph_state": artifact["graph_state"],
+                "agent": artifact["agent"],
+                "profile": artifact["profile"],
+                "eligible": sum(t["decision"] == "eligible" for t in artifact["tools"]),
+                "rejected": sum(t["decision"] == "rejected" for t in artifact["tools"]),
+            },
+            indent=2,
+        )
+    )
+
+
+@policy_app.command("review-plan")
+def policy_review_plan(
+    report: Path = typer.Argument(..., help="Tracegraph review-candidate report."),
+    agent: str = typer.Option(..., "--agent", help="Authored agent identity."),
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE,
+        "--profile",
+        help="Named selector profile: strict / review / explore.",
+    ),
+    annotations: Path | None = typer.Option(
+        None,
+        "--annotations",
+        help="Annotation sidecar (default: REPORT.toolgraph-review.json).",
+    ),
+    output: Path = typer.Option(..., "--output", help="Private review-plan artifact path."),
+) -> None:
+    """Project accepted trace evidence into a human-required policy work plan."""
+    _selector_profile(profile)
+    try:
+        artifact = build_policy_review_plan(
+            report=report,
+            agent=agent,
+            profile=profile,
+            annotations=annotations,
+        )
+        digest = atomic_write_private(output, canonical_json_bytes(artifact))
+    except (PolicyReviewPlanError, RuntimeError, OSError, ValueError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "kind": artifact["kind"],
+                "output": str(output),
+                "artifact_digest": digest,
+                "graph_state": artifact["graph_state"],
+                "agent": artifact["agent"],
+                "profile": artifact["profile"],
+                "candidates": len(artifact["candidates"]),
+                "decision_mode": artifact["decision_mode"],
+            },
+            indent=2,
+        )
+    )
 
 
 def _review_candidate_failure(exc: ReviewCandidateError) -> NoReturn:

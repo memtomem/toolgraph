@@ -112,12 +112,15 @@ def _resolve_all(s, refs: list[str]) -> dict[str, list[str]]:
         UNWIND $refs AS ref
         OPTIONAL MATCH (t:Tool)
           WHERE t.key = ref OR (NOT ref CONTAINS '::' AND t.name = ref)
-        WITH ref, t.key AS key ORDER BY key
-        RETURN ref, [k IN collect(key) WHERE k IS NOT NULL] AS keys
+        WITH ref, t.key AS key
+        RETURN ref, collect(key) AS keys
         """,
         refs=sorted(set(refs)),
     )
-    return {r["ref"]: r["keys"] for r in rows}
+    return {
+        r["ref"]: sorted(key for key in (r["keys"] or []) if key is not None)
+        for r in rows
+    }
 
 
 def _tool_facts(s, keys: list[str], agent: str) -> dict[str, dict]:

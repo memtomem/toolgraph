@@ -17,8 +17,13 @@ NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
 
 def _bracket(monkeypatch, payload, generation=42):
     monkeypatch.setattr(
-        "toolgraph.preflight.queries.with_generation",
-        lambda fetch, **kwargs: {**fetch(), "graph_generation": generation},
+        "toolgraph.preflight.queries.with_graph_state",
+        lambda fetch, **kwargs: {
+            **fetch(),
+            "graph_generation": generation,
+            "graph_instance_id": "test-instance",
+            "graph_state": {"instance_id": "test-instance", "generation": generation},
+        },
     )
     monkeypatch.setattr(
         "toolgraph.preflight.selector.eligible_tools", lambda *a, **k: payload
@@ -36,6 +41,7 @@ def test_allow_artifact_is_deterministic(monkeypatch):
     doc = build_preflight(**kwargs)
     assert doc["decision"] == "advisory_allow"
     assert doc["graph_generation"] == 42
+    assert doc["graph_state"] == {"instance_id": "test-instance", "generation": 42}
     assert doc["created_at"] == "2026-07-11T00:00:00+00:00"
 
 

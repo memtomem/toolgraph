@@ -101,7 +101,12 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
     # The MCP wrapper stamps graph_generation on top of the query result
     # (ADR-0004); the query layer itself stays unstamped for the CLI.
     expected = queries.check_access("support-bot", "read_file")
-    expected["graph_generation"] = queries.graph_generation()
+    state = queries.graph_state()
+    expected.update(
+        graph_generation=state.generation,
+        graph_instance_id=state.instance_id,
+        graph_state={"instance_id": state.instance_id, "generation": state.generation},
+    )
     assert got == expected
     assert got["verdict"] == "DENY"
 
@@ -158,13 +163,17 @@ async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container)
             "selection_explain", {"agent": "support-bot", "tool": "read_file"}
         ))
 
-    generation = queries.graph_generation()
+    state = queries.graph_state()
     for got, expected in (
         (ranked, selector.rank_features("support-bot", candidates)),
         (filtered, selector.eligible_tools("support-bot", candidates, profile="review")),
         (explained, selector.selection_explain("support-bot", "read_file")),
     ):
-        expected["graph_generation"] = generation
+        expected.update(
+            graph_generation=state.generation,
+            graph_instance_id=state.instance_id,
+            graph_state={"instance_id": state.instance_id, "generation": state.generation},
+        )
         assert got == expected
 
 
@@ -202,5 +211,10 @@ async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
         got = _structured(await session.call_tool("audit_report", {}))
 
     expected = queries.audit_report()
-    expected["graph_generation"] = queries.graph_generation()
+    state = queries.graph_state()
+    expected.update(
+        graph_generation=state.generation,
+        graph_instance_id=state.instance_id,
+        graph_state={"instance_id": state.instance_id, "generation": state.generation},
+    )
     assert got == expected

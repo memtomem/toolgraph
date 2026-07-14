@@ -113,7 +113,11 @@ def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
     # in after the first fetch), then stable 3s — first bracket fails,
     # second succeeds and must stamp 3.
     seq = iter([2, 3, 3, 3])
-    monkeypatch.setattr(app.queries, "graph_generation", lambda: next(seq))
+    monkeypatch.setattr(
+        app.queries,
+        "graph_state",
+        lambda: queries.GraphState("test-instance", next(seq)),
+    )
     fetches = 0
     real_check_access = app.queries.check_access
 
@@ -127,6 +131,8 @@ def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
     fn = check_access.fn if hasattr(check_access, "fn") else check_access
     got = fn("support-bot", "read_file")
     assert got["graph_generation"] == 3
+    assert got["graph_instance_id"] == "test-instance"
+    assert got["graph_state"] == {"instance_id": "test-instance", "generation": 3}
     assert fetches == 2  # first bracket discarded, second accepted
 
 

@@ -16,7 +16,7 @@ import json
 from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.schema import BUMP_GENERATION, tool_key
+from toolgraph.graph.schema import bump_generation, tool_key
 from toolgraph.models import CrawlResult
 from toolgraph.uris import normalize_resource_uri
 
@@ -114,8 +114,8 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         """
         MATCH (old:Tool {server:$name})
         WHERE NOT old.key IN $keys
-        REMOVE old.read_only_hint, old.destructive_hint,
-               old.idempotent_hint, old.open_world_hint
+        SET old.read_only_hint=null, old.destructive_hint=null,
+            old.idempotent_hint=null, old.open_world_hint=null
         """,
         name=result.server_name,
         keys=keys,
@@ -136,7 +136,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         name=result.server_name,
         keys=keys,
     ).single()
-    orphaned = rec["orphaned"] if rec else []
+    orphaned = (rec["orphaned"] if rec else None) or []
 
     # PROVIDES: drop edges to resources no longer advertised; keep the (shared,
     # possibly governed) Resource node itself.
@@ -152,7 +152,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
 
     # ADR-0004: same transaction as the mutation, so a reader can never see
     # new graph state under an old generation (or vice versa).
-    tx.run(BUMP_GENERATION)
+    bump_generation(tx)
 
     return [
         f"tool {k!r} no longer exposed by {result.server_name!r} but retains authored "
@@ -175,7 +175,7 @@ def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str]
         "RETURN collect(s.name) AS retired",
         keep=keep,
     ).single()
-    retired = sorted(rec["retired"]) if rec else []
+    retired = sorted((rec["retired"] if rec else None) or [])
     if not retired:
         # Nothing changed — don't bump the generation (ADR-0004: the token
         # invalidates caches; a no-op reconciliation must leave them valid).
@@ -188,7 +188,7 @@ def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str]
         "RETURN collect(DISTINCT r.uri) AS uris",
         names=retired,
     ).single()
-    resource_uris = rec["uris"] if rec else []
+    resource_uris = (rec["uris"] if rec else None) or []
 
     # A retired server makes no annotation claims anymore (ADR-0006) — kept
     # tools must not keep citing crawled/medium self-claims from a server
@@ -196,8 +196,8 @@ def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str]
     tx.run(
         """
         MATCH (t:Tool) WHERE t.server IN $names
-        REMOVE t.read_only_hint, t.destructive_hint,
-               t.idempotent_hint, t.open_world_hint
+        SET t.read_only_hint=null, t.destructive_hint=null,
+            t.idempotent_hint=null, t.open_world_hint=null
         """,
         names=retired,
     )
@@ -216,7 +216,7 @@ def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str]
         "MATCH (t:Tool) WHERE t.server IN $names RETURN collect(t.key) AS kept",
         names=retired,
     ).single()
-    kept = sorted(rec["kept"]) if rec else []
+    kept = sorted((rec["kept"] if rec else None) or [])
 
     # The server node and all its EXPOSES/PROVIDES edges go together — kept
     # tools lose their EXPOSES here and become honestly drifted.
@@ -237,7 +237,7 @@ def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str]
         uris=resource_uris,
     )
 
-    tx.run(BUMP_GENERATION)
+    bump_generation(tx)
     return retired, [
         f"tool {k!r} kept after its server was retired from servers.yaml — it "
         f"retains authored governance (kept so a DENY cannot silently become "
@@ -256,14 +256,15 @@ def retire_unlisted_servers(keep: set[str]) -> tuple[list[str], list[str]]:
 
 def graph_counts() -> dict[str, int]:
     """Node/edge tallies — used by the idempotency check and the demo."""
-    query = """
-    CALL () {  MATCH (s:MCPServer) RETURN count(s) AS mcpserver }
-    CALL () {  MATCH (t:Tool)      RETURN count(t) AS tool }
-    CALL () {  MATCH (r:Resource)  RETURN count(r) AS resource }
-    CALL () {  MATCH ()-[e:EXPOSES]->()  RETURN count(e) AS exposes }
-    CALL () {  MATCH ()-[p:PROVIDES]->() RETURN count(p) AS provides }
-    RETURN mcpserver, tool, resource, exposes, provides
-    """
+    queries = {
+        "mcpserver": "MATCH (n:MCPServer) RETURN count(n) AS count",
+        "tool": "MATCH (n:Tool) RETURN count(n) AS count",
+        "resource": "MATCH (n:Resource) RETURN count(n) AS count",
+        "exposes": "MATCH ()-[r:EXPOSES]->() RETURN count(r) AS count",
+        "provides": "MATCH ()-[r:PROVIDES]->() RETURN count(r) AS count",
+    }
     with session() as s:
-        rec = s.run(query).single()
-        return dict(rec) if rec else {}
+        return {
+            name: (record["count"] if (record := s.run(query).single()) else 0)
+            for name, query in queries.items()
+        }

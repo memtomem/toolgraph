@@ -14,7 +14,7 @@ from toolgraph.graph import queries, selector
 
 mcp = FastMCP("toolgraph")
 
-_with_generation = queries.with_generation
+_with_generation = queries.with_graph_state
 
 
 @mcp.tool()

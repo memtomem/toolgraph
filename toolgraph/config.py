@@ -4,11 +4,40 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def runtime_config_path() -> Path:
+    return Path(os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")).expanduser()
+
+
+def _runtime_config() -> dict:
+    path = runtime_config_path()
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"invalid Toolgraph runtime config at {path}: {exc}") from exc
+    if not isinstance(value, dict) or value.get("schema_version") != 1:
+        raise RuntimeError(f"unsupported Toolgraph runtime config at {path}")
+    return value
+
+
+def _backend_default() -> str:
+    return os.getenv("TOOLGRAPH_BACKEND") or str(_runtime_config().get("backend", "neo4j"))
+
+
+def _db_path_default() -> Path:
+    value = os.getenv("TOOLGRAPH_DB_PATH") or _runtime_config().get(
+        "db_path", ".toolgraph/toolgraph.lbug"
+    )
+    return Path(str(value)).expanduser()
 
 
 @dataclass(frozen=True)
@@ -19,6 +48,8 @@ class Settings:
     neo4j_user: str = field(default_factory=lambda: os.getenv("NEO4J_USER", "neo4j"))
     neo4j_password: str = field(default_factory=lambda: os.getenv("NEO4J_PASSWORD", "toolgraph-dev"))
     neo4j_database: str = field(default_factory=lambda: os.getenv("NEO4J_DATABASE", "neo4j"))
+    backend: str = field(default_factory=_backend_default)
+    db_path: Path = field(default_factory=_db_path_default)
     servers_config: Path = field(
         default_factory=lambda: Path(os.getenv("TOOLGRAPH_SERVERS", "servers.yaml"))
     )

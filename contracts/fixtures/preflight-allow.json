@@ -4,6 +4,8 @@
   "run_id": "0f5b2c1a-9a1e-4b7c-8f3d-2e6a7c9d0b41",
   "created_at": "2026-07-11T00:00:00+00:00",
   "graph_generation": 42,
+  "graph_instance_id": "test-instance",
+  "graph_state": {"instance_id": "test-instance", "generation": 42},
   "agent": "codex",
   "agent_found": true,
   "profile": "review",

@@ -14,6 +14,9 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0007](0007-fleet-level-crawl-reconciliation.md) | Fleet-level crawl reconciliation: servers.yaml declares the fleet | Accepted |
 | [0008](0008-syncmill-enforcement-boundary.md) | SyncMill enforcement consumes advisory Toolgraph evidence | Accepted |
 | [0009](0009-human-review-candidate-intake.md) | Trace feedback is immutable evidence with separate human annotations | Accepted |
+| [0010](0010-portable-policy-bundle-boundary.md) | Portable policy bundle separates control plane from gateway data plane | Accepted |
+| [0011](0011-embedded-ladybug-backend.md) | Ladybug is the embedded local backend; Neo4j remains the shared backend | Accepted |
+| [0012](0012-trace-evidence-policy-review-plan.md) | Trace evidence becomes a human-required policy review plan | Accepted |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.

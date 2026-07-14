@@ -134,6 +134,9 @@ redaction fixture를 contract test에 포함한다.
 - [x] SyncMill PR #57과 같은 exact-tuple UUIDv5로 candidate/board item을 상호 참조한다.
 - [x] `accepted`도 manifest, policy, selector, Neo4j를 수정하지 않으며 blast radius와
   `graph_generation`이 보존됨을 regression test로 고정한다.
+- [x] accepted 후보를 현재 agent/profile 판정과 graph state에 결합한
+  `policy review-plan` artifact로 내보내되 `human_required` / `automatic_change: false`로
+  고정한다. 실제 manifest 변경, ingest, bundle compile은 명시적으로 분리한다.
 
 G3 annotation과 SyncMill board 상태는 독립적이다. 둘은 candidate id로 correlation만
 가능하며 자동 동기화되지 않는다. 이후 실제 manifest 수정이 필요하면 별도 명시적
