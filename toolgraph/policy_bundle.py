@@ -9,7 +9,7 @@ the same schema without importing Toolgraph Python code.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from toolgraph.artifacts import canonical_json_bytes, sha256_bytes
@@ -67,11 +67,21 @@ def build_policy_bundle(
         raise PolicyBundleError(
             f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
         )
-    if created_at is not None and created_at.tzinfo is None:
-        raise PolicyBundleError(
-            "created_at must be timezone-aware — the contract requires an RFC 3339"
-            " timestamp with a UTC offset"
-        )
+    if created_at is not None:
+        # Aware means utcoffset() returns a value, not merely that tzinfo is
+        # set: a tzinfo whose utcoffset() is None still isoformat()s without an
+        # offset, which the schema's RFC 3339 prose forbids.
+        offset = created_at.utcoffset()
+        if offset is None:
+            raise PolicyBundleError(
+                "created_at must be timezone-aware — the contract requires an"
+                " RFC 3339 timestamp with a UTC offset"
+            )
+        if offset % timedelta(minutes=1):
+            raise PolicyBundleError(
+                f"created_at offset {offset} has sub-minute resolution — RFC 3339"
+                " offsets are ±HH:MM"
+            )
 
     reader = store or RuntimeGraphStore()
 
@@ -89,7 +99,8 @@ def build_policy_bundle(
         if duplicates:
             raise PolicyBundleError(
                 f"duplicate tool_key rows in exposed catalog: {', '.join(duplicates)}"
-                " — repair the graph (multiple EXPOSES edges per tool) before compiling"
+                " — repair the graph (e.g. multiple EXPOSES edges per tool) before"
+                " compiling"
             )
         candidates = [row["tool_key"] for row in contracts]
         filtered = reader.eligible_tools(agent, candidates, profile)

@@ -67,7 +67,7 @@
         "tool_contract_digest": {"$ref": "#/$defs/sha256"},
         "decision": {"enum": ["eligible", "rejected"]},
         "reason": {
-          "description": "Required on rejected decisions and never emitted on eligible ones; consumers MAY drop or normalize a reason found on an eligible decision.",
+          "description": "Producers MUST emit a reason on every rejected decision and never emit one on an eligible decision. Consumers MAY treat an unrecognized reason as a generic rejection rather than fail — the rejection still stands — and MAY drop or normalize a reason found on an eligible decision.",
           "enum": [
             "TOOL_NOT_FOUND",
             "AMBIGUOUS_TOOL",
@@ -87,7 +87,7 @@
         "paths": {
           "type": "array",
           "items": {"type": "string"},
-          "description": "Redacted advisory evidence paths. Producer obligation; consumers MAY ignore this field."
+          "description": "Optional redacted evidence, emitted only for deny-path rejections. Advisory: consumers MAY ignore this field."
         }
       },
       "allOf": [
