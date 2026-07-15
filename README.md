@@ -175,7 +175,9 @@ artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
 
 `policy compile` evaluates every currently exposed qualified tool, fingerprints
 the crawled tool contract, and writes canonical JSON with private permissions
-and atomic replacement. The bundle carries a collision-safe
+and atomic replacement. Each tool appears exactly once in the bundle; a
+duplicated catalog row fails compilation instead of shipping. The bundle
+carries a collision-safe
 `graph_state: {instance_id, generation}` plus governance and catalog digests.
 Toolgraph still does not claim that it blocked a call: a gateway consumes the
 bundle, chooses review or strict behavior, and records the enforcement action

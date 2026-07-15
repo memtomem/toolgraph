@@ -8,6 +8,7 @@ the same schema without importing Toolgraph Python code.
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -66,12 +67,30 @@ def build_policy_bundle(
         raise PolicyBundleError(
             f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
         )
+    if created_at is not None and created_at.tzinfo is None:
+        raise PolicyBundleError(
+            "created_at must be timezone-aware — the contract requires an RFC 3339"
+            " timestamp with a UTC offset"
+        )
 
     reader = store or RuntimeGraphStore()
 
     def fetch() -> dict[str, Any]:
         state = reader.state()
         contracts = reader.exposed_tool_contracts()
+        # Consumers key decisions by tool_key and may reject the whole bundle
+        # on a duplicate (the schema's tools description makes this normative),
+        # so failing compilation here is strictly better than shipping one.
+        duplicates = sorted(
+            key
+            for key, count in Counter(row["tool_key"] for row in contracts).items()
+            if count > 1
+        )
+        if duplicates:
+            raise PolicyBundleError(
+                f"duplicate tool_key rows in exposed catalog: {', '.join(duplicates)}"
+                " — repair the graph (multiple EXPOSES edges per tool) before compiling"
+            )
         candidates = [row["tool_key"] for row in contracts]
         filtered = reader.eligible_tools(agent, candidates, profile)
         if not filtered["agent_found"]:

@@ -23,7 +23,9 @@ bytes are the deployment identity.
 Every bundle carries `{instance_id, generation}`. `instance_id` persists for
 the lifetime of one graph and changes after reconstruction. The existing
 `graph_generation` field remains on preflight and MCP responses; the composite
-`graph_state` is additive.
+`graph_state` is additive. Additive here means `graph_state` is a new top-level
+field beside `graph_generation`; the `graph_state` object itself is closed, and
+adding a field inside it requires a `schema_version` bump.
 
 Toolgraph never opens an upstream call path while compiling or serving this
 artifact. Consumers independently choose review/fail-open/strict behavior and

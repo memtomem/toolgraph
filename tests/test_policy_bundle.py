@@ -7,7 +7,7 @@ import json
 import os
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 import pytest
 from typer.testing import CliRunner
 
@@ -159,6 +159,47 @@ def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
     ]
     schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
     Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
+def test_schema_rejects_exact_duplicate_tool_rows():
+    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    Draft202012Validator.check_schema(schema)
+    # Pin the two machine-checkable contract bits so a reformat cannot drop
+    # them silently; the per-tool_key uniqueness contract itself lives in the
+    # tools description and the producer check.
+    assert schema["$defs"]["graphState"]["additionalProperties"] is False
+    assert schema["properties"]["tools"]["uniqueItems"] is True
+    bundle = json.loads(
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text()
+    )
+    bundle["tools"] = bundle["tools"] * 2
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
+def test_duplicate_tool_key_never_produces_bundle(monkeypatch):
+    _mock_graph(monkeypatch)
+    contracts = queries.exposed_tool_contracts()
+    doubled = [contracts[0], *contracts]
+    monkeypatch.setattr(queries, "exposed_tool_contracts", lambda: doubled)
+    with pytest.raises(PolicyBundleError, match="duplicate tool_key.*alpha::read"):
+        build_policy_bundle(agent="codex", created_at=NOW)
+
+
+def test_created_at_round_trips_timezone_aware(monkeypatch):
+    _mock_graph(monkeypatch)
+    pinned = build_policy_bundle(agent="codex", created_at=NOW)
+    live = build_policy_bundle(agent="codex")
+    for bundle in (pinned, live):
+        parsed = datetime.fromisoformat(bundle["created_at"])
+        assert parsed.tzinfo is not None
+        assert parsed.isoformat() == bundle["created_at"]
+
+
+def test_naive_created_at_never_produces_bundle(monkeypatch):
+    _mock_graph(monkeypatch)
+    with pytest.raises(PolicyBundleError, match="timezone-aware"):
+        build_policy_bundle(agent="codex", created_at=datetime(2026, 7, 14))
 
 
 def test_unknown_agent_never_produces_bundle(monkeypatch):
