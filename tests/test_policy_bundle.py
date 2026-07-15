@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 import json
 import os
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
+from jsonschema import Draft202012Validator, ValidationError
 import pytest
 from typer.testing import CliRunner
 
@@ -159,6 +159,99 @@ def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
     ]
     schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
     Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
+def test_schema_rejects_exact_duplicate_tool_rows():
+    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    Draft202012Validator.check_schema(schema)
+    # Pin the two machine-checkable contract bits so a reformat cannot drop
+    # them silently; the per-tool_key uniqueness contract itself lives in the
+    # tools description and the producer check.
+    assert schema["$defs"]["graphState"]["additionalProperties"] is False
+    assert schema["properties"]["tools"]["uniqueItems"] is True
+    bundle = json.loads(
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text()
+    )
+    bundle["tools"] = bundle["tools"] * 2
+    with pytest.raises(ValidationError):
+        Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
+@pytest.mark.parametrize("differing", [False, True])
+def test_duplicate_tool_key_never_produces_bundle(monkeypatch, differing):
+    """The producer rejects both exact and conflicting duplicate catalog rows.
+
+    The conflicting case is the one ``uniqueItems`` cannot catch and the one a
+    gateway keying by tool_key would have to arbitrate — hence the contract.
+    """
+    _mock_graph(monkeypatch)
+    contracts = queries.exposed_tool_contracts()
+    collision = dict(contracts[0])
+    if differing:
+        collision["description"] = "Read data (relocated)"
+    monkeypatch.setattr(queries, "exposed_tool_contracts", lambda: [collision, *contracts])
+    with pytest.raises(PolicyBundleError, match="duplicate tool_key.*alpha::read"):
+        build_policy_bundle(agent="codex", created_at=NOW)
+
+
+def test_schema_alone_cannot_catch_conflicting_duplicate_rows():
+    """Pins the asymmetry the tools description exists to cover.
+
+    Two rows sharing a tool_key but differing elsewhere stay schema-valid —
+    uniqueItems compares whole items — so the prose contract and the producer
+    check, not the schema, are what make uniqueness enforceable.
+    """
+    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    bundle = json.loads(
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text()
+    )
+    conflicting = dict(bundle["tools"][0])
+    conflicting["risk_score"] = 1.0
+    bundle["tools"] = [bundle["tools"][0], conflicting]
+    Draft202012Validator(schema, format_checker=None).validate(bundle)
+
+
+def test_created_at_offset_resolution_never_produces_bundle(monkeypatch):
+    _mock_graph(monkeypatch)
+    with pytest.raises(PolicyBundleError, match="sub-minute resolution"):
+        build_policy_bundle(
+            agent="codex",
+            created_at=datetime(2026, 7, 14, tzinfo=timezone(timedelta(seconds=30))),
+        )
+
+
+def test_created_at_round_trips_timezone_aware(monkeypatch):
+    _mock_graph(monkeypatch)
+    pinned = build_policy_bundle(agent="codex", created_at=NOW)
+    live = build_policy_bundle(agent="codex")
+    for bundle in (pinned, live):
+        parsed = datetime.fromisoformat(bundle["created_at"])
+        assert parsed.tzinfo is not None
+        assert parsed.isoformat() == bundle["created_at"]
+
+
+class _OffsetlessTZ(tzinfo):
+    """A tzinfo that is set but yields no offset — isoformat() drops the offset."""
+
+    def utcoffset(self, dt):
+        return None
+
+    def tzname(self, dt):
+        return "OFFSETLESS"
+
+
+@pytest.mark.parametrize(
+    "naive",
+    [
+        datetime(2026, 7, 14),
+        datetime(2026, 7, 14, tzinfo=_OffsetlessTZ()),
+    ],
+    ids=["no-tzinfo", "tzinfo-without-offset"],
+)
+def test_naive_created_at_never_produces_bundle(monkeypatch, naive):
+    _mock_graph(monkeypatch)
+    with pytest.raises(PolicyBundleError, match="timezone-aware"):
+        build_policy_bundle(agent="codex", created_at=naive)
 
 
 def test_unknown_agent_never_produces_bundle(monkeypatch):
