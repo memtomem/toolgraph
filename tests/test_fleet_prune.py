@@ -81,7 +81,7 @@ def test_named_failure_is_protected_not_blocking():
 def test_unnamed_failure_blocks_the_prune():
     spec = ServerSpec(command="npx flaky-server")
     keep, blockers = fleet_keep_names([spec], [], [(spec, "timeout after 1s")])
-    assert blockers == ["npx flaky-server"]
+    assert blockers == ["stdio:npx"]
 
 
 def test_label_collision_does_not_protect_unnamed_failure():
@@ -94,7 +94,7 @@ def test_label_collision_does_not_protect_unnamed_failure():
     _, blockers = fleet_keep_names(
         [named, unnamed], results, [(unnamed, "timeout after 1s")]
     )
-    assert blockers == ["npx flaky-server"]
+    assert blockers == ["stdio:npx"]
 
 
 def test_empty_fleet_keeps_nothing():

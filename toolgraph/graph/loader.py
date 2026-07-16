@@ -18,10 +18,12 @@ from neo4j import ManagedTransaction
 from toolgraph.graph.driver import session
 from toolgraph.graph.schema import bump_generation, tool_key
 from toolgraph.models import CrawlResult
+from toolgraph.redaction import persisted_endpoint
 from toolgraph.uris import normalize_resource_uri
 
 
 def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
+    endpoint = persisted_endpoint(result.transport, result.endpoint)
     tx.run(
         """
         MERGE (s:MCPServer {name:$name})
@@ -31,7 +33,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         name=result.server_name,
         version=result.server_version,
         transport=result.transport,
-        endpoint=result.endpoint,
+        endpoint=endpoint,
     )
 
     tools = [
@@ -68,7 +70,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         """,
         name=result.server_name,
         tools=tools,
-        evidence=f"crawled from {result.endpoint or result.transport}",
+        evidence=f"crawled from {endpoint}",
     )
 
     resources = [
@@ -91,7 +93,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         """,
         name=result.server_name,
         resources=resources,
-        evidence=f"crawled from {result.endpoint or result.transport}",
+        evidence=f"crawled from {endpoint}",
     )
 
     # Reconcile tools this server no longer exposes. Drop the EXPOSES edge always;

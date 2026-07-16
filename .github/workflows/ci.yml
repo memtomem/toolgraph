@@ -1,20 +1,127 @@
-name: ci
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - run: uv run ruff check .
+
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra dev --extra ladybug
-      - run: uv run ruff check .
-      # Keep the optional local backend from silently disappearing behind
-      # pytest.importorskip() in the required CI job.
-      - run: uv run python -c "import ladybug"
-      # Real Neo4j via testcontainers — docker is preinstalled on ubuntu runners.
-      - run: uv run pytest -q
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - name: Require the optional local backend
+        run: uv run python -c "import ladybug"
+      - name: Run full suite against real Neo4j
+        run: uv run pytest -q
+
+  artifact-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: ubuntu-latest
+            python: "3.14"
+          - os: macos-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: uv python install ${{ matrix.python }}
+      - run: uv build
+      - run: uv venv --python ${{ matrix.python }} .artifact-venv
+      - name: Locate built wheel
+        shell: bash
+        run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
+      - run: uv pip install --python .artifact-venv "${{ env.WHEEL }}[ladybug]"
+      - run: uv run --python .artifact-venv --no-project toolgraph --version
+      - run: uv run --python .artifact-venv --no-project toolgraph example init smoke
+      - run: uv run --python ../.artifact-venv --no-project toolgraph init
+        working-directory: smoke
+      - run: uv run --python ../.artifact-venv --no-project toolgraph crawl --servers servers.yaml
+        working-directory: smoke
+      - run: uv run --python ../.artifact-venv --no-project toolgraph ingest-manifest --governance governance.yaml --strict-drift
+        working-directory: smoke
+      - run: uv run --python ../.artifact-venv --no-project toolgraph policy compile --agent vibe-coder --profile review --output .toolgraph/policy-bundle.json
+        working-directory: smoke
+
+  minimum-mcp:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: uv build
+      - run: uv venv .minimum-venv
+      - name: Locate built wheel
+        run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
+      - run: uv pip install --python .minimum-venv "${{ env.WHEEL }}[ladybug]" "mcp==1.27.1"
+      - run: uv run --python .minimum-venv --no-project toolgraph --version
+
+  audit-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: scripts/audit-dependencies.sh runtime
+
+  audit-extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: scripts/audit-dependencies.sh extras
+
+  audit-dev:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: scripts/audit-dependencies.sh dev
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev
+      - run: uv build
+      - run: uv run twine check dist/*
+      - name: Verify version single source
+        run: uv run python -c "import pathlib, tomllib, toolgraph; assert toolgraph.__version__; assert 'version' not in tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']"

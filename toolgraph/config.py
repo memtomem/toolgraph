@@ -9,11 +9,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+
+_explicit_config_path: Path | None = None
 
 
 def runtime_config_path() -> Path:
-    return Path(os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")).expanduser()
+    value = _explicit_config_path or os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")
+    return Path(value).expanduser()
 
 
 def _runtime_config() -> dict:
@@ -30,13 +33,20 @@ def _runtime_config() -> dict:
 
 
 def _backend_default() -> str:
-    return os.getenv("TOOLGRAPH_BACKEND") or str(_runtime_config().get("backend", "neo4j"))
+    runtime = _runtime_config()
+    if _explicit_config_path is not None:
+        return str(runtime.get("backend", "neo4j"))
+    return os.getenv("TOOLGRAPH_BACKEND") or str(runtime.get("backend", "neo4j"))
 
 
 def _db_path_default() -> Path:
-    value = os.getenv("TOOLGRAPH_DB_PATH") or _runtime_config().get(
-        "db_path", ".toolgraph/toolgraph.lbug"
-    )
+    runtime = _runtime_config()
+    if _explicit_config_path is not None:
+        value = runtime.get("db_path", ".toolgraph/toolgraph.lbug")
+    else:
+        value = os.getenv("TOOLGRAPH_DB_PATH") or runtime.get(
+            "db_path", ".toolgraph/toolgraph.lbug"
+        )
     return Path(str(value)).expanduser()
 
 
@@ -59,3 +69,18 @@ class Settings:
 
 
 settings = Settings()
+
+
+def configure(config_path: Path) -> None:
+    """Select an explicit runtime config (CLI > env > cwd .env > default)."""
+    global _explicit_config_path, settings
+    selected = config_path.expanduser().resolve()
+    if not selected.is_file():
+        raise RuntimeError(f"Toolgraph runtime config does not exist: {selected}")
+    previous = _explicit_config_path
+    _explicit_config_path = selected
+    try:
+        settings = Settings()
+    except Exception:
+        _explicit_config_path = previous
+        raise

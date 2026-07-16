@@ -1,12 +1,13 @@
-# Pinned Neo4j for toolgraph local dev. 5.26 is the last LTS before calendar
+# Development-only Neo4j. Do not expose this compose service on a shared host.
+# Pinned Neo4j 5.26 is the last LTS before calendar
 # versioning; community edition is sufficient (no vector index / node-key needed).
 services:
   neo4j:
     image: neo4j:5.26-community
     container_name: toolgraph-neo4j
     ports:
-      - "7474:7474" # browser
-      - "7687:7687" # bolt
+      - "127.0.0.1:7474:7474" # browser, loopback only
+      - "127.0.0.1:7687:7687" # bolt, loopback only
     environment:
       NEO4J_AUTH: neo4j/toolgraph-dev
       NEO4J_server_memory_heap_max__size: 512M

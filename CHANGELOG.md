@@ -1,0 +1,22 @@
+# Changelog
+
+All notable changes to Toolgraph are documented here.
+
+## 0.1.0 - Unreleased
+
+Initial public alpha release.
+
+- Crawl MCP servers into a graph and combine factual capability data with
+  operator-authored governance.
+- Explain access, reachability, drift, blast radius, and tool selection.
+- Compile deterministic policy bundles for an independent runtime gateway.
+- Support local Ladybug and shared Neo4j backends.
+- Reject unknown manifest fields and duplicate YAML keys before graph mutation.
+- Persist only credential-free endpoint labels and redact failure diagnostics.
+- Ship an install-only, offline quickstart through `toolgraph example init`.
+
+### Upgrade note for pre-release users
+
+Earlier snapshots could persist stdio arguments or complete HTTP URLs in graph
+endpoint/evidence properties. Reset and rebuild pre-release graphs after
+upgrading. If any argument or URL contained a credential, rotate it as well.

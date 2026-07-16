@@ -15,10 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field
 Transport = Literal["stdio", "streamable-http", "sse"]
 
 
+class StrictInputModel(BaseModel):
+    """Base for operator-authored input: unknown fields are always errors."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+
 # --- crawler config (servers.yaml) ---------------------------------------
 
 
-class ServerSpec(BaseModel):
+class ServerSpec(StrictInputModel):
     """One MCP server to crawl."""
 
     name: str | None = None  # override; else taken from serverInfo.name
@@ -32,7 +38,7 @@ class ServerSpec(BaseModel):
     headers: dict[str, str] = Field(default_factory=dict)
 
 
-class ServersConfig(BaseModel):
+class ServersConfig(StrictInputModel):
     servers: list[ServerSpec] = Field(default_factory=list)
 
 
@@ -79,7 +85,7 @@ ProvenanceSource = Literal["crawled", "operator_asserted", "inferred"]
 ProvenanceConfidence = Literal["high", "medium", "low"]
 
 
-class Provenance(BaseModel):
+class Provenance(StrictInputModel):
     """Where an edge came from and how strong the claim is."""
 
     source: ProvenanceSource = "operator_asserted"
@@ -88,20 +94,18 @@ class Provenance(BaseModel):
     evidence: str | None = None
 
 
-class Policy(BaseModel):
+class Policy(StrictInputModel):
     # ``extra='forbid'`` catches old manifests that still carry a node-level
     # ``provenance:`` block (the pre-completion-round shape) with a clear
     # Pydantic error pointing at the field, instead of silently ignoring it.
     # The replacement lives on GovernedByBinding (per-edge provenance).
-    model_config = ConfigDict(extra="forbid")
-
     id: str
     effect: Literal["ALLOW", "DENY"]
     scope: str | None = None
     description: str | None = None
 
 
-class AccessGrant(BaseModel):
+class AccessGrant(StrictInputModel):
     """Agent -[:CAN_CALL]-> Tool. Tool referenced as '<server>::<tool>' or '<tool>'."""
 
     agent: str
@@ -110,7 +114,7 @@ class AccessGrant(BaseModel):
     provenance: Provenance | None = None
 
 
-class DataAccess(BaseModel):
+class DataAccess(StrictInputModel):
     """Tool -[:READS|WRITES]-> Resource."""
 
     tool: str
@@ -119,7 +123,7 @@ class DataAccess(BaseModel):
     provenance: Provenance | None = None
 
 
-class ExpectedException(BaseModel):
+class ExpectedException(StrictInputModel):
     """Operator-declared exception: this (agent, tool, resource?, policy) reach
     is intentional — surface it as ``authorized_but_governed`` rather than
     ``violation`` so reviewers don't drown in noise on by-design grants."""
@@ -131,7 +135,7 @@ class ExpectedException(BaseModel):
     reason: str | None = None
 
 
-class GovernedByBinding(BaseModel):
+class GovernedByBinding(StrictInputModel):
     """One (node, policy) binding with optional evidence.
 
     Lets authors cite WHY this resource (or tool) is bound to this policy —
@@ -144,7 +148,7 @@ class GovernedByBinding(BaseModel):
     provenance: Provenance | None = None
 
 
-class Governance(BaseModel):
+class Governance(StrictInputModel):
     agents: list[str] = Field(default_factory=list)
     policies: list[Policy] = Field(default_factory=list)
     grants: list[AccessGrant] = Field(default_factory=list)

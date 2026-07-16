@@ -1,0 +1,48 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+      - "test-v[0-9]*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish to ${{ startsWith(github.ref_name, 'test-') && 'TestPyPI' || 'PyPI' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: ${{ startsWith(github.ref_name, 'test-') && 'https://test.pypi.org/p/toolgraph' || 'https://pypi.org/p/toolgraph' }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "latest"
+      - name: Verify tag matches package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          test "$VERSION" = "$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
+      - run: scripts/audit-dependencies.sh runtime
+      - run: scripts/audit-dependencies.sh extras
+      - run: uv build
+      - run: uv run --frozen --group dev twine check dist/*
+      - name: Publish to PyPI
+        if: ${{ !startsWith(github.ref_name, 'test-') }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          packages-dir: dist
+          skip-existing: true
+      - name: Publish to TestPyPI
+        if: ${{ startsWith(github.ref_name, 'test-') }}
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+          skip-existing: true

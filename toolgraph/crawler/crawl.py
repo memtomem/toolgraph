@@ -5,20 +5,20 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import yaml
-
 from toolgraph.crawler.client import crawl_server
 from toolgraph.models import CrawlResult, ServerSpec, ServersConfig
+from toolgraph.redaction import endpoint_label, redact_text
+from toolgraph.yaml_loader import load_yaml_mapping
 
 
 def load_servers_config(path: Path) -> list[ServerSpec]:
-    data = yaml.safe_load(path.read_text()) or {}
+    data = load_yaml_mapping(path)
     return ServersConfig.model_validate(data).servers
 
 
 def spec_label(spec: ServerSpec) -> str:
     """Display label for a spec — NOT a graph identity (see fleet_keep_names)."""
-    return spec.name or spec.command or spec.url or "<unnamed>"
+    return spec.name or endpoint_label(spec)
 
 
 DEFAULT_TIMEOUT = 30.0
@@ -40,7 +40,7 @@ async def _crawl_one(
         except TimeoutError:  # a hanging server must not block the crawl
             return None, (spec, f"timeout after {timeout}s")
         except Exception as exc:  # noqa: BLE001 - one bad server must not abort the crawl
-            return None, (spec, f"{type(exc).__name__}: {exc}")
+            return None, (spec, f"{type(exc).__name__}: {redact_text(exc)}")
 
 
 async def crawl_all_async(
