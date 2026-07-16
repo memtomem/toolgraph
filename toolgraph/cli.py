@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from enum import Enum
+from importlib.resources import as_file, files
 import os
 from pathlib import Path
+import shutil
+import sys
 import tempfile
 from typing import NoReturn
 
 import typer
 
+from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
 from toolgraph.crawler.crawl import (
@@ -35,6 +39,7 @@ from toolgraph.review_candidates import (
     normalize_note,
     normalize_reviewer,
 )
+from toolgraph.redaction import redact_text
 
 
 class AuditReportFormat(str, Enum):
@@ -60,8 +65,67 @@ policy_app = typer.Typer(
     add_completion=False,
     help="Compile and review portable policy artifacts.",
 )
+example_app = typer.Typer(
+    add_completion=False,
+    help="Create a self-contained local quickstart.",
+)
 app.add_typer(review_candidates_app, name="review-candidates")
 app.add_typer(policy_app, name="policy")
+app.add_typer(example_app, name="example")
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"toolgraph {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    config_path: Path | None = typer.Option(
+        None,
+        "--config",
+        help="Runtime config path (overrides TOOLGRAPH_CONFIG and cwd .env).",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the installed version and exit.",
+    ),
+) -> None:
+    """Configure Toolgraph before running a command."""
+    del version
+    if config_path is not None:
+        config.configure(config_path)
+        driver.close_driver()
+
+
+@example_app.command("init")
+def example_init(
+    destination: Path = typer.Argument(
+        Path("toolgraph-quickstart"), help="New directory for quickstart files."
+    ),
+) -> None:
+    """Create an install-only quickstart without cloning the repository."""
+    destination = destination.expanduser().resolve()
+    if destination.exists():
+        raise typer.BadParameter(
+            f"destination already exists: {destination}", param_hint="DESTINATION"
+        )
+    source = files("toolgraph").joinpath("quickstart")
+    with as_file(source) as source_path:
+        shutil.copytree(source_path, destination)
+    servers_path = destination / "servers.yaml"
+    servers_path.write_text(
+        servers_path.read_text(encoding="utf-8").replace(
+            "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
+        ),
+        encoding="utf-8",
+    )
+    typer.echo(f"Created Toolgraph quickstart at {destination}")
+    typer.echo(f"Next: cd {destination.name} && toolgraph init")
 
 
 @app.command()
@@ -137,7 +201,11 @@ def crawl(
     protected by their ``name`` override; an unnamed failure skips the prune.
     """
     path = servers or config.settings.servers_config
-    specs = load_servers_config(path)
+    try:
+        specs = load_servers_config(path)
+    except Exception as exc:  # noqa: BLE001 - config errors share one CLI contract
+        typer.echo(f"Invalid servers config at {path}: {redact_text(exc)}", err=True)
+        raise typer.Exit(code=1) from None
     dupes = duplicate_name_overrides(specs)
     if dupes:
         # Two specs claiming one name would MERGE into one MCPServer node and
@@ -206,7 +274,11 @@ def ingest_manifest(
 ) -> None:
     """Ingest authored governance (agents, policies, ACL, data access, GOVERNED_BY)."""
     path = governance or config.settings.governance_config
-    gov = load_governance(path)
+    try:
+        gov = load_governance(path)
+    except Exception as exc:  # noqa: BLE001 - config errors share one CLI contract
+        typer.echo(f"Invalid governance config at {path}: {redact_text(exc)}", err=True)
+        raise typer.Exit(code=1) from None
     schema.init_schema()
     report = ingest_governance(gov, strict_drift=strict_drift)
     if report.warnings:

@@ -9,11 +9,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
+
+_explicit_config_path: Path | None = None
 
 
 def runtime_config_path() -> Path:
-    return Path(os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")).expanduser()
+    value = _explicit_config_path or os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")
+    return Path(value).expanduser()
 
 
 def _runtime_config() -> dict:
@@ -59,3 +62,10 @@ class Settings:
 
 
 settings = Settings()
+
+
+def configure(config_path: Path) -> None:
+    """Select an explicit runtime config (CLI > env > cwd .env > default)."""
+    global _explicit_config_path, settings
+    _explicit_config_path = config_path.expanduser().resolve()
+    settings = Settings()

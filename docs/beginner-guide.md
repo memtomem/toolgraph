@@ -1,8 +1,8 @@
 # toolgraph Beginner Guide
 
-This guide takes a first-time user from an empty checkout to one verified
-policy bundle. The default path uses the embedded Ladybug graph and a bundled
-MCP fixture, so it needs neither Docker nor Node.js.
+This guide takes a first-time user from installation to one verified policy
+bundle. The package includes the Ladybug backend and MCP fixture, so the
+default path needs no repository clone, Docker, or Node.js.
 
 Korean version: [`docs/ko-beginner-guide.md`](ko-beginner-guide.md)
 
@@ -14,14 +14,16 @@ runtime enforcement.
 
 ## Prerequisites
 
-- Python 3.12 or newer
+- Python 3.12, 3.13, or 3.14
 - [`uv`](https://docs.astral.sh/uv/)
 
-## 1. Initialize a local graph
+## 1. Install and create the quickstart
 
 ```bash
-uv sync --extra dev --extra ladybug
-uv run toolgraph init
+uv tool install "toolgraph[ladybug]"
+toolgraph example init toolgraph-quickstart
+cd toolgraph-quickstart
+toolgraph init
 ```
 
 `init` creates `.toolgraph/config.json` and a local Ladybug database. Toolgraph
@@ -30,7 +32,7 @@ commands own that database sequentially; the gateway never opens it.
 ## 2. Crawl the offline MCP fixture
 
 ```bash
-uv run toolgraph crawl --servers examples/servers-policy-gateway.yaml
+toolgraph crawl --servers servers.yaml
 ```
 
 The fixture exposes two tools:
@@ -42,8 +44,8 @@ The fixture exposes two tools:
 ## 3. Load the authored policy
 
 ```bash
-uv run toolgraph ingest-manifest \
-  --governance examples/governance-policy-gateway.yaml \
+toolgraph ingest-manifest \
+  --governance governance.yaml \
   --strict-drift
 ```
 
@@ -53,10 +55,10 @@ a DENY policy. Every authored edge includes a local evidence pointer.
 ## 4. Inspect the decision
 
 ```bash
-uv run toolgraph eligible-tools vibe-coder \
+toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note \
   --profile review
-uv run toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note
 ```
 
 `read_note` is eligible. `publish_note` is rejected with an explainable policy
@@ -65,7 +67,7 @@ path. Toolgraph is reporting the decision here; it has not intercepted a call.
 ## 5. Compile the gateway bundle
 
 ```bash
-uv run toolgraph policy compile \
+toolgraph policy compile \
   --agent vibe-coder \
   --profile review \
   --output .toolgraph/policy-bundle.json
@@ -92,11 +94,11 @@ The server name used by STM should match the name crawled by Toolgraph
 ## Useful audits and experiments
 
 ```bash
-uv run toolgraph unsafe-tools vibe-coder
-uv run toolgraph unmapped-tools
-uv run toolgraph unbacked-edges
-uv run toolgraph drift
-uv run toolgraph blast-radius draft-publish-deny
+toolgraph unsafe-tools vibe-coder
+toolgraph unmapped-tools
+toolgraph unbacked-edges
+toolgraph drift
+toolgraph blast-radius draft-publish-deny
 ```
 
 Good first experiments are removing the `read_note` grant, changing the draft
@@ -112,11 +114,13 @@ processes or operators need a shared graph:
 ```bash
 docker compose up -d --wait
 cp .env.example .env
-uv run toolgraph init --backend neo4j
+toolgraph init --backend neo4j
 ```
 
-The larger `scripts/demo.sh` and `scripts/demo-public.sh` examples use real MCP
-servers and may require Docker, Node.js, `npx`, and network access.
+The compose file is development-only: it has a known password and loopback-only
+ports, not production authentication. The repository's larger demo scripts use
+disposable Ladybug databases; the public-server demo may require Node.js,
+`npx`, and network access.
 
 ## Troubleshooting
 

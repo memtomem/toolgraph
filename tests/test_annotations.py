@@ -141,7 +141,7 @@ def test_destructive_unsafeguarded_surfaces_ungoverned_tool(graph):
     assert row["annotation_provenance"] == {
         "source": "crawled",
         "confidence": "medium",
-        "evidence": "crawled from python sample_server.py",
+        "evidence": "crawled from stdio:python",
     }
 
 

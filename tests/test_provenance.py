@@ -46,7 +46,7 @@ def test_crawled_edges_carry_source_crawled(graph):
         ).single()
     assert rec["source"] == "crawled"
     assert rec["conf"] == "high"
-    assert "sample_server.py" in (rec["ev"] or "")
+    assert rec["ev"] == "crawled from stdio:python"
 
 
 def test_authored_grant_defaults_to_operator_asserted(graph):

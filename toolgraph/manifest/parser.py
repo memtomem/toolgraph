@@ -6,13 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 
-import yaml
-
 from toolgraph.models import Governance
+from toolgraph.yaml_loader import load_yaml_mapping
 
 
 def load_governance(path: Path) -> Governance:
-    data = yaml.safe_load(path.read_text()) or {}
+    data = load_yaml_mapping(path)
     return Governance.model_validate(data)
 
 

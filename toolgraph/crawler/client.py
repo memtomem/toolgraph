@@ -4,13 +4,8 @@ from __future__ import annotations
 
 from toolgraph.crawler.transports import open_session
 from toolgraph.models import CrawlResult, ResourceRecord, ServerSpec, ToolRecord
+from toolgraph.redaction import endpoint_label
 from toolgraph.uris import normalize_resource_uri
-
-
-def _endpoint(spec: ServerSpec) -> str | None:
-    if spec.command:
-        return " ".join([spec.command, *spec.args])
-    return spec.url
 
 
 def _annotation_fields(tool) -> dict:
@@ -100,7 +95,7 @@ async def crawl_server(spec: ServerSpec) -> CrawlResult:
             server_name=spec.name or init.serverInfo.name,
             server_version=init.serverInfo.version,
             transport=spec.transport,
-            endpoint=_endpoint(spec),
+            endpoint=endpoint_label(spec),
             tools=tools,
             resources=resources,
         )

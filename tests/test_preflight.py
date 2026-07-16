@@ -89,9 +89,9 @@ def test_warn_and_recursive_redaction(monkeypatch):
     assert "q=token" not in json.dumps(doc)
 
 
-def test_redaction_preserves_fragment_and_surrounding_text():
+def test_redaction_removes_fragment_and_preserves_surrounding_text():
     assert redact("x (mcp://user:pw@CaseHost:8080/r?a=b#frag) y") == (
-        "x (mcp://CaseHost:8080/r#frag) y"
+        "x (mcp://CaseHost:8080/r) y"
     )
 
 

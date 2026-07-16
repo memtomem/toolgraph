@@ -22,7 +22,7 @@ def _redact_uri(value: str) -> str:
     # lowercases hostname accessors, while graph resource identity preserves
     # the authored case. Only userinfo and query data are sensitive here.
     host = parts.netloc.rsplit("@", 1)[-1]
-    return urlunsplit((parts.scheme, host, parts.path, "", parts.fragment))
+    return urlunsplit((parts.scheme, host, parts.path, "", ""))
 
 
 def redact(value):

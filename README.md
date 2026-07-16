@@ -1,4 +1,7 @@
-# toolgraph
+# Toolgraph
+
+> **Alpha (`0.1.x`).** Interfaces and artifact schemas may change before 1.0.
+> Toolgraph is an advisory control-plane tool, not a runtime security boundary.
 
 A graph-native registry for MCP tools. It crawls MCP servers into a Neo4j graph,
 lets you author governance (who can call what, what touches which resource, which
@@ -57,23 +60,45 @@ nothing is LLM-guessed.
 
 ## Quickstart
 
-New to toolgraph? Start with the first-time user guides:
-[`docs/beginner-guide.md`](docs/beginner-guide.md) (English) or
-[`docs/ko-beginner-guide.md`](docs/ko-beginner-guide.md) (Korean).
+New to Toolgraph? Start with the first-time user guides:
+[English](https://github.com/memtomem/toolgraph/blob/main/docs/beginner-guide.md) or
+[Korean](https://github.com/memtomem/toolgraph/blob/main/docs/ko-beginner-guide.md).
 
 For the context-engineering and tool-selection roadmap, see
-[`docs/context-engineering-tool-selection-report.md`](docs/context-engineering-tool-selection-report.md).
-Contract-shaping decisions are recorded in [`docs/adr/`](docs/adr/README.md).
+the [context-engineering report](https://github.com/memtomem/toolgraph/blob/main/docs/context-engineering-tool-selection-report.md).
+Contract-shaping decisions are recorded in the
+[ADRs](https://github.com/memtomem/toolgraph/tree/main/docs/adr).
+Maintainers should follow the [release runbook](https://github.com/memtomem/toolgraph/blob/main/docs/releasing.md).
 
-The first bundle needs only Python and `uv`:
+### Install
+
+The recommended local backend is included through the `ladybug` extra:
 
 ```bash
-uv sync --extra ladybug --extra dev
-uv run toolgraph init
-uv run toolgraph crawl --servers examples/servers-policy-gateway.yaml
-uv run toolgraph ingest-manifest \
-  --governance examples/governance-policy-gateway.yaml --strict-drift
-uv run toolgraph policy compile --agent vibe-coder --profile review \
+uv tool install "toolgraph[ladybug]"
+# or: python -m pip install "toolgraph[ladybug]"
+```
+
+You can also inspect the CLI without a persistent install:
+
+```bash
+uvx --from "toolgraph[ladybug]" toolgraph --version
+```
+
+### First policy bundle
+
+No repository clone, Docker, or Node.js is required:
+
+```bash
+toolgraph example init toolgraph-quickstart
+cd toolgraph-quickstart
+toolgraph init
+toolgraph crawl --servers servers.yaml
+toolgraph ingest-manifest --governance governance.yaml --strict-drift
+toolgraph eligible-tools vibe-coder \
+  policy-gateway::read_note policy-gateway::publish_note --profile review
+toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
 
@@ -82,14 +107,20 @@ sequentially; gateways read only the generated JSON bundle. Use Neo4j for a
 shared service or multiple concurrent processes. The beginner guides explain
 the decision output and the memtomem-stm handoff.
 
-For the larger shared/fleet demos:
+For contributors and larger shared/fleet demos, clone the repository and run:
 
 ```bash
+uv sync --group dev --extra ladybug
 docker compose up -d --wait
 cp .env.example .env
 bash scripts/demo.sh
 bash scripts/demo-public.sh
 ```
+
+The compose file is development-only, uses a known password, and binds Neo4j
+to loopback. It is not an authenticated production deployment. The demo
+scripts themselves use disposable Ladybug databases and never reset your
+configured graph.
 
 The cross-server demo is the headline: `ci-bot` has no filesystem read grant,
 yet `unsafe-tools ci-bot` flags it — because `git_show` on a *different* server
@@ -217,7 +248,7 @@ evidence never grants, denies, or creates an exception by itself.
 
 ### Exit codes
 
-Per [ADR-0003](docs/adr/0003-cli-output-and-exit-code-contract.md) this table
+Per [ADR-0003](https://github.com/memtomem/toolgraph/blob/main/docs/adr/0003-cli-output-and-exit-code-contract.md) this table
 is a contract: query commands reserve stdout for their JSON (diagnostics go
 to stderr) and exit 0 by default — gating is opt-in.
 
@@ -322,7 +353,7 @@ cited one).
 The crawler stores MCP tool annotations (`readOnlyHint`, `destructiveHint`,
 `idempotentHint`, `openWorldHint`) as Tool-node properties on the same crawl
 pass that owns the node, and clears any hint the server stops sending
-([ADR-0006](docs/adr/0006-crawl-tool-annotations-as-self-claims.md)).
+([ADR-0006](https://github.com/memtomem/toolgraph/blob/main/docs/adr/0006-crawl-tool-annotations-as-self-claims.md)).
 
 Their provenance is `crawled` / **`medium`** — deliberately one tier below
 EXPOSES/PROVIDES (`high`). "The server advertised this tool" is
@@ -346,8 +377,8 @@ two audit queries that join self-claims against authored truth:
 
 toolgraph can serve tool selection as a context-engineering layer: shrink a
 candidate catalog deterministically *before* any relevance ranker sees it
-([ADR-0005](docs/adr/0005-selector-surface-boundary.md), background in
-[the report](docs/context-engineering-tool-selection-report.md)). Three
+([ADR-0005](https://github.com/memtomem/toolgraph/blob/main/docs/adr/0005-selector-surface-boundary.md), background in
+[the report](https://github.com/memtomem/toolgraph/blob/main/docs/context-engineering-tool-selection-report.md)). Three
 batch-first entry points (CLI + MCP) run a fixed number of queries
 regardless of candidate count — per-candidate `check-access` calls scale
 linearly, which is unacceptable on the online path:

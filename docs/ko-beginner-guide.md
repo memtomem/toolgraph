@@ -1,8 +1,8 @@
 # toolgraph 입문 가이드
 
-처음 사용하는 사람이 빈 체크아웃에서 실제 정책 번들 하나를 확인하는
-과정까지 안내합니다. 기본 경로는 내장 Ladybug 그래프와 저장소에 포함된
-MCP fixture를 사용하므로 Docker와 Node.js가 필요하지 않습니다.
+처음 사용하는 사람이 설치부터 실제 정책 번들 하나를 확인하는 과정까지
+안내합니다. 패키지에 Ladybug 그래프와 MCP fixture가 포함되어 있으므로
+저장소 clone, Docker, Node.js가 필요하지 않습니다.
 
 영어판: [`docs/beginner-guide.md`](beginner-guide.md)
 
@@ -13,14 +13,16 @@ Toolgraph는 런타임 프록시가 아니라 정책 분석기이자 컴파일�
 
 ## 준비물
 
-- Python 3.12 이상
+- Python 3.12, 3.13 또는 3.14
 - [`uv`](https://docs.astral.sh/uv/)
 
-## 1. 로컬 그래프 초기화
+## 1. 설치하고 quickstart 만들기
 
 ```bash
-uv sync --extra dev --extra ladybug
-uv run toolgraph init
+uv tool install "toolgraph[ladybug]"
+toolgraph example init toolgraph-quickstart
+cd toolgraph-quickstart
+toolgraph init
 ```
 
 `.toolgraph/config.json`과 로컬 Ladybug DB가 생성됩니다. Toolgraph 명령이
@@ -29,7 +31,7 @@ uv run toolgraph init
 ## 2. 오프라인 MCP fixture 크롤링
 
 ```bash
-uv run toolgraph crawl --servers examples/servers-policy-gateway.yaml
+toolgraph crawl --servers servers.yaml
 ```
 
 fixture는 두 도구를 노출합니다.
@@ -40,8 +42,8 @@ fixture는 두 도구를 노출합니다.
 ## 3. 운영자 정책 적재
 
 ```bash
-uv run toolgraph ingest-manifest \
-  --governance examples/governance-policy-gateway.yaml \
+toolgraph ingest-manifest \
+  --governance governance.yaml \
   --strict-drift
 ```
 
@@ -51,10 +53,10 @@ DENY 정책을 적용합니다. 작성한 모든 edge에는 근거 포인터가 
 ## 4. 판정 확인
 
 ```bash
-uv run toolgraph eligible-tools vibe-coder \
+toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note \
   --profile review
-uv run toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note
 ```
 
 `read_note`는 eligible이고 `publish_note`는 정책 경로와 함께 rejected로
@@ -64,7 +66,7 @@ uv run toolgraph selection-explain vibe-coder policy-gateway::publish_note
 ## 5. gateway 번들 생성
 
 ```bash
-uv run toolgraph policy compile \
+toolgraph policy compile \
   --agent vibe-coder \
   --profile review \
   --output .toolgraph/policy-bundle.json
@@ -91,11 +93,11 @@ STM upstream 이름은 Toolgraph가 크롤링한 이름과 같게 두는 것이 
 ## 다음 실험과 감사 명령
 
 ```bash
-uv run toolgraph unsafe-tools vibe-coder
-uv run toolgraph unmapped-tools
-uv run toolgraph unbacked-edges
-uv run toolgraph drift
-uv run toolgraph blast-radius draft-publish-deny
+toolgraph unsafe-tools vibe-coder
+toolgraph unmapped-tools
+toolgraph unbacked-edges
+toolgraph drift
+toolgraph blast-radius draft-publish-deny
 ```
 
 `read_note` grant를 제거하거나 draft 정책 binding을 바꾼 뒤 다시 적재·컴파일해
@@ -110,11 +112,12 @@ Ladybug는 로컬 단일 프로세스 기본값입니다. 여러 프로세스나
 ```bash
 docker compose up -d --wait
 cp .env.example .env
-uv run toolgraph init --backend neo4j
+toolgraph init --backend neo4j
 ```
 
-`scripts/demo.sh`, `scripts/demo-public.sh`의 큰 fleet 예제는 실제 MCP 서버를
-사용하므로 Docker, Node.js, `npx`, 네트워크가 필요할 수 있습니다.
+compose 설정은 알려진 개발용 비밀번호와 loopback 포트를 사용하므로 운영용
+인증 구성이 아닙니다. 저장소의 demo script는 임시 Ladybug DB만 사용하며,
+공개 서버 demo는 Node.js, `npx`, 네트워크가 필요할 수 있습니다.
 
 ## 자주 막히는 지점
 
