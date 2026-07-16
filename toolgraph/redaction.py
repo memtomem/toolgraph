@@ -9,9 +9,13 @@ from urllib.parse import urlsplit
 
 from toolgraph.models import ServerSpec
 
-_URL = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+_URI = re.compile(r"[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
+_AUTHORIZATION = re.compile(
+    r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
+    r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
+)
 _CREDENTIAL = re.compile(
-    r"(?i)(authorization|api[-_]?key|access[-_]?token|token|password|secret)"
+    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)"
     r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
 )
 
@@ -27,6 +31,19 @@ def _url_origin(value: str, fallback: str) -> str:
         return f"{parsed.scheme.lower()}://{host}{port}"
     except ValueError:
         return fallback
+
+
+def _diagnostic_uri_origin(value: str) -> str:
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        if not parsed.scheme or not hostname:
+            return "<redacted-uri>"
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        return f"{parsed.scheme.lower()}://{host}{port}"
+    except ValueError:
+        return "<redacted-uri>"
 
 
 def _executable_name(value: str | None) -> str:
@@ -60,5 +77,6 @@ def persisted_endpoint(transport: str, value: str | None) -> str:
 def redact_text(value: object) -> str:
     """Scrub URLs and common credential-shaped values from an error message."""
     text = str(value)
-    text = _URL.sub(lambda match: _url_origin(match.group(0), "<redacted-url>"), text)
+    text = _URI.sub(lambda match: _diagnostic_uri_origin(match.group(0)), text)
+    text = _AUTHORIZATION.sub("Authorization=<redacted>", text)
     return _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)

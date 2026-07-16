@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -10,6 +11,7 @@ from typer.testing import CliRunner
 import yaml
 
 from toolgraph.cli import app
+from toolgraph import __version__, config
 from toolgraph.crawler.crawl import load_servers_config, spec_label
 from toolgraph.graph import driver, loader
 from toolgraph.manifest.parser import load_governance
@@ -106,15 +108,38 @@ def test_loader_never_persists_raw_endpoint(graph):
 def test_error_redaction_removes_urls_and_credential_values():
     message = (
         "failed https://alice:secret@example.test/mcp?token=abc "
-        "Authorization:Bearer-secret password=hunter2"
+        "Authorization: Bearer sk-abc123 password=hunter2 "
+        "mcp://bob:pw@mcp.example.test/tools?token=def"
     )
 
     redacted = redact_text(message)
     assert "alice" not in redacted
     assert "secret" not in redacted.lower().replace("<redacted>", "")
     assert "abc" not in redacted
+    assert "sk-abc123" not in redacted
     assert "hunter2" not in redacted
     assert "https://example.test" in redacted
+    assert "bob" not in redacted
+    assert "def" not in redacted
+    assert "mcp://mcp.example.test" in redacted
+
+
+def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path):
+    runtime = tmp_path / "config.json"
+    db_path = tmp_path / "isolated.lbug"
+    runtime.write_text(
+        json.dumps({"schema_version": 1, "backend": "ladybug", "db_path": str(db_path)})
+    )
+    monkeypatch.setenv("TOOLGRAPH_BACKEND", "neo4j")
+    monkeypatch.setenv("TOOLGRAPH_DB_PATH", str(tmp_path / "shared.lbug"))
+    monkeypatch.setattr(config, "_explicit_config_path", None)
+    monkeypatch.setattr(config, "settings", config.settings)
+
+    result = CliRunner().invoke(app, ["--config", str(runtime), "check"])
+
+    assert result.exit_code == 0, result.output
+    assert "backend=ladybug" in result.output
+    assert str(db_path) in result.output
 
 
 def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_path):
@@ -131,6 +156,7 @@ def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_pa
     servers = (destination / "servers.yaml").read_text()
     assert sys.executable in servers
     assert "__TOOLGRAPH_PYTHON__" not in servers
+    assert f"Next: cd {destination} && toolgraph init" in created.output
 
     collision = runner.invoke(app, ["example", "init", str(destination)])
     assert collision.exit_code != 0
@@ -140,4 +166,4 @@ def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_pa
 def test_version_flag_uses_package_version():
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert result.output.strip() == "toolgraph 0.1.0"
+    assert result.output.strip() == f"toolgraph {__version__}"

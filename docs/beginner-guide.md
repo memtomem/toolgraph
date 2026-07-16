@@ -122,6 +122,10 @@ ports, not production authentication. The repository's larger demo scripts use
 disposable Ladybug databases; the public-server demo may require Node.js,
 `npx`, and network access.
 
+In fleet configurations, give every server an explicit unique `name`. Unnamed
+stdio diagnostics intentionally show only the executable (for example,
+`stdio:npx`) so command arguments and credentials never enter logs.
+
 ## Troubleshooting
 
 - `AGENT_NOT_FOUND`: the same agent must exist in `agents` and the relevant

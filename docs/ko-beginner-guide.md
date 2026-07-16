@@ -119,6 +119,10 @@ compose 설정은 알려진 개발용 비밀번호와 loopback 포트를 사용�
 인증 구성이 아닙니다. 저장소의 demo script는 임시 Ladybug DB만 사용하며,
 공개 서버 demo는 Node.js, `npx`, 네트워크가 필요할 수 있습니다.
 
+fleet 설정에서는 모든 서버에 고유한 `name`을 지정하세요. 이름 없는 stdio
+진단에는 command 인자와 credential이 로그에 남지 않도록 실행 파일명만
+표시됩니다(예: `stdio:npx`).
+
 ## 자주 막히는 지점
 
 - `AGENT_NOT_FOUND`: 같은 agent가 `agents`와 관련 grant에 있어야 합니다.

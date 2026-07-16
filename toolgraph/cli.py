@@ -98,7 +98,10 @@ def main(
     """Configure Toolgraph before running a command."""
     del version
     if config_path is not None:
-        config.configure(config_path)
+        try:
+            config.configure(config_path)
+        except RuntimeError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--config") from None
         driver.close_driver()
 
 
@@ -125,7 +128,7 @@ def example_init(
         encoding="utf-8",
     )
     typer.echo(f"Created Toolgraph quickstart at {destination}")
-    typer.echo(f"Next: cd {destination.name} && toolgraph init")
+    typer.echo(f"Next: cd {destination} && toolgraph init")
 
 
 @app.command()
@@ -212,7 +215,7 @@ def crawl(
         # last-load-wins reconcile each other's tools away — reject before
         # connecting to anything.
         typer.echo(
-            f"  ✗ duplicate name override(s) in {path}: {', '.join(sorted(dupes))}",
+            f"  [error] duplicate name override(s) in {path}: {', '.join(sorted(dupes))}",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -222,7 +225,7 @@ def crawl(
     dupes = duplicate_identities(results, failures)
     if dupes:
         typer.echo(
-            "  ✗ multiple servers claim the same graph identity: "
+            "  [error] multiple servers claim the same graph identity: "
             f"{', '.join(sorted(dupes))} — add distinct `name:` overrides in "
             f"{path}; nothing was loaded",
             err=True,
@@ -232,19 +235,19 @@ def crawl(
     for result in results:
         warnings = loader.load_crawl_result(result)
         typer.echo(
-            f"  ✓ {result.server_name} v{result.server_version} "
+            f"  [ok] {result.server_name} v{result.server_version} "
             f"({len(result.tools)} tools, {len(result.resources)} resources)"
         )
         for w in warnings:
-            typer.echo(f"    ⚠ {w}")
+            typer.echo(f"    [warn] {w}")
     for spec, error in failures:
-        typer.echo(f"  ✗ {spec_label(spec)}: {error}")
+        typer.echo(f"  [error] {spec_label(spec)}: {error}")
 
     if prune:
         keep, blockers = fleet_keep_names(specs, results, failures)
         if blockers:
             typer.echo(
-                "  ⚠ fleet reconciliation skipped: failed server(s) "
+                "  [warn] fleet reconciliation skipped: failed server(s) "
                 f"{', '.join(sorted(blockers))} have no `name:` override in "
                 f"{path}, so a crawl failure cannot be told apart from a "
                 "removed server — add `name:` to keep reconciliation running "
@@ -253,9 +256,9 @@ def crawl(
         else:
             retired, warnings = loader.retire_unlisted_servers(keep)
             for name in retired:
-                typer.echo(f"  − retired {name!r}: no longer in {path}")
+                typer.echo(f"  retired {name!r}: no longer in {path}")
             for w in warnings:
-                typer.echo(f"    ⚠ {w}")
+                typer.echo(f"    [warn] {w}")
 
     counts = loader.graph_counts()
     typer.echo(f"Graph now: {counts}")
@@ -287,12 +290,12 @@ def ingest_manifest(
         # "Ingested" as success.
         typer.echo(f"REJECTED — manifest at {path} not applied (graph unchanged)")
         for w in report.warnings:
-            typer.echo(f"  ⚠ {w}")
+            typer.echo(f"  [warn] {w}")
         for n in report.notices:
-            typer.echo(f"  ℹ {n}")
+            typer.echo(f"  [info] {n}")
         raise typer.Exit(code=1)
     for n in report.notices:
-        typer.echo(f"  ℹ {n}")
+        typer.echo(f"  [info] {n}")
     typer.echo(f"Ingested governance from {path}")
     typer.echo(f"Governance now: {governance_counts()}")
 
