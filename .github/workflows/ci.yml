@@ -82,7 +82,7 @@ jobs:
       - run: uv venv .minimum-venv
       - name: Locate built wheel
         run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
-      - run: uv pip install --python .minimum-venv "${{ env.WHEEL }}[ladybug]" "mcp==1.27.1"
+      - run: uv pip install --python .minimum-venv "${{ env.WHEEL }}[ladybug]" "mcp==1.28.1"
       - run: uv run --python .minimum-venv --no-project toolgraph --version
 
   audit-runtime:
