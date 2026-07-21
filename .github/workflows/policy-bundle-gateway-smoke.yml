@@ -40,7 +40,7 @@ jobs:
           --artifacts-dir "${{ runner.temp }}/policy-gateway-evidence"
       - name: Upload body-free evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: policy-bundle-gateway-evidence
           path: ${{ runner.temp }}/policy-gateway-evidence/
