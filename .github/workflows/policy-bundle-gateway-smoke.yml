@@ -29,12 +29,12 @@ jobs:
           path: memtomem-stm
       - uses: astral-sh/setup-uv@v5
       - name: Sync Toolgraph
-        run: uv sync --project toolgraph --frozen --extra dev --extra ladybug
+        run: uv sync --project toolgraph --frozen --group dev --extra ladybug
       - name: Sync memtomem-stm
         run: uv sync --project memtomem-stm --frozen
       - name: Run advisory cross-repository smoke
         run: >-
-          uv run --project toolgraph --frozen --extra dev --extra ladybug python
+          uv run --project toolgraph --frozen --group dev --extra ladybug python
           toolgraph/scripts/policy_bundle_gateway_smoke.py
           --memtomem-stm-root memtomem-stm
           --artifacts-dir "${{ runner.temp }}/policy-gateway-evidence"

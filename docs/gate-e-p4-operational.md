@@ -5,7 +5,7 @@ those commits locally, creates a disposable target repository and fresh Neo4j
 5.26 container, and never resets the source checkouts.
 
 ```bash
-UV_CACHE_DIR=/private/tmp/gate-e-uv-cache uv run --extra dev python \
+UV_CACHE_DIR=/private/tmp/gate-e-uv-cache uv run --group dev python \
   scripts/gate_e_operational.py \
   --toolgraph-root . --toolgraph-ref <toolgraph-sha> \
   --syncmill-root ../syncmill --syncmill-ref <syncmill-sha> \
