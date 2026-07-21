@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +18,24 @@ from toolgraph.graph import driver, loader
 from toolgraph.manifest.parser import load_governance
 from toolgraph.models import CrawlResult, ServerSpec, ToolRecord
 from toolgraph.redaction import endpoint_label, persisted_endpoint, redact_text
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_dev_dependency_group_is_not_passed_as_an_extra():
+    workflow = (
+        ROOT / ".github/workflows/policy-bundle-gateway-smoke.yml"
+    ).read_text()
+    operational_guide = (ROOT / "docs/gate-e-p4-operational.md").read_text()
+    makefile = (ROOT / "Makefile").read_text()
+
+    assert workflow.count("--group dev") == 2
+    assert "--extra dev" not in workflow
+    assert "--group dev" in operational_guide
+    assert "--extra dev" not in operational_guide
+    assert makefile.count("--group dev") == 2
+    assert "--extra dev" not in makefile
 
 
 def test_servers_yaml_rejects_unknown_field(tmp_path):
