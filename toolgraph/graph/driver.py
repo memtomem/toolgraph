@@ -14,6 +14,12 @@ import re
 from typing import Any
 
 from neo4j import Driver, GraphDatabase, Session
+from neo4j.exceptions import (
+    ConnectionAcquisitionTimeoutError,
+    DatabaseUnavailable,
+    ServiceUnavailable,
+    SessionExpired,
+)
 
 from toolgraph import config
 
@@ -27,6 +33,33 @@ class BackendConfigurationError(RuntimeError):
 
 class BackendLockedError(RuntimeError):
     pass
+
+
+_BACKEND_UNAVAILABLE_ERRORS = (
+    ServiceUnavailable,
+    SessionExpired,
+    ConnectionAcquisitionTimeoutError,
+    DatabaseUnavailable,
+    BackendLockedError,
+)
+
+
+def is_backend_unavailable(exc: BaseException) -> bool:
+    """Whether *exc* was caused by a known transient backend outage.
+
+    Keep this deliberately narrower than "any backend exception": invalid
+    configuration, authentication, Cypher/client errors, and unexpected
+    failures must stay loud contract/internal errors.  FastMCP wraps tool
+    exceptions, so walk both explicit causes and implicit contexts.
+    """
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        if isinstance(current, _BACKEND_UNAVAILABLE_ERRORS):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
 
 
 class _LadybugResult:

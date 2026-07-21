@@ -8,11 +8,46 @@ stamp lives HERE, not in the query layer — CLI output stays unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, ContentBlock, TextContent
 
 from toolgraph.graph import queries, selector
+from toolgraph.graph.driver import is_backend_unavailable
 
-mcp = FastMCP("toolgraph")
+
+_BACKEND_UNAVAILABLE_MESSAGE = (
+    "Toolgraph backend is temporarily unavailable; retry later."
+)
+
+
+class _ToolgraphMCP(FastMCP):
+    """FastMCP server with a typed envelope for backend availability only."""
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any] | CallToolResult:
+        try:
+            return await super().call_tool(name, arguments)
+        except ToolError as exc:
+            if not is_backend_unavailable(exc):
+                raise
+            payload: dict[str, Any] = {
+                "error_kind": "backend_unavailable",
+                "retryable": True,
+                "message": _BACKEND_UNAVAILABLE_MESSAGE,
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=_BACKEND_UNAVAILABLE_MESSAGE)],
+                structuredContent=payload,
+                isError=True,
+            )
+
+
+mcp = _ToolgraphMCP("toolgraph")
 
 _with_generation = queries.with_graph_state
 
@@ -52,7 +87,12 @@ def unsafe_callable_tools(agent: str, include_authorized: bool = False) -> dict:
         tools = queries.unsafe_callable_tools(agent)
         if not include_authorized:
             tools = [t for t in tools if t.get("classification") == "violation"]
-        return {"agent": agent, "agent_found": True, "count": len(tools), "tools": tools}
+        return {
+            "agent": agent,
+            "agent_found": True,
+            "count": len(tools),
+            "tools": tools,
+        }
 
     return _with_generation(fetch)
 
