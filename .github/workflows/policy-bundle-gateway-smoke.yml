@@ -27,7 +27,7 @@ jobs:
           repository: memtomem/memtomem-stm
           ref: ${{ github.event.inputs.memtomem_stm_ref || 'main' }}
           path: memtomem-stm
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - name: Sync Toolgraph
         run: uv sync --project toolgraph --frozen --group dev --extra ladybug
       - name: Sync memtomem-stm
