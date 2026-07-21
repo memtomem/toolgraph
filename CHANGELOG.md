@@ -14,6 +14,8 @@ Initial public alpha release.
 - Reject unknown manifest fields and duplicate YAML keys before graph mutation.
 - Persist only credential-free endpoint labels and redact failure diagnostics.
 - Ship an install-only, offline quickstart through `toolgraph example init`.
+- Give MCP consumers a typed `backend_unavailable` error envelope for transient
+  graph outages while keeping contract and internal errors fail-loud.
 
 ### Upgrade note for pre-release users
 

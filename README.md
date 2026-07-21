@@ -414,6 +414,23 @@ a typo'd agent is a context-construction error, not an empty catalog.
 MCP responses carry `graph_generation` (ADR-0004) so consumers can cache
 features per graph state with one integer comparison.
 
+If the graph backend is temporarily unavailable, every MCP tool returns
+`isError: true` with a typed `structuredContent` envelope instead of exposing
+driver-specific text:
+
+```json
+{
+  "error_kind": "backend_unavailable",
+  "retryable": true,
+  "message": "Toolgraph backend is temporarily unavailable; retry later."
+}
+```
+
+Only this exact discriminator is an availability signal. Validation,
+configuration, query-contract, and unexpected failures keep the normal MCP
+error behavior and should fail loud. CLI and direct Python query behavior are
+unchanged.
+
 ### Wiring the shipped consumer (memtomem-stm)
 
 The first consumer of this surface is the memtomem-stm proxy
