@@ -18,11 +18,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Toolgraph
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: toolgraph
       - name: Checkout memtomem-stm
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: memtomem/memtomem-stm
           ref: ${{ github.event.inputs.memtomem_stm_ref || 'main' }}
