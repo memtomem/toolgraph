@@ -18,23 +18,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Toolgraph
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: toolgraph
       - name: Checkout memtomem-stm
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: memtomem/memtomem-stm
           ref: ${{ github.event.inputs.memtomem_stm_ref || 'main' }}
           path: memtomem-stm
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
       - name: Sync Toolgraph
-        run: uv sync --project toolgraph --frozen --extra dev --extra ladybug
+        run: uv sync --project toolgraph --frozen --group dev --extra ladybug
       - name: Sync memtomem-stm
         run: uv sync --project memtomem-stm --frozen
       - name: Run advisory cross-repository smoke
         run: >-
-          uv run --project toolgraph --frozen --extra dev --extra ladybug python
+          uv run --project toolgraph --frozen --group dev --extra ladybug python
           toolgraph/scripts/policy_bundle_gateway_smoke.py
           --memtomem-stm-root memtomem-stm
           --artifacts-dir "${{ runner.temp }}/policy-gateway-evidence"
