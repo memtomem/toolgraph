@@ -41,7 +41,7 @@ toolgraph = "toolgraph.cli:app"
 
 [project.optional-dependencies]
 ladybug = [
-    "ladybug>=0.18.2,<0.19",
+    "ladybug>=0.18.3,<0.19",
 ]
 
 [project.urls]
