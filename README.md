@@ -203,6 +203,10 @@ uv run toolgraph selection-explain planner git_status
 uv run toolgraph preflight planner git_status read_file \
   --profile review --run-id "$RUN_ID" --out preflight.json
 
+# body-free orchestration topology + principal/tool-surface preflight
+uv run toolgraph control-preflight control-plan.json \
+  --profile review --out control-preflight.json
+
 # portable control-plane artifact for memtomem-stm or another MCP gateway
 uv run toolgraph policy compile --agent planner --profile strict \
   --output policy-bundle.json
@@ -230,6 +234,17 @@ the value as-is and a consumer can verify it with `sha256sum`. Digests cover
 bytes, not parsed JSON: a consumer that re-serializes the artifact is hashing a
 different document. Without `--out` the artifact itself goes to stdout. SyncMill P3.1 may enforce this evidence before orchestration, but the
 producer artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
+
+`control-preflight` accepts a versioned, body-free upper-bound control graph.
+It checks one start and end, reachability, acyclicity, terminal paths, bounded
+model fan-out, and aggregate call/parallel limits. It then evaluates every
+declared principal and qualified candidate tool inside one collision-safe
+`graph_state` bracket. The canonical private result is still advisory and
+exits successfully for policy or structural warnings; an orchestrator such as
+SyncMill decides whether those warnings block a run. Prompts, outputs, patches,
+credentials, commands, memory bodies, and filesystem paths do not belong in
+either exchange artifact. Toolgraph does not execute, persist, resume, or
+observe the declared workflow (ADR-0013).
 
 `policy compile` evaluates every currently exposed qualified tool, fingerprints
 the crawled tool contract, and writes canonical JSON with private permissions

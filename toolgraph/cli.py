@@ -15,6 +15,7 @@ import typer
 from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
+from toolgraph.control_plan import ControlPlanError, build_control_preflight
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -622,6 +623,33 @@ def preflight(
             indent=2,
         )
     )
+
+
+@app.command("control-preflight")
+def control_preflight(
+    plan: Path = typer.Argument(..., help="Body-free toolgraph.control-plan JSON file."),
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE,
+        "--profile",
+        help="Named selector profile: strict / review / explore.",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Write the private canonical JSON artifact to this path."
+    ),
+) -> None:
+    """Validate and evaluate one bounded orchestration control plan."""
+    _selector_profile(profile)
+    try:
+        raw_plan = plan.read_bytes()
+        artifact = build_control_preflight(raw_plan, profile=profile)
+        payload = canonical_json_bytes(artifact)
+        if out is not None:
+            atomic_write_private(out, payload)
+    except (ControlPlanError, RuntimeError, OSError, ValueError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if out is None:
+        typer.echo(payload.decode(), nl=False)
 
 
 @policy_app.command("compile")
