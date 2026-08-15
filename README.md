@@ -428,8 +428,9 @@ driver-specific text:
 
 Only this exact discriminator is an availability signal. Validation,
 configuration, query-contract, and unexpected failures keep the normal MCP
-error behavior and should fail loud. CLI output and Python query results are
-unchanged.
+error behavior and should fail loud. Successful CLI output and Python result
+shapes are unchanged; only the exception type surfaced on an outage differs
+(see below).
 
 Outages are typed once at the backend seam — `driver.session()` and
 `verify_connectivity()` raise `BackendUnavailableError` — so the server layer

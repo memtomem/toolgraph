@@ -28,7 +28,8 @@ Initial public alpha release.
 types directly must catch `BackendUnavailableError` (or its `BackendLockedError`
 subclass); the original exception is preserved as `__cause__`. Configuration,
 authentication, and Cypher/client errors are unaffected, as is `get_driver()`.
-CLI output and query results are unchanged.
+Successful CLI output and query result shapes are unchanged; an unhandled
+outage now names `BackendUnavailableError` in the traceback.
 
 Earlier snapshots could persist stdio arguments or complete HTTP URLs in graph
 endpoint/evidence properties. Reset and rebuild pre-release graphs after

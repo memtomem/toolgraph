@@ -237,6 +237,31 @@ def test_unknown_tool_is_not_retryable():
     assert asyncio.run(app.mcp._is_retryable("no_such_tool")) is False
 
 
+async def test_outage_envelope_survives_a_failing_tool_listing(monkeypatch):
+    """A retry-safety lookup fault must not destroy the outage envelope.
+
+    The listing runs while an outage is already being reported; if it escaped,
+    the caller would get an unstructured internal error precisely when the
+    typed availability signal matters most.
+    """
+
+    def unavailable(_fetch):
+        raise BackendUnavailableError("bolt://alice:hunter2@example.test")
+
+    async def broken_list_tools():
+        raise RuntimeError("schema failure sentinel")
+
+    monkeypatch.setattr(app, "_with_generation", unavailable)
+    monkeypatch.setattr(app.mcp, "list_tools", broken_list_tools)
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.isError is True
+    assert result.structuredContent == {**_BACKEND_PAYLOAD, "retryable": False}
+    encoded = result.model_dump_json()
+    assert "schema failure sentinel" not in encoded
+    assert "hunter2" not in encoded
+
+
 def test_current_tools_are_all_read_only_graph_reads():
     """Today every shipped tool is a pure read; flag any future change here."""
     for tool in asyncio.run(app.mcp.list_tools()):

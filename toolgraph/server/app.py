@@ -51,9 +51,18 @@ class _ToolgraphMCP(FastMCP):
         exactly one source of truth. A parallel registry could disagree with
         the live registration — FastMCP keeps the *first* tool on a duplicate
         name, so a write tool could otherwise inherit a later read-only claim.
-        An unknown or unannotated tool fails closed.
+
+        Every failure path answers "no": an unknown tool, an unannotated tool,
+        and a listing that raises. This runs while an outage is already being
+        reported, so a lookup fault must not escape and replace the typed
+        envelope with an unstructured error — the exact failure this envelope
+        exists to prevent. Under-claiming retry safety is the safe direction.
         """
-        for tool in await self.list_tools():
+        try:
+            tools = await self.list_tools()
+        except Exception:
+            return False
+        for tool in tools:
             if tool.name == name:
                 return bool(tool.annotations and tool.annotations.readOnlyHint)
         return False
