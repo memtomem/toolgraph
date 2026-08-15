@@ -123,8 +123,8 @@ redaction fixture를 contract test에 포함한다.
 - [x] artifact에 `run_id`와 `graph_generation`을 기록한다 — 두 필드 모두 schema
   required이며 `toolgraph/preflight.py`가 기록한다.
 - [x] provenance/path 문자열 redaction pass와 redaction fixture를 추가한다 —
-  `toolgraph/redaction.py`와 `tests/test_preflight_contract.py`의 planted-violation
-  scanner로 고정됐다.
+  `toolgraph/preflight.py`의 `redact()`와 `tests/test_preflight_contract.py`의
+  planted-violation scanner로 고정됐다.
 - [ ] syncmill 실행 보고서가 해당 artifact 경로 또는 digest를 참조하게 한다 —
   producer 측은 완료됐다. `--out` 사용 시 `preflight`가 파일 바이트에 대한
   `artifact_digest` envelope를 stdout으로 출력한다. SyncMill 실행 보고서가 이

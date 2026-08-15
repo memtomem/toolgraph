@@ -203,9 +203,10 @@ scrubbed of userinfo and query strings before the artifact is written. Pass
 `--features` only when the consumer needs the full selector feature rows.
 With `--out` the artifact is written privately and atomically, and the command
 prints a result envelope carrying `artifact_digest` — the SHA-256 of the exact
-file bytes, so a run report can reference the artifact by digest and a consumer
-can verify it with `sha256sum`. Without `--out` the artifact itself goes to
-stdout. SyncMill P3.1 may enforce this evidence before orchestration, but the
+file bytes in the ecosystem's `sha256:<hex>` form, so a run report can record
+the value as-is and a consumer can verify it with `sha256sum`. Digests cover
+bytes, not parsed JSON: a consumer that re-serializes the artifact is hashing a
+different document. Without `--out` the artifact itself goes to stdout. SyncMill P3.1 may enforce this evidence before orchestration, but the
 producer artifact and Toolgraph exit-code contract remain advisory (ADR-0008).
 
 `policy compile` evaluates every currently exposed qualified tool, fingerprints

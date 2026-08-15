@@ -581,21 +581,21 @@ def preflight(
 ) -> None:
     """Produce an advisory preflight artifact for a candidate tool batch."""
     _selector_profile(profile)
-    artifact = build_preflight(
-        agent=agent,
-        candidates=candidates,
-        profile=profile,
-        run_id=run_id,
-        include_features=features,
-    )
-    # Indented rather than canonical bytes: this artifact is read by operators as
-    # often as by consumers. The digest covers the exact bytes on disk, so a
-    # consumer can verify it with sha256sum without re-serializing.
-    payload = json.dumps(artifact, indent=2) + "\n"
-    if out is None:
-        typer.echo(payload, nl=False)
-        return
     try:
+        artifact = build_preflight(
+            agent=agent,
+            candidates=candidates,
+            profile=profile,
+            run_id=run_id,
+            include_features=features,
+        )
+        # Indented rather than canonical bytes: this artifact is read by operators
+        # as often as by consumers. The digest covers the exact bytes on disk, so a
+        # consumer can verify it with sha256sum without re-serializing.
+        payload = json.dumps(artifact, indent=2) + "\n"
+        if out is None:
+            typer.echo(payload, nl=False)
+            return
         digest = atomic_write_private(out, payload.encode("utf-8"))
     except (RuntimeError, OSError, ValueError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
@@ -605,7 +605,9 @@ def preflight(
             {
                 "kind": artifact["kind"],
                 "output": str(out),
-                "artifact_digest": digest,
+                # Prefixed form: SyncMill's artifact_digest contract is
+                # ^sha256:[0-9a-f]{64}$, so this value is copyable as-is.
+                "artifact_digest": f"sha256:{digest}",
                 "run_id": artifact["run_id"],
                 "graph_generation": artifact["graph_generation"],
                 "agent": artifact["agent"],
