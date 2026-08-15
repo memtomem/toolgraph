@@ -607,6 +607,9 @@ def preflight(
                 "output": str(out),
                 # Prefixed form: SyncMill's artifact_digest contract is
                 # ^sha256:[0-9a-f]{64}$, so this value is copyable as-is.
+                # `policy compile` deliberately keeps bare hex — memtomem-stm
+                # asserts len(bundle_digest) == 64. The two formats answer to
+                # different consumers; do not unify them.
                 "artifact_digest": f"sha256:{digest}",
                 "run_id": artifact["run_id"],
                 "graph_generation": artifact["graph_generation"],
