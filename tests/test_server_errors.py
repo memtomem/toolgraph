@@ -95,6 +95,64 @@ def test_native_outages_are_typed_at_the_driver_seam(native):
     assert is_backend_unavailable(raised.value)
 
 
+def test_outage_thrown_through_session_yield_is_typed(monkeypatch):
+    """The seam must cover mid-query failures, not just session acquisition.
+
+    The exception is raised inside the caller's ``with`` body, so Python throws
+    it back into the generator — the case a try/except around acquisition alone
+    would miss.
+    """
+    native = ServiceUnavailable("bolt down mid-query")
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def run(self, *args, **kwargs):
+            raise native
+
+    class _Driver:
+        def session(self, **kwargs):
+            return _Session()
+
+    monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
+    monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
+
+    with pytest.raises(BackendUnavailableError) as raised:
+        with driver.session() as current:
+            current.run("MATCH (n) RETURN n")
+    assert raised.value.__cause__ is native
+
+
+def test_client_error_through_session_yield_stays_loud(monkeypatch):
+    """A Cypher/contract error must not be laundered into an outage."""
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+        def run(self, *args, **kwargs):
+            raise ClientError("syntax error")
+
+    class _Driver:
+        def session(self, **kwargs):
+            return _Session()
+
+    monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
+    monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
+
+    with pytest.raises(ClientError) as raised:
+        with driver.session() as current:
+            current.run("BAD")
+    assert not is_backend_unavailable(raised.value)
+
+
 def test_untyped_native_outage_is_not_classified():
     """A raw driver exception means it escaped the seam — stay loud."""
     assert not is_backend_unavailable(ServiceUnavailable("offline"))
@@ -163,26 +221,25 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     assert "graph_generation" not in encoded
 
 
-def test_retryable_is_derived_from_read_only_annotations():
+def test_retryable_is_derived_from_read_only_registry():
     """``retryable`` is a claim about the operation, not just the outage."""
-    for tool in asyncio.run(app.mcp.list_tools()):
+    tools = asyncio.run(app.mcp.list_tools())
+    for tool in tools:
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.idempotentHint is True
         assert app.mcp._is_retryable(tool.name) is True
+    assert app._READ_ONLY_TOOLS == {tool.name for tool in tools}
 
 
-def test_write_tool_would_not_claim_retryable(monkeypatch):
-    """A future non-read-only tool must not inherit retry advice."""
+def test_each_tool_owns_its_annotations_object():
+    """Shared annotations would let one tool's edit rewrite every tool's."""
+    tools = asyncio.run(app.mcp.list_tools())
+    assert len({id(tool.annotations) for tool in tools}) == len(tools)
 
-    class _Annotations:
-        readOnlyHint = False
 
-    class _Tool:
-        annotations = _Annotations()
-
-    monkeypatch.setattr(
-        app.mcp._tool_manager, "get_tool", lambda _name: _Tool(), raising=False
-    )
+def test_tool_outside_read_only_registry_never_claims_retryable():
+    """A future write tool registers with plain mcp.tool() and opts out."""
     assert app.mcp._is_retryable("hypothetical_write") is False
 
 

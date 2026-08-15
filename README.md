@@ -428,7 +428,7 @@ driver-specific text:
 
 Only this exact discriminator is an availability signal. Validation,
 configuration, query-contract, and unexpected failures keep the normal MCP
-error behavior and should fail loud. CLI and direct Python query behavior are
+error behavior and should fail loud. CLI output and Python query results are
 unchanged.
 
 Outages are typed once at the backend seam — `driver.session()` and
@@ -437,6 +437,15 @@ never inspects driver-specific exception types. `retryable` is derived from the
 tool's own `readOnlyHint` annotation rather than assumed: all current tools are
 pure graph reads, and a future write tool must declare itself safe to retry
 before it makes that claim.
+
+**API change for embedders.** Because outages are typed at that seam, code
+calling `driver.session()` or `verify_connectivity()` directly now sees
+`BackendUnavailableError` where it previously saw `neo4j.exceptions`
+`ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError`, or
+`DatabaseUnavailable`. Catch `BackendUnavailableError` (or its
+`BackendLockedError` subclass) instead; the original driver exception is
+preserved as `__cause__`. Configuration, authentication, and Cypher/client
+errors are untouched, as is the still-raw `get_driver()` escape hatch.
 
 ### Wiring the shipped consumer (memtomem-stm)
 
