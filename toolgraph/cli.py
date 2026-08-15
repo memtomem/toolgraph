@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 from enum import Enum
 from importlib.resources import as_file, files
-import os
 from pathlib import Path
 import shutil
 import sys
-import tempfile
 from typing import NoReturn
 
 import typer
@@ -590,27 +588,35 @@ def preflight(
         run_id=run_id,
         include_features=features,
     )
+    # Indented rather than canonical bytes: this artifact is read by operators as
+    # often as by consumers. The digest covers the exact bytes on disk, so a
+    # consumer can verify it with sha256sum without re-serializing.
     payload = json.dumps(artifact, indent=2) + "\n"
     if out is None:
         typer.echo(payload, nl=False)
         return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    temporary: str | None = None
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=out.parent, prefix=f".{out.name}.", delete=False
-    ) as handle:
-        temporary = handle.name
-        try:
-            handle.write(payload)
-        except Exception:
-            handle.close()
-            Path(temporary).unlink(missing_ok=True)
-            raise
     try:
-        os.replace(temporary, out)
-    except Exception:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+        digest = atomic_write_private(out, payload.encode("utf-8"))
+    except (RuntimeError, OSError, ValueError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "kind": artifact["kind"],
+                "output": str(out),
+                "artifact_digest": digest,
+                "run_id": artifact["run_id"],
+                "graph_generation": artifact["graph_generation"],
+                "agent": artifact["agent"],
+                "profile": artifact["profile"],
+                "decision": artifact["decision"],
+                "eligible": len(artifact["eligible"]),
+                "rejected": len(artifact["rejected"]),
+            },
+            indent=2,
+        )
+    )
 
 
 @policy_app.command("compile")
