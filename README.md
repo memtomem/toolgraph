@@ -433,10 +433,10 @@ unchanged.
 
 Outages are typed once at the backend seam — `driver.session()` and
 `verify_connectivity()` raise `BackendUnavailableError` — so the server layer
-never inspects driver-specific exception types. `retryable` is derived from the
-tool's own `readOnlyHint` annotation rather than assumed: all current tools are
-pure graph reads, and a future write tool must declare itself safe to retry
-before it makes that claim.
+never inspects driver-specific exception types. `retryable` is read from a
+per-server registry of tools declared read-only at registration, rather than
+assumed: every current tool is a pure graph read, and a future write tool
+registers without that declaration and so never claims retry safety.
 
 **API change for embedders.** Because outages are typed at that seam, code
 calling `driver.session()` or `verify_connectivity()` directly now sees
@@ -499,8 +499,11 @@ uv run toolgraph serve --http     # streamable-http
 
 Tools: `check_access`, `unsafe_callable_tools`, `blast_radius`,
 `unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`,
-`destructive_unsafeguarded`, `annotation_contradictions`, `rank_features`,
-`eligible_tools`, `selection_explain`.
+`destructive_unsafeguarded`, `annotation_contradictions`, `audit_report`,
+`rank_features`, `eligible_tools`, `selection_explain`.
+
+All thirteen are pure graph reads and advertise `readOnlyHint` /
+`idempotentHint`.
 
 ## Inputs
 
