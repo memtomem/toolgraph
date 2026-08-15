@@ -9,6 +9,7 @@ stamp lives HERE, not in the query layer — CLI output stays unchanged.
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -18,6 +19,8 @@ from mcp.types import CallToolResult, ContentBlock, TextContent, ToolAnnotations
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
 
+
+logger = logging.getLogger(__name__)
 
 _BACKEND_UNAVAILABLE_MESSAGE = (
     "Toolgraph backend is temporarily unavailable; retry later."
@@ -53,18 +56,25 @@ class _ToolgraphMCP(FastMCP):
         name, so a write tool could otherwise inherit a later read-only claim.
 
         Every failure path answers "no": an unknown tool, an unannotated tool,
-        and a listing that raises. This runs while an outage is already being
+        and a lookup that raises. This runs while an outage is already being
         reported, so a lookup fault must not escape and replace the typed
         envelope with an unstructured error — the exact failure this envelope
-        exists to prevent. Under-claiming retry safety is the safe direction.
+        exists to prevent. Under-claiming retry safety is the safe direction,
+        but it is still a degraded answer, so log it rather than swallow it.
+
+        ``BaseException`` is deliberately not caught: cancellation and shutdown
+        must propagate rather than be absorbed into a response.
         """
         try:
-            tools = await self.list_tools()
+            for tool in await self.list_tools():
+                if tool.name == name:
+                    return bool(tool.annotations and tool.annotations.readOnlyHint)
         except Exception:
-            return False
-        for tool in tools:
-            if tool.name == name:
-                return bool(tool.annotations and tool.annotations.readOnlyHint)
+            logger.warning(
+                "could not read retry safety for tool %r; reporting not retryable",
+                name,
+                exc_info=True,
+            )
         return False
 
     async def call_tool(

@@ -17,7 +17,8 @@ Initial public alpha release.
 - Give MCP consumers a typed `backend_unavailable` error envelope for transient
   graph outages while keeping contract and internal errors fail-loud. Outages
   are typed at the backend seam, and `retryable` follows the tool's advertised
-  read-only annotation instead of being assumed.
+  read-only annotation instead of being assumed, failing closed to `false`
+  whenever that annotation cannot be read.
 
 ### Upgrade note for pre-release users
 

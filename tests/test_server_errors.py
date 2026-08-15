@@ -262,6 +262,40 @@ async def test_outage_envelope_survives_a_failing_tool_listing(monkeypatch):
     assert "hunter2" not in encoded
 
 
+async def test_outage_envelope_survives_a_faulty_listed_tool(monkeypatch):
+    """The guard covers iteration, not just the listing call itself."""
+
+    class _FaultyTool:
+        @property
+        def name(self):
+            raise RuntimeError("attribute sentinel")
+
+    async def faulty_list_tools():
+        return [_FaultyTool()]
+
+    monkeypatch.setattr(
+        app,
+        "_with_generation",
+        lambda _fetch: (_ for _ in ()).throw(BackendUnavailableError("down")),
+    )
+    monkeypatch.setattr(app.mcp, "list_tools", faulty_list_tools)
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.structuredContent == {**_BACKEND_PAYLOAD, "retryable": False}
+    assert "attribute sentinel" not in result.model_dump_json()
+
+
+async def test_cancellation_during_retry_lookup_propagates(monkeypatch):
+    """Cancellation must not be absorbed into a response."""
+
+    async def cancelled_list_tools():
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(app.mcp, "list_tools", cancelled_list_tools)
+    with pytest.raises(asyncio.CancelledError):
+        await app.mcp._is_retryable("check_access")
+
+
 def test_current_tools_are_all_read_only_graph_reads():
     """Today every shipped tool is a pure read; flag any future change here."""
     for tool in asyncio.run(app.mcp.list_tools()):
