@@ -9,7 +9,9 @@
 > 완료됐다. strict P3.1 consumer enforcement는 SyncMill opt-in preview로 구현됐고
 > Gate E 운영 evidence 승인은 열려 있다. Tracegraph T3 producer, SyncMill board import
 > slice와 Toolgraph G3 artifact review도 완료됐지만 live qualified-tool telemetry와
-> 자동 적용 없는 운영 검토 평가는 전체 P4 후속 범위로 남아 있다.
+> 자동 적용 없는 운영 검토 평가는 전체 P4 후속 범위로 남아 있다. 0단계와 1단계
+> 체크리스트에서는 SyncMill 실행 보고서가 preflight `artifact_digest`를 기록하는
+> cross-repo 항목만 열려 있다.
 
 ## 요약
 
@@ -104,18 +106,33 @@ redaction fixture를 contract test에 포함한다.
 
 ### 0단계: 계약 고정
 
-- [ ] qualified tool key와 agent identity 매핑을 문서화한다.
-- [ ] preflight JSON Schema와 버전 정책을 정의한다.
-- [ ] `DENY`, `NOT_GRANTED`, drift, unmapped 상태별 소비자 정책을 정한다.
-- [ ] syncmill이 MCP 도구를 직접 사용하지 않는 현재 구조에서 적용 범위를 확인한다.
+- [x] qualified tool key와 agent identity 매핑을 문서화한다 — server-qualified key와
+  `agent_found`/`unresolved_identity` 계약은 `contracts/preflight.schema.json`과
+  가이드 문서에 정리됐다.
+- [x] preflight JSON Schema와 버전 정책을 정의한다 — `contracts/preflight.schema.json`
+  (additive-within-major 정책 포함), `tests/test_preflight_contract.py`가 고정한다.
+- [x] `DENY`, `NOT_GRANTED`, drift, unmapped 상태별 소비자 정책을 정한다 — ADR-0008과
+  `contracts/fixtures/`의 drift/unknown-tool/unresolved-identity fixture로 고정됐다.
+- [x] syncmill이 MCP 도구를 직접 사용하지 않는 현재 구조에서 적용 범위를 확인한다 —
+  ADR-0008이 advisory producer / SyncMill enforcement 경계로 기록했다.
 
 ### 1단계: 수동 artifact 연계
 
-- [ ] 기존 CLI로 preflight 결과를 JSON artifact로 내보내는 예제를 추가한다.
-- [ ] artifact에 `run_id`와 `graph_generation`을 기록한다.
-- [ ] provenance/path 문자열 redaction pass와 redaction fixture를 추가한다.
-- [ ] syncmill 실행 보고서가 해당 artifact 경로 또는 digest를 참조하게 한다.
-- [ ] stale graph와 unknown agent가 성공으로 오인되지 않는 계약 테스트를 추가한다.
+- [x] 기존 CLI로 preflight 결과를 JSON artifact로 내보내는 예제를 추가한다 —
+  README의 `toolgraph preflight … --out preflight.json` 예제.
+- [x] artifact에 `run_id`와 `graph_generation`을 기록한다 — 두 필드 모두 schema
+  required이며 `toolgraph/preflight.py`가 기록한다.
+- [x] provenance/path 문자열 redaction pass와 redaction fixture를 추가한다 —
+  `toolgraph/redaction.py`와 `tests/test_preflight_contract.py`의 planted-violation
+  scanner로 고정됐다.
+- [ ] syncmill 실행 보고서가 해당 artifact 경로 또는 digest를 참조하게 한다 —
+  producer 측은 완료됐다. `--out` 사용 시 `preflight`가 파일 바이트에 대한
+  `artifact_digest` envelope를 stdout으로 출력한다. SyncMill 실행 보고서가 이
+  digest를 기록하는 작업은 cross-repo로 남아 있다.
+- [x] stale graph와 unknown agent가 성공으로 오인되지 않는 계약 테스트를 추가한다 —
+  `tests/test_preflight.py`, `tests/test_preflight_graph.py`,
+  `tests/test_preflight_contract.py`가 unresolved_identity와 generation bracketing을
+  고정한다.
 
 ### 2단계: 선택적 syncmill adapter
 
