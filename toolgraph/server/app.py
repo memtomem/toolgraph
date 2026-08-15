@@ -26,27 +26,16 @@ _BACKEND_UNAVAILABLE_MESSAGE = (
 class _ToolgraphMCP(FastMCP):
     """FastMCP server with a typed envelope for backend availability only."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        # Tools registered via ``read_only_tool`` — pure graph reads, so a
-        # retried call is safe and observably identical. ``retryable`` in the
-        # error envelope is read from this registry rather than assumed: a
-        # write tool registers with plain ``tool()`` and never claims retry
-        # safety. Owning the registry keeps the envelope off FastMCP's private
-        # tool manager; keeping it per-instance keeps two servers independent.
-        self._read_only_tools: set[str] = set()
-
     def read_only_tool(self, name: str | None = None, **kwargs: Any):
-        """Register a pure-read graph tool and record it as safe to retry.
+        """Register a pure-read graph tool: safe to retry, no added side effect.
 
-        Records the same name FastMCP dispatches on, so an explicit ``name``
-        override cannot silently drop a tool out of the registry. Each tool
-        gets its own annotations object, so a later per-tool edit cannot leak
-        across every registration.
+        Each tool gets its own annotations object, so a later per-tool edit
+        cannot leak across every registration.
         """
+        if "annotations" in kwargs:
+            raise TypeError("read_only_tool owns 'annotations'; use tool() instead")
 
         def decorator(fn):
-            self._read_only_tools.add(name or fn.__name__)
             return self.tool(
                 name=name,
                 annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True),
@@ -55,8 +44,19 @@ class _ToolgraphMCP(FastMCP):
 
         return decorator
 
-    def _is_retryable(self, name: str) -> bool:
-        return name in self._read_only_tools
+    async def _is_retryable(self, name: str) -> bool:
+        """Whether a failed call to *name* is safe to repeat.
+
+        Read from the annotations the server actually advertises, so there is
+        exactly one source of truth. A parallel registry could disagree with
+        the live registration — FastMCP keeps the *first* tool on a duplicate
+        name, so a write tool could otherwise inherit a later read-only claim.
+        An unknown or unannotated tool fails closed.
+        """
+        for tool in await self.list_tools():
+            if tool.name == name:
+                return bool(tool.annotations and tool.annotations.readOnlyHint)
+        return False
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -68,7 +68,7 @@ class _ToolgraphMCP(FastMCP):
                 raise
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
-                "retryable": self._is_retryable(name),
+                "retryable": await self._is_retryable(name),
                 "message": _BACKEND_UNAVAILABLE_MESSAGE,
             }
             return CallToolResult(

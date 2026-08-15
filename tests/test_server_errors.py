@@ -221,21 +221,20 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     assert "graph_generation" not in encoded
 
 
-def test_retry_registry_matches_declared_read_only_annotations():
-    """The registry and the advertised annotations must not drift apart.
+def test_retryable_tracks_the_advertised_annotations():
+    """Retry safety must match what the server actually advertises.
 
     Stated as an equivalence rather than "everything is read-only" so adding a
     genuine write tool later does not make this test wrong.
     """
     tools = asyncio.run(app.mcp.list_tools())
-    declared_read_only = {
-        tool.name
-        for tool in tools
-        if tool.annotations is not None and tool.annotations.readOnlyHint
-    }
-    assert app.mcp._read_only_tools == declared_read_only
     for tool in tools:
-        assert app.mcp._is_retryable(tool.name) is (tool.name in declared_read_only)
+        declared = bool(tool.annotations and tool.annotations.readOnlyHint)
+        assert asyncio.run(app.mcp._is_retryable(tool.name)) is declared
+
+
+def test_unknown_tool_is_not_retryable():
+    assert asyncio.run(app.mcp._is_retryable("no_such_tool")) is False
 
 
 def test_current_tools_are_all_read_only_graph_reads():
@@ -264,13 +263,11 @@ def test_registered_write_tool_never_claims_retryable():
     def writer() -> dict:
         return {}
 
-    assert server._is_retryable("reader") is True
-    assert server._is_retryable("writer") is False
-    # The registry is per-instance: a probe server cannot alter the real one.
-    assert app.mcp._read_only_tools == {name for name, _ in _TOOLS}
+    assert asyncio.run(server._is_retryable("reader")) is True
+    assert asyncio.run(server._is_retryable("writer")) is False
 
 
-def test_explicit_tool_name_stays_in_the_retry_registry():
+def test_explicit_tool_name_keeps_retry_safety():
     """A ``name=`` override must not silently drop retry safety."""
     server = app._ToolgraphMCP("probe")
 
@@ -280,8 +277,36 @@ def test_explicit_tool_name_stays_in_the_retry_registry():
 
     registered = {tool.name for tool in asyncio.run(server.list_tools())}
     assert registered == {"aliased"}
-    assert server._is_retryable("aliased") is True
-    assert server._is_retryable("original_name") is False
+    assert asyncio.run(server._is_retryable("aliased")) is True
+    assert asyncio.run(server._is_retryable("original_name")) is False
+
+
+def test_duplicate_name_cannot_confer_retry_safety_on_a_write_tool():
+    """FastMCP keeps the FIRST tool on a duplicate name.
+
+    A later read-only registration under the same name is discarded, so the
+    retained write tool must not inherit the discarded tool's retry claim.
+    """
+    server = app._ToolgraphMCP("probe")
+
+    @server.tool(name="same")
+    def writer() -> dict:
+        return {}
+
+    @server.read_only_tool(name="same")
+    def reader() -> dict:
+        return {}
+
+    (retained,) = asyncio.run(server.list_tools())
+    assert not (retained.annotations and retained.annotations.readOnlyHint)
+    assert asyncio.run(server._is_retryable("same")) is False
+
+
+def test_read_only_tool_rejects_conflicting_annotations():
+    """The helper owns annotations; a caller override would be silently lost."""
+    server = app._ToolgraphMCP("probe")
+    with pytest.raises(TypeError):
+        server.read_only_tool(annotations=object())
 
 
 async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):

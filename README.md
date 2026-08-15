@@ -433,10 +433,11 @@ unchanged.
 
 Outages are typed once at the backend seam — `driver.session()` and
 `verify_connectivity()` raise `BackendUnavailableError` — so the server layer
-never inspects driver-specific exception types. `retryable` is read from a
-per-server registry of tools declared read-only at registration, rather than
-assumed: every current tool is a pure graph read, and a future write tool
-registers without that declaration and so never claims retry safety.
+never inspects driver-specific exception types. `retryable` is read from the
+annotations the server actually advertises for that tool, rather than assumed:
+every current tool is a pure graph read, and a tool that does not advertise
+`readOnlyHint` — including an unknown one — fails closed to
+`retryable: false`.
 
 **API change for embedders.** Because outages are typed at that seam, code
 calling `driver.session()` or `verify_connectivity()` directly now sees

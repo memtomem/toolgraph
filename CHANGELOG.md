@@ -16,8 +16,8 @@ Initial public alpha release.
 - Ship an install-only, offline quickstart through `toolgraph example init`.
 - Give MCP consumers a typed `backend_unavailable` error envelope for transient
   graph outages while keeping contract and internal errors fail-loud. Outages
-  are typed at the backend seam, and `retryable` follows the tool's read-only
-  declaration instead of being assumed.
+  are typed at the backend seam, and `retryable` follows the tool's advertised
+  read-only annotation instead of being assumed.
 
 ### Upgrade note for pre-release users
 
