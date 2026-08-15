@@ -13,7 +13,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, ContentBlock, TextContent
+from mcp.types import CallToolResult, ContentBlock, TextContent, ToolAnnotations
 
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
@@ -23,9 +23,22 @@ _BACKEND_UNAVAILABLE_MESSAGE = (
     "Toolgraph backend is temporarily unavailable; retry later."
 )
 
+# Every toolgraph tool is a pure graph read, so a retried call is safe and
+# observably identical. ``retryable`` in the error envelope is derived from
+# this declaration rather than assumed — a future write tool must opt in.
+_READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True)
+
 
 class _ToolgraphMCP(FastMCP):
     """FastMCP server with a typed envelope for backend availability only."""
+
+    def _is_retryable(self, name: str) -> bool:
+        try:
+            tool = self._tool_manager.get_tool(name)
+        except Exception:  # pragma: no cover - unknown tool never reaches here
+            return False
+        annotations = getattr(tool, "annotations", None)
+        return bool(annotations and annotations.readOnlyHint)
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any]
@@ -37,7 +50,7 @@ class _ToolgraphMCP(FastMCP):
                 raise
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
-                "retryable": True,
+                "retryable": self._is_retryable(name),
                 "message": _BACKEND_UNAVAILABLE_MESSAGE,
             }
             return CallToolResult(
@@ -52,7 +65,7 @@ mcp = _ToolgraphMCP("toolgraph")
 _with_generation = queries.with_graph_state
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def check_access(agent: str, tool: str) -> dict:
     """Can `agent` call `tool`, and does the call path cross a DENY policy?
 
@@ -66,7 +79,7 @@ def check_access(agent: str, tool: str) -> dict:
     return _with_generation(lambda: queries.check_access(agent, tool))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def unsafe_callable_tools(agent: str, include_authorized: bool = False) -> dict:
     """Tools `agent` is allowed to call that reach a DENY policy.
 
@@ -97,13 +110,13 @@ def unsafe_callable_tools(agent: str, include_authorized: bool = False) -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def blast_radius(node: str) -> dict:
     """Agents/tools affected if `node` (a resource URI or a policy id) changes."""
     return _with_generation(lambda: queries.blast_radius(node))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def unmapped_tools(only_granted: bool = True) -> dict:
     """Granted tools (or all tools if `only_granted=False`) with no authored
     READS/WRITES — data-flow effects unclassified."""
@@ -115,7 +128,7 @@ def unmapped_tools(only_granted: bool = True) -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def orphan_policies() -> dict:
     """Policies no agent currently reaches — likely obsolete or over-narrow."""
 
@@ -126,7 +139,7 @@ def orphan_policies() -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def unbacked_edges(include_grants: bool = False) -> dict:
     """Authored edges with no usable evidence pointer.
 
@@ -143,7 +156,7 @@ def unbacked_edges(include_grants: bool = False) -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def drifted_tools() -> dict:
     """Tools with authored governance but no live EXPOSES edge — re-ingest needed."""
 
@@ -154,7 +167,7 @@ def drifted_tools() -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def destructive_unsafeguarded() -> dict:
     """Tools hinting ``destructiveHint: true`` with no GOVERNED_BY path —
     neither directly on the tool nor via any resource it reads/writes.
@@ -171,7 +184,7 @@ def destructive_unsafeguarded() -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def annotation_contradictions() -> dict:
     """Authored WRITES edges on tools hinting ``readOnlyHint: true``.
 
@@ -187,7 +200,7 @@ def annotation_contradictions() -> dict:
     return _with_generation(fetch)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def audit_report(include_grants: bool = False) -> dict:
     """Whole-graph operational audit summary.
 
@@ -200,7 +213,7 @@ def audit_report(include_grants: bool = False) -> dict:
     return _with_generation(lambda: queries.audit_report(include_grants=include_grants))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def rank_features(agent: str, candidates: list[str]) -> dict:
     """Batch selection features for every candidate, in input order (ADR-0005).
 
@@ -214,7 +227,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     return _with_generation(lambda: selector.rank_features(agent, candidates))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def eligible_tools(
     agent: str, candidates: list[str], profile: str = selector.DEFAULT_PROFILE
 ) -> dict:
@@ -232,7 +245,7 @@ def eligible_tools(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ_ONLY)
 def selection_explain(
     agent: str, tool: str, profile: str = selector.DEFAULT_PROFILE
 ) -> dict:

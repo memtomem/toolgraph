@@ -15,7 +15,9 @@ Initial public alpha release.
 - Persist only credential-free endpoint labels and redact failure diagnostics.
 - Ship an install-only, offline quickstart through `toolgraph example init`.
 - Give MCP consumers a typed `backend_unavailable` error envelope for transient
-  graph outages while keeping contract and internal errors fail-loud.
+  graph outages while keeping contract and internal errors fail-loud. Outages
+  are typed at the backend seam, and `retryable` follows the tool's declared
+  `readOnlyHint` instead of being assumed.
 
 ### Upgrade note for pre-release users
 

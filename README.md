@@ -431,6 +431,13 @@ configuration, query-contract, and unexpected failures keep the normal MCP
 error behavior and should fail loud. CLI and direct Python query behavior are
 unchanged.
 
+Outages are typed once at the backend seam — `driver.session()` and
+`verify_connectivity()` raise `BackendUnavailableError` — so the server layer
+never inspects driver-specific exception types. `retryable` is derived from the
+tool's own `readOnlyHint` annotation rather than assumed: all current tools are
+pure graph reads, and a future write tool must declare itself safe to retry
+before it makes that claim.
+
 ### Wiring the shipped consumer (memtomem-stm)
 
 The first consumer of this surface is the memtomem-stm proxy

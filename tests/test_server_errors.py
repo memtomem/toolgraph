@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from mcp.types import CallToolRequest, CallToolRequestParams, CallToolResult
@@ -14,9 +15,11 @@ from neo4j.exceptions import (
 )
 import pytest
 
+from toolgraph.graph import driver
 from toolgraph.graph.driver import (
     BackendConfigurationError,
     BackendLockedError,
+    BackendUnavailableError,
     is_backend_unavailable,
 )
 from toolgraph.server import app
@@ -57,18 +60,44 @@ async def _wire_call(name: str, arguments: dict) -> CallToolResult:
     return response.root
 
 
+def test_tool_fixtures_cover_every_registered_tool():
+    """Fail loudly when a tool is added without an availability fixture."""
+    registered = {tool.name for tool in asyncio.run(app.mcp.list_tools())}
+    assert registered == {name for name, _ in _TOOLS}
+
+
 @pytest.mark.parametrize(
     "exc",
+    [
+        BackendUnavailableError("offline"),
+        BackendLockedError("locked"),
+    ],
+)
+def test_backend_unavailable_classifier_accepts_only_typed_outages(exc):
+    assert is_backend_unavailable(exc)
+
+
+@pytest.mark.parametrize(
+    "native",
     [
         ServiceUnavailable("offline"),
         SessionExpired("expired"),
         ConnectionAcquisitionTimeoutError("timed out"),
         DatabaseUnavailable("unavailable"),
-        BackendLockedError("locked"),
     ],
 )
-def test_backend_unavailable_classifier_accepts_only_known_outages(exc):
-    assert is_backend_unavailable(exc)
+def test_native_outages_are_typed_at_the_driver_seam(native):
+    """The narrow native taxonomy becomes BackendUnavailableError at the seam."""
+    with pytest.raises(BackendUnavailableError) as raised:
+        with driver._translating_backend_errors():
+            raise native
+    assert raised.value.__cause__ is native
+    assert is_backend_unavailable(raised.value)
+
+
+def test_untyped_native_outage_is_not_classified():
+    """A raw driver exception means it escaped the seam — stay loud."""
+    assert not is_backend_unavailable(ServiceUnavailable("offline"))
 
 
 @pytest.mark.parametrize(
@@ -85,10 +114,31 @@ def test_backend_unavailable_classifier_rejects_contract_and_internal_errors(exc
 
 
 def test_backend_unavailable_classifier_walks_wrapped_causes():
-    inner = ServiceUnavailable("offline")
+    inner = BackendUnavailableError("offline")
     outer = RuntimeError("framework wrapper")
     outer.__cause__ = inner
     assert is_backend_unavailable(outer)
+
+
+def test_backend_unavailable_classifier_respects_suppressed_context():
+    """``raise ... from None`` means the author chose the outer error."""
+    try:
+        try:
+            raise BackendUnavailableError("offline")
+        except BackendUnavailableError:
+            raise RuntimeError("cleanup bug") from None
+    except RuntimeError as exc:
+        assert not is_backend_unavailable(exc)
+
+
+def test_backend_unavailable_classifier_follows_implicit_context():
+    try:
+        try:
+            raise BackendUnavailableError("offline")
+        except BackendUnavailableError:
+            raise RuntimeError("cleanup bug")
+    except RuntimeError as exc:
+        assert is_backend_unavailable(exc)
 
 
 @pytest.mark.parametrize("name,arguments", _TOOLS)
@@ -96,7 +146,7 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     monkeypatch, name, arguments
 ):
     def unavailable(_fetch):
-        raise ServiceUnavailable(
+        raise BackendUnavailableError(
             "bolt://alice:secret@example.test password=hunter2 sentinel-detail"
         )
 
@@ -111,6 +161,29 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     assert "hunter2" not in encoded
     assert "sentinel-detail" not in encoded
     assert "graph_generation" not in encoded
+
+
+def test_retryable_is_derived_from_read_only_annotations():
+    """``retryable`` is a claim about the operation, not just the outage."""
+    for tool in asyncio.run(app.mcp.list_tools()):
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is True
+        assert app.mcp._is_retryable(tool.name) is True
+
+
+def test_write_tool_would_not_claim_retryable(monkeypatch):
+    """A future non-read-only tool must not inherit retry advice."""
+
+    class _Annotations:
+        readOnlyHint = False
+
+    class _Tool:
+        annotations = _Annotations()
+
+    monkeypatch.setattr(
+        app.mcp._tool_manager, "get_tool", lambda _name: _Tool(), raising=False
+    )
+    assert app.mcp._is_retryable("hypothetical_write") is False
 
 
 async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
