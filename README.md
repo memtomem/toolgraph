@@ -449,7 +449,10 @@ calling `driver.session()` or `verify_connectivity()` directly now sees
 `DatabaseUnavailable`. Catch `BackendUnavailableError` (or its
 `BackendLockedError` subclass) instead; the original driver exception is
 preserved as `__cause__`. Configuration, authentication, and Cypher/client
-errors are untouched, as is the still-raw `get_driver()` escape hatch.
+errors are untouched, as is the still-raw `get_driver()` escape hatch. Note
+that `is_backend_unavailable()` narrowed with it: it classifies only
+`BackendUnavailableError`, so exceptions raised straight out of `get_driver()`
+no longer answer yes. Route retry-sensitive calls through `driver.session()`.
 
 ### Wiring the shipped consumer (memtomem-stm)
 

@@ -18,6 +18,7 @@ from mcp.types import CallToolResult, ContentBlock, TextContent, ToolAnnotations
 
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
+from toolgraph.redaction import redact_text
 
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 _BACKEND_UNAVAILABLE_MESSAGE = (
     "Toolgraph backend is temporarily unavailable; retry later."
 )
+
 
 class _ToolgraphMCP(FastMCP):
     """FastMCP server with a typed envelope for backend availability only."""
@@ -84,7 +86,13 @@ class _ToolgraphMCP(FastMCP):
             return await super().call_tool(name, arguments)
         except ToolError as exc:
             if not is_backend_unavailable(exc):
-                raise
+                # The seam types every outage it covers, so reaching here means
+                # either a contract error or a driver exception that never
+                # passed the seam. FastMCP puts this message on the wire
+                # verbatim, and driver text can carry a connection URI, so it
+                # is scrubbed before it leaves. Ordinary contract text is
+                # unaffected; the cause is kept for server-side logs.
+                raise ToolError(redact_text(exc)) from exc
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
                 "retryable": await self._is_retryable(name),

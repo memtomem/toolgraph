@@ -32,6 +32,13 @@ authentication, and Cypher/client errors are unaffected, as is `get_driver()`.
 Successful CLI output and query result shapes are unchanged; an unhandled
 outage now names `BackendUnavailableError` in the traceback.
 
+`driver.is_backend_unavailable()` narrowed to match: it now recognizes only
+`BackendUnavailableError` (anywhere in the cause chain), not the raw `neo4j`
+types it previously classified. Code that pairs the still-raw `get_driver()`
+escape hatch with `is_backend_unavailable()` to decide whether to retry will
+silently stop matching — catch `BackendUnavailableError`, or route the call
+through `driver.session()` so the seam types it.
+
 Earlier snapshots could persist stdio arguments or complete HTTP URLs in graph
 endpoint/evidence properties. Reset and rebuild pre-release graphs after
 upgrading. If any argument or URL contained a credential, rotate it as well.

@@ -221,6 +221,30 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     assert "graph_generation" not in encoded
 
 
+async def test_untyped_native_outage_still_carries_no_credentials(monkeypatch):
+    """A driver exception that never passed the seam must not leak on the wire.
+
+    The classifier only recognizes ``BackendUnavailableError``, so a native
+    outage raised outside the seam falls through to the unstructured error
+    path. That path is the one a future call site added outside ``session()``
+    would take, and driver text can embed connection credentials.
+    """
+
+    def unavailable(_fetch):
+        raise ServiceUnavailable(
+            "bolt://alice:secret@example.test password=hunter2 sentinel-detail"
+        )
+
+    monkeypatch.setattr(app, "_with_generation", unavailable)
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.isError is True
+    encoded = result.model_dump_json()
+    assert "alice" not in encoded
+    assert "secret" not in encoded
+    assert "hunter2" not in encoded
+
+
 def test_retryable_tracks_the_advertised_annotations():
     """Retry safety must match what the server actually advertises.
 
