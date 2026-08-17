@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
+import os
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -113,6 +115,49 @@ def test_cli_writes_artifact(monkeypatch, tmp_path):
     assert json.loads(out.read_text()) == artifact
 
 
+def test_cli_out_prints_digest_of_exact_file_bytes(monkeypatch, tmp_path):
+    _bracket(monkeypatch, {
+        "agent": "codex", "agent_found": True, "profile": "review",
+        "eligible": ["alpha::read"], "rejected": [],
+    })
+    out = tmp_path / "preflight.json"
+    result = CliRunner().invoke(
+        cli.app, ["preflight", "codex", "alpha::read", "--profile", "review",
+                  "--run-id", "r", "--out", str(out)],
+    )
+    assert result.exit_code == 0, result.output
+    envelope = json.loads(result.stdout)
+    # SyncMill's artifact_digest contract is ^sha256:[0-9a-f]{64}$.
+    assert envelope["artifact_digest"] == (
+        "sha256:" + hashlib.sha256(out.read_bytes()).hexdigest()
+    )
+    assert envelope["output"] == str(out)
+    assert envelope["kind"] == "toolgraph.preflight"
+    assert envelope["run_id"] == "r"
+    assert envelope["graph_generation"] == 42
+    assert envelope["decision"] == "advisory_allow"
+    assert envelope["eligible"] == 1 and envelope["rejected"] == 0
+    if os.name != "nt":
+        assert out.stat().st_mode & 0o777 == 0o600
+    # The indented on-disk representation is deliberate and digest-relevant.
+    assert out.read_text(encoding="utf-8").startswith("{\n  ")
+
+
+def test_cli_build_failure_reports_error_without_traceback(monkeypatch, tmp_path):
+    def explode(**kwargs):
+        raise RuntimeError("graph generation changed during read")
+
+    monkeypatch.setattr(cli, "build_preflight", explode)
+    out = tmp_path / "preflight.json"
+    result = CliRunner().invoke(
+        cli.app, ["preflight", "codex", "alpha::read", "--run-id", "r",
+                  "--out", str(out)],
+    )
+    assert result.exit_code == 1
+    assert "ERROR: graph generation changed during read" in result.output
+    assert not out.exists()
+
+
 def test_cli_stdout_emits_json(monkeypatch):
     artifact = {"decision": "advisory_allow", "eligible": ["alpha::read"]}
     monkeypatch.setattr(cli, "build_preflight", lambda **kwargs: artifact)
@@ -145,7 +190,10 @@ def test_cli_file_path_composes_producer_redaction(monkeypatch, tmp_path):
 
 def test_cli_atomic_replace_failure_cleans_temporary(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "build_preflight", lambda **kwargs: {"decision": "advisory_allow"})
-    monkeypatch.setattr(cli.os, "replace", lambda *args: (_ for _ in ()).throw(OSError("full")))
+    monkeypatch.setattr(
+        "toolgraph.artifacts.os.replace",
+        lambda *args: (_ for _ in ()).throw(OSError("full")),
+    )
     out = tmp_path / "preflight.json"
     result = CliRunner().invoke(
         cli.app, ["preflight", "codex", "alpha::read", "--run-id", "r",

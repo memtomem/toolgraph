@@ -5,11 +5,9 @@ from __future__ import annotations
 import json
 from enum import Enum
 from importlib.resources import as_file, files
-import os
 from pathlib import Path
 import shutil
 import sys
-import tempfile
 from typing import NoReturn
 
 import typer
@@ -583,34 +581,47 @@ def preflight(
 ) -> None:
     """Produce an advisory preflight artifact for a candidate tool batch."""
     _selector_profile(profile)
-    artifact = build_preflight(
-        agent=agent,
-        candidates=candidates,
-        profile=profile,
-        run_id=run_id,
-        include_features=features,
-    )
-    payload = json.dumps(artifact, indent=2) + "\n"
-    if out is None:
-        typer.echo(payload, nl=False)
-        return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    temporary: str | None = None
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=out.parent, prefix=f".{out.name}.", delete=False
-    ) as handle:
-        temporary = handle.name
-        try:
-            handle.write(payload)
-        except Exception:
-            handle.close()
-            Path(temporary).unlink(missing_ok=True)
-            raise
     try:
-        os.replace(temporary, out)
-    except Exception:
-        Path(temporary).unlink(missing_ok=True)
-        raise
+        artifact = build_preflight(
+            agent=agent,
+            candidates=candidates,
+            profile=profile,
+            run_id=run_id,
+            include_features=features,
+        )
+        # Indented rather than canonical bytes: this artifact is read by operators
+        # as often as by consumers. The digest covers the exact bytes on disk, so a
+        # consumer can verify it with sha256sum without re-serializing.
+        payload = json.dumps(artifact, indent=2) + "\n"
+        if out is None:
+            typer.echo(payload, nl=False)
+            return
+        digest = atomic_write_private(out, payload.encode("utf-8"))
+    except (RuntimeError, OSError, ValueError) as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(
+        json.dumps(
+            {
+                "kind": artifact["kind"],
+                "output": str(out),
+                # Prefixed form: SyncMill's artifact_digest contract is
+                # ^sha256:[0-9a-f]{64}$, so this value is copyable as-is.
+                # `policy compile` deliberately keeps bare hex — memtomem-stm
+                # asserts len(bundle_digest) == 64. The two formats answer to
+                # different consumers; do not unify them.
+                "artifact_digest": f"sha256:{digest}",
+                "run_id": artifact["run_id"],
+                "graph_generation": artifact["graph_generation"],
+                "agent": artifact["agent"],
+                "profile": artifact["profile"],
+                "decision": artifact["decision"],
+                "eligible": len(artifact["eligible"]),
+                "rejected": len(artifact["rejected"]),
+            },
+            indent=2,
+        )
+    )
 
 
 @policy_app.command("compile")
