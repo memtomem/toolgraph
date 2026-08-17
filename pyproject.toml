@@ -53,7 +53,10 @@ Issues = "https://github.com/memtomem/toolgraph/issues"
 dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=0.23",
-    "ruff>=0.15.22",
+    # Held below 0.16: that release expands the default rule set, and CI runs
+    # `ruff check .` with no [tool.ruff] selection, so a bump silently changes
+    # what lint means. Raise the ceiling together with an explicit rule set.
+    "ruff>=0.15.22,<0.16",
     "testcontainers[neo4j]>=4.14.2",
     "jsonschema>=4",
     "twine>=6.1",

@@ -1451,7 +1451,7 @@ dev = [
     { name = "jsonschema", specifier = ">=4" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "ruff", specifier = ">=0.15.22" },
+    { name = "ruff", specifier = ">=0.15.22,<0.16" },
     { name = "testcontainers", extras = ["neo4j"], specifier = ">=4.14.2" },
     { name = "twine", specifier = ">=6.1" },
 ]
