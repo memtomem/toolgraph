@@ -31,34 +31,59 @@ class BackendConfigurationError(RuntimeError):
     pass
 
 
-class BackendLockedError(RuntimeError):
+class BackendUnavailableError(RuntimeError):
+    """A known transient backend outage, raised at the backend boundary.
+
+    Callers above the driver classify on this type alone — the native
+    neo4j/Ladybug taxonomy stays private to this module.
+    """
+
+
+class BackendLockedError(BackendUnavailableError):
     pass
 
 
-_BACKEND_UNAVAILABLE_ERRORS = (
+_NATIVE_UNAVAILABLE_ERRORS = (
     ServiceUnavailable,
     SessionExpired,
     ConnectionAcquisitionTimeoutError,
     DatabaseUnavailable,
-    BackendLockedError,
 )
 
 
-def is_backend_unavailable(exc: BaseException) -> bool:
-    """Whether *exc* was caused by a known transient backend outage.
+@contextmanager
+def _translating_backend_errors() -> Iterator[None]:
+    """Re-raise the narrow native outage taxonomy as ``BackendUnavailableError``.
 
-    Keep this deliberately narrower than "any backend exception": invalid
-    configuration, authentication, Cypher/client errors, and unexpected
-    failures must stay loud contract/internal errors.  FastMCP wraps tool
-    exceptions, so walk both explicit causes and implicit contexts.
+    Deliberately narrower than "any backend exception": invalid configuration,
+    authentication, and Cypher/client errors must stay loud contract errors.
+    """
+    try:
+        yield
+    except _NATIVE_UNAVAILABLE_ERRORS as exc:
+        raise BackendUnavailableError(str(exc)) from exc
+
+
+def is_backend_unavailable(exc: BaseException) -> bool:
+    """Whether *exc* was caused by a backend outage typed at the driver seam.
+
+    FastMCP wraps tool exceptions, so walk the chain. ``__context__`` is
+    followed only when Python did not suppress it: a deliberate
+    ``raise ... from None`` while handling an outage is the author saying the
+    outer error is the real one, and must not be reclassified as retryable.
     """
     current: BaseException | None = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
-        if isinstance(current, _BACKEND_UNAVAILABLE_ERRORS):
+        if isinstance(current, BackendUnavailableError):
             return True
         seen.add(id(current))
-        current = current.__cause__ or current.__context__
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
     return False
 
 
@@ -199,7 +224,8 @@ def _get_ladybug_database() -> Any:
 
 def verify_connectivity() -> None:
     if backend_name() == "neo4j":
-        get_driver().verify_connectivity()
+        with _translating_backend_errors():
+            get_driver().verify_connectivity()
         return
     with session() as current:
         current.run("RETURN 1 AS ok").single()
@@ -207,15 +233,24 @@ def verify_connectivity() -> None:
 
 @contextmanager
 def session() -> Iterator[Session | LadybugSession]:
-    if backend_name() == "neo4j":
-        with get_driver().session(database=config.settings.neo4j_database) as current:
+    """Yield a backend session, typing outage failures at this seam.
+
+    The translation wraps the ``yield`` too: a driver outage that surfaces
+    mid-query is thrown back in here by the caller's ``with`` block, so one
+    boundary covers acquisition and execution alike.
+    """
+    with _translating_backend_errors():
+        if backend_name() == "neo4j":
+            with get_driver().session(
+                database=config.settings.neo4j_database
+            ) as current:
+                yield current
+            return
+        current = LadybugSession(_get_ladybug_database())
+        try:
             yield current
-        return
-    current = LadybugSession(_get_ladybug_database())
-    try:
-        yield current
-    finally:
-        current.close()
+        finally:
+            current.close()
 
 
 def close_driver() -> None:

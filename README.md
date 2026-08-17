@@ -428,8 +428,31 @@ driver-specific text:
 
 Only this exact discriminator is an availability signal. Validation,
 configuration, query-contract, and unexpected failures keep the normal MCP
-error behavior and should fail loud. CLI and direct Python query behavior are
-unchanged.
+error behavior and should fail loud. Successful CLI output and Python result
+shapes are unchanged; only the exception type surfaced on an outage differs
+(see below).
+
+Outages are typed once at the backend seam — `driver.session()` and
+`verify_connectivity()` raise `BackendUnavailableError` — so the server layer
+never inspects driver-specific exception types. `retryable` is read from the
+annotations the server actually advertises for that tool, rather than assumed:
+every current tool is a pure graph read. Anything else fails closed to
+`retryable: false` — a tool that does not advertise `readOnlyHint`, an unknown
+tool, and any case where the annotations cannot be read at all. Treat
+`retryable: false` as "do not assume a retry is safe", not as proof that the
+operation writes.
+
+**API change for embedders.** Because outages are typed at that seam, code
+calling `driver.session()` or `verify_connectivity()` directly now sees
+`BackendUnavailableError` where it previously saw `neo4j.exceptions`
+`ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError`, or
+`DatabaseUnavailable`. Catch `BackendUnavailableError` (or its
+`BackendLockedError` subclass) instead; the original driver exception is
+preserved as `__cause__`. Configuration, authentication, and Cypher/client
+errors are untouched, as is the still-raw `get_driver()` escape hatch. Note
+that `is_backend_unavailable()` narrowed with it: it classifies only
+`BackendUnavailableError`, so exceptions raised straight out of `get_driver()`
+no longer answer yes. Route retry-sensitive calls through `driver.session()`.
 
 ### Wiring the shipped consumer (memtomem-stm)
 
@@ -483,8 +506,11 @@ uv run toolgraph serve --http     # streamable-http
 
 Tools: `check_access`, `unsafe_callable_tools`, `blast_radius`,
 `unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`,
-`destructive_unsafeguarded`, `annotation_contradictions`, `rank_features`,
-`eligible_tools`, `selection_explain`.
+`destructive_unsafeguarded`, `annotation_contradictions`, `audit_report`,
+`rank_features`, `eligible_tools`, `selection_explain`.
+
+All thirteen are pure graph reads and advertise `readOnlyHint` /
+`idempotentHint`.
 
 ## Inputs
 
