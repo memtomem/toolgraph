@@ -2,7 +2,9 @@
 
 **상태:** 첫 통합 마일스톤, P3.1 preview, T3, SyncMill board import 및 Toolgraph G3 완료 (2026-07-12)
 **작성일:** 2026-07-11
-**정본:** [전체 계획](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/integration-plan.md) · [구현 설계](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/implementation-design.md) · [smoke runbook](https://github.com/memtomem/syncmill/blob/main/docs/ecosystem/smoke-runbook.md)
+**정본:** 전체 계획 · 구현 설계 · smoke runbook은 비공개 형제 저장소의
+`docs/ecosystem/`에 있다. 이 문서는 그중 toolgraph가 소유하는 범위만 다루며,
+링크 없이도 단독으로 읽히도록 유지한다.
 
 > 실제 landed 순서와 설계 라벨은 정본에서 구분한다. P0/P1과 첫 마일스톤,
 > P2 shared CLI/dashboard rendering, 실제 identity/qualified-tool advisory P3/Gate D는
@@ -139,9 +141,8 @@ redaction fixture를 contract test에 포함한다.
 - [x] syncmill 측의 opt-in preflight enforcement 요구사항을 공동 정의한다.
 - [x] Toolgraph producer는 advisory로 유지하고 SyncMill mode가 선택 profile을 enforcement한다.
 - [x] unknown/drift/unavailable 정책과 fail-open/fail-closed override를 명시한다.
-- [x] strict block의 agent/worktree 이전 실행 보장은
-  [SyncMill companion PR #56](https://github.com/memtomem/syncmill/pull/56)의 테스트로
-  검증됐으며, 해당 PR merge로 완료됐다.
+- [x] strict block의 agent/worktree 이전 실행 보장은 SyncMill 측 companion PR의
+  테스트로 검증됐으며, 해당 PR merge로 완료됐다.
 
 ### 3단계: trace feedback
 
