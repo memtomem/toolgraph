@@ -9,10 +9,14 @@ the same schema without importing Toolgraph Python code.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-from toolgraph.artifacts import canonical_json_bytes, sha256_bytes
+from toolgraph.artifacts import (
+    canonical_json_bytes,
+    rfc3339_offset_error,
+    sha256_bytes,
+)
 from toolgraph.graph import queries, selector
 from toolgraph.graph.store import GraphReader, RuntimeGraphStore
 from toolgraph.preflight import redact
@@ -68,20 +72,9 @@ def build_policy_bundle(
             f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
         )
     if created_at is not None:
-        # Aware means utcoffset() returns a value, not merely that tzinfo is
-        # set: a tzinfo whose utcoffset() is None still isoformat()s without an
-        # offset, which the schema's RFC 3339 prose forbids.
-        offset = created_at.utcoffset()
-        if offset is None:
-            raise PolicyBundleError(
-                "created_at must be timezone-aware — the contract requires an"
-                " RFC 3339 timestamp with a UTC offset"
-            )
-        if offset % timedelta(minutes=1):
-            raise PolicyBundleError(
-                f"created_at offset {offset} has sub-minute resolution — RFC 3339"
-                " offsets are ±HH:MM"
-            )
+        problem = rfc3339_offset_error(created_at)
+        if problem:
+            raise PolicyBundleError(problem)
 
     reader = store or RuntimeGraphStore()
 

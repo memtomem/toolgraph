@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from toolgraph.artifacts import sha256_bytes
+from toolgraph.artifacts import rfc3339_offset_error, sha256_bytes
 from toolgraph.graph import queries, selector
 from toolgraph.preflight import redact
 
@@ -114,8 +114,12 @@ NodeKind = Literal["start", "agent", "router", "fanout", "join", "validator", "e
 class ControlNode(_AdditiveModel):
     id: str = Field(min_length=1, max_length=256, pattern=r"^\S+$")
     kind: NodeKind
-    principals: list[str] = Field(default_factory=list, max_length=256)
-    agent_call: bool = False
+    # Required, not defaulted: contracts/control-plan.schema.json lists both in
+    # node.required, and the tolerant side here is the one that stamps the
+    # artifact — a plan this model accepted but the vendored schema rejects
+    # would make producer and consumer disagree about what a valid v1 plan is.
+    principals: list[str] = Field(max_length=256)
+    agent_call: bool
     max_invocations: int | None = Field(default=None, ge=1)
     max_parallelism: int | None = Field(default=None, ge=1)
     timeout_seconds: int | None = Field(default=None, ge=1)
@@ -401,6 +405,10 @@ def build_control_preflight(
         raise ControlPlanError(
             f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
         )
+    if created_at is not None:
+        problem = rfc3339_offset_error(created_at)
+        if problem:
+            raise ControlPlanError(problem)
     plan = load_control_plan(raw_plan)
     findings = lint_control_plan(plan)
 
@@ -430,18 +438,22 @@ def build_control_preflight(
         for evaluation in compiled["evaluations"]
     )
     timestamp = created_at or datetime.now(timezone.utc)
-    return redact(
-        {
-            "schema_version": SCHEMA_VERSION,
-            "kind": RESULT_KIND,
-            "run_id": plan.run_id,
-            "created_at": timestamp.isoformat(),
-            "mode": "advisory",
-            "profile": profile,
-            "plan_digest": f"sha256:{sha256_bytes(raw_plan)}",
-            "graph_state": graph_state,
-            "decision": "advisory_warn" if warned else "advisory_allow",
-            "evaluations": compiled["evaluations"],
-            "findings": findings,
-        }
-    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "kind": RESULT_KIND,
+        "run_id": plan.run_id,
+        "created_at": timestamp.isoformat(),
+        "mode": "advisory",
+        "profile": profile,
+        "plan_digest": f"sha256:{sha256_bytes(raw_plan)}",
+        "graph_state": graph_state,
+        "decision": "advisory_warn" if warned else "advisory_allow",
+        # Redaction covers graph evidence only. Applied to the whole artifact
+        # it also rewrites identities: a URI-shaped run_id loses its query, and
+        # principals differing only there collapse into one output identity —
+        # which breaks the run correlation this artifact exists for. Identity
+        # fields are already credential-free; load_control_plan rejects a plan
+        # carrying credential-shaped values.
+        "evaluations": redact(compiled["evaluations"]),
+        "findings": findings,
+    }

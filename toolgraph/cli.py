@@ -639,17 +639,38 @@ def control_preflight(
 ) -> None:
     """Validate and evaluate one bounded orchestration control plan."""
     _selector_profile(profile)
+    digest: str | None = None
     try:
         raw_plan = plan.read_bytes()
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
-            atomic_write_private(out, payload)
+            digest = atomic_write_private(out, payload)
     except (ControlPlanError, RuntimeError, OSError, ValueError) as exc:
         typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(code=1) from exc
     if out is None:
         typer.echo(payload.decode(), nl=False)
+        return
+    typer.echo(
+        json.dumps(
+            {
+                "kind": artifact["kind"],
+                "output": str(out),
+                # Prefixed to match the plan_digest inside the artifact and
+                # SyncMill's ^sha256:[0-9a-f]{64}$ contract.
+                "artifact_digest": f"sha256:{digest}",
+                "plan_digest": artifact["plan_digest"],
+                "run_id": artifact["run_id"],
+                "graph_state": artifact["graph_state"],
+                "profile": artifact["profile"],
+                "decision": artifact["decision"],
+                "findings": len(artifact["findings"]),
+                "evaluations": len(artifact["evaluations"]),
+            },
+            indent=2,
+        )
+    )
 
 
 @policy_app.command("compile")

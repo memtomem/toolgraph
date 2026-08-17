@@ -10,6 +10,12 @@ from pathlib import Path
 from jsonschema import Draft202012Validator
 import pytest
 
+from toolgraph.control_plan import (
+    ControlPlanError,
+    build_control_preflight,
+    load_control_plan,
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = ROOT / "contracts"
@@ -47,6 +53,42 @@ def test_output_graph_state_is_closed():
     fixture["graph_state"]["unexpected"] = True
     with pytest.raises(Exception):
         Draft202012Validator(schema).validate(fixture)
+
+
+def test_producer_output_validates_against_the_published_result_schema(monkeypatch):
+    """Bind the real producer to the contract it advertises.
+
+    The fixture tests above validate hand-authored documents, so producer
+    drift — a field the model defaults but the schema requires, a naive
+    timestamp — stays invisible to them.
+    """
+    from tests.test_control_plan import _bracket, _raw
+
+    _bracket(monkeypatch)
+    artifact = build_control_preflight(_raw(), profile="review")
+    schema = json.loads(
+        (CONTRACTS / "control-preflight.schema.json").read_text(encoding="utf-8")
+    )
+    Draft202012Validator(
+        schema, format_checker=Draft202012Validator.FORMAT_CHECKER
+    ).validate(artifact)
+
+
+def test_producer_and_schema_agree_on_required_node_fields():
+    """A node the model accepts must be a node the vendored schema accepts."""
+    schema = json.loads(
+        (CONTRACTS / "control-plan.schema.json").read_text(encoding="utf-8")
+    )
+    document = json.loads((FIXTURES / "control-plan-v1.json").read_text())
+    for field in ("principals", "agent_call"):
+        stripped = deepcopy(document)
+        del stripped["nodes"][0][field]
+        raw = (json.dumps(stripped, sort_keys=True) + "\n").encode()
+        assert list(Draft202012Validator(schema).iter_errors(stripped)), (
+            f"schema should reject a node missing {field!r}"
+        )
+        with pytest.raises(ControlPlanError):
+            load_control_plan(raw)
 
 
 def test_golden_result_binds_the_exact_golden_plan_bytes():
