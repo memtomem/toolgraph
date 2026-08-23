@@ -35,8 +35,12 @@ executing inside the privileged job. Pass values through `env:`.
 
 1. Review the complete Git history, issues, Actions artifacts, and repository
    settings for credentials or private URLs before changing visibility.
-2. Make `memtomem/toolgraph` public and confirm the README, license, security
-   reporting link, branch protection, and required CI checks render correctly.
+2. Make `memtomem/toolgraph` public, then re-enable the push rulesets the
+   visibility change disables. Confirm the README, license and security
+   reporting link render. Branch protection and required checks come *after*
+   CI has run successfully at least once — a check cannot be marked required
+   until it has reported. `docs/public-release-checklist.md` step 3 has the
+   ordered sequence.
 3. On TestPyPI, create a pending Trusted Publisher for repository
    `memtomem/toolgraph`, workflow `release.yml`, environment `pypi`, package
    `toolgraph`.
