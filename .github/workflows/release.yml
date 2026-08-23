@@ -9,9 +9,69 @@ on:
 permissions:
   contents: read
 
+# Building and publishing are separate jobs on purpose. Only `publish` holds
+# `id-token: write`, and it runs no repository code, no dependency
+# installation and no checkout -- it downloads the artifacts `build` produced
+# and calls the publish action. When the two were one job, every build script
+# and every transitive build dependency ran inside a job that could mint an
+# OIDC token and upload to PyPI as this project.
+
 jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # Pinned, not "latest": a tag and its `test-` rehearsal are two runs
+          # on two days, and an unpinned toolchain can build different bytes
+          # from the same commit. Bump this deliberately, with a rehearsal.
+          version: "0.12.3"
+      - name: Verify tag matches package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          test "$VERSION" = "$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
+      - name: Verify the changelog entry is dated
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          if grep -qiE "^## ${VERSION} - Unreleased" CHANGELOG.md; then
+            echo "CHANGELOG.md still says ${VERSION} is unreleased." >&2
+            echo "docs/releasing.md requires dating the entry before the tag;" >&2
+            echo "pyproject.toml embeds README.md as package metadata, so the" >&2
+            echo "release notes are frozen at tag time and cannot be fixed." >&2
+            exit 1
+          fi
+      - run: scripts/audit-dependencies.sh runtime
+      - run: scripts/audit-dependencies.sh extras
+      - run: uv build
+      - run: uv run --frozen --group dev twine check dist/*
+      - name: Verify the distributions
+        run: scripts/verify-artifacts.sh dist
+      - name: Record artifact digests
+        id: digests
+        run: |
+          sha256sum dist/* | tee "$RUNNER_TEMP/SHA256SUMS"
+          {
+            echo 'sums<<SUMS_EOF'
+            cat "$RUNNER_TEMP/SHA256SUMS"
+            echo 'SUMS_EOF'
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+    outputs:
+      sums: ${{ steps.digests.outputs.sums }}
+
   publish:
-    name: Build and publish to ${{ startsWith(github.ref_name, 'test-') && 'TestPyPI' || 'PyPI' }}
+    name: Publish to ${{ startsWith(github.ref_name, 'test-') && 'TestPyPI' || 'PyPI' }}
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -20,29 +80,30 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          version: "latest"
-      - name: Verify tag matches package version
+          name: dist
+          path: dist
+      - name: Verify the artifacts are the ones that were built
+        # coreutils only: no checkout, no project code, nothing installed.
         run: |
-          VERSION="${GITHUB_REF_NAME#test-v}"
-          VERSION="${VERSION#v}"
-          test "$VERSION" = "$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
-      - run: scripts/audit-dependencies.sh runtime
-      - run: scripts/audit-dependencies.sh extras
-      - run: uv build
-      - run: uv run --frozen --group dev twine check dist/*
+          printf '%s\n' '${{ needs.build.outputs.sums }}' > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum --check --strict SHA256SUMS
+          test "$(find dist -type f | wc -l)" -eq "$(grep -c . SHA256SUMS)"
       - name: Publish to PyPI
         if: ${{ !startsWith(github.ref_name, 'test-') }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist
-          skip-existing: true
+          # No skip-existing on production. A version that is already there
+          # means something went wrong; silently reporting success would hide
+          # a partial or duplicate publication behind a green check.
       - name: Publish to TestPyPI
         if: ${{ startsWith(github.ref_name, 'test-') }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist
+          # Rehearsals are re-run; a repeated TestPyPI upload is not a failure.
           skip-existing: true

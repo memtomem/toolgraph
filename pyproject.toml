@@ -64,7 +64,12 @@ dev = [
 audit = ["pip-audit==2.10.1"]
 
 [build-system]
-requires = ["hatchling"]
+# Pinned exactly. The release rehearsal (`test-v*` to TestPyPI) and the
+# production tag are two separate builds, and an unpinned backend can put
+# different bytes behind the same reviewed commit. `scripts/verify-artifacts.sh`
+# asserts the sdist rebuilds the wheel byte for byte, which only holds while
+# the backend is fixed. Bump deliberately, then rehearse.
+requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]

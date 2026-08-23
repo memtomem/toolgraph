@@ -123,6 +123,11 @@ jobs:
       - run: uv sync --frozen --group dev
       - run: uv build
       - run: uv run twine check dist/*
+      - name: Verify the distributions
+        # Same check release.yml runs, so a source distribution that stops
+        # being buildable is caught on the pull request rather than by
+        # whoever downloads it from PyPI.
+        run: scripts/verify-artifacts.sh dist
       - name: Verify version single source
         run: uv run python -c "import pathlib, tomllib, toolgraph; assert toolgraph.__version__; assert 'version' not in tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']"
 

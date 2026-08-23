@@ -186,3 +186,70 @@ def test_version_flag_uses_package_version():
     result = CliRunner().invoke(app, ["--version"])
     assert result.exit_code == 0
     assert result.output.strip() == f"toolgraph {__version__}"
+
+
+def _release_workflow() -> dict:
+    return yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+
+
+def test_publishing_authority_is_isolated_from_build_code():
+    """Only the publish job may mint an OIDC token, and it runs no code.
+
+    This is the property that makes Trusted Publishing safe to enable: a
+    compromised build script or transitive build dependency must not execute
+    inside a job that can upload to PyPI as this project. It is invisible in
+    a diff -- adding a `run:` step to the publish job looks harmless -- so it
+    is pinned here.
+    """
+    jobs = _release_workflow()["jobs"]
+
+    privileged = [
+        name
+        for name, job in jobs.items()
+        if (job.get("permissions") or {}).get("id-token") == "write"
+    ]
+    assert privileged == ["publish"]
+
+    publish_steps = jobs["publish"]["steps"]
+    for step in publish_steps:
+        uses = step.get("uses", "")
+        assert not uses.startswith("actions/checkout@"), (
+            "the publish job must not check out the repository"
+        )
+        assert "setup-uv" not in uses, (
+            "the publish job must not install a toolchain"
+        )
+
+    build = jobs["build"]
+    assert "id-token" not in (build.get("permissions") or {})
+    assert any(
+        step.get("run", "").strip().startswith("scripts/verify-artifacts.sh")
+        for step in build["steps"]
+    )
+
+
+def test_production_publish_does_not_skip_existing_versions():
+    """A production version that already exists is a failure, not a no-op.
+
+    `skip-existing` is right for the TestPyPI rehearsal, which gets re-run.
+    On PyPI it would turn a duplicate or partial publication into a green
+    check.
+    """
+    steps = _release_workflow()["jobs"]["publish"]["steps"]
+    publish_steps = {
+        step["name"]: step
+        for step in steps
+        if step.get("name", "").startswith("Publish to ")
+    }
+
+    assert "skip-existing" not in publish_steps["Publish to PyPI"]["with"]
+    assert publish_steps["Publish to TestPyPI"]["with"]["skip-existing"] is True
+
+
+def test_release_build_toolchain_is_pinned():
+    """`test-v*` and `v*` are separate builds; both must use the same tools."""
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    assert 'version: "latest"' not in workflow
+
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    assert 'requires = ["hatchling==' in pyproject
