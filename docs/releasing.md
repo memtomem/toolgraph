@@ -19,9 +19,14 @@ compromised build still publishes a compromised artifact — the split removes
 the much larger surface of build scripts and transitive build dependencies
 reaching the token.
 
-Two rules keep it working, and `tests/test_release_hardening.py` fails if
-either is broken: the publish job runs only the two allowlisted actions plus
-that single digest step, and **nothing is interpolated into a `run:` block**.
+`tests/test_release_hardening.py` pins the shape of that job: only the two
+allowlisted, sha-pinned actions; exactly one shell step, before either
+publisher, whose commands come from a small allowlist; no `${{ }}` inside it;
+no `continue-on-error` and no `if:` at job or step level that could let a
+failed check through; `needs: build`; `environment: pypi`; and no `id-token`
+reachable through workflow-level `permissions`, including the `write-all`
+shorthand. The rule behind all of it is that **nothing is interpolated into a
+`run:` block**.
 `${{ }}` inside `run:` is textual substitution, so a value a compromised build
 controls — an artifact filename, for instance — would become shell code
 executing inside the privileged job. Pass values through `env:`.
@@ -56,8 +61,11 @@ executing inside the privileged job. Pass values through `env:`.
    scripts/verify-artifacts.sh dist <VERSION>
    ```
 
-   `verify-artifacts.sh` checks that `dist/` holds exactly the two files that
-   will be uploaded **under exactly the names they must have** — the release
+   `verify-artifacts.sh` checks that `dist/` holds the two files that will be
+   uploaded **under exactly the names they must have** — plus `dist/.gitignore`,
+   which `uv build` writes and which is tolerated by name (it is not uploaded:
+   the publisher takes the distributions, and hidden files are excluded from
+   the artifact) — — the release
    passes the version from the tag, so an unexpected artifact name is rejected
    before it travels into a later step — that the sdist carries only what the
    allowlist in `pyproject.toml` intends and nothing but plain files, and that
@@ -81,10 +89,13 @@ executing inside the privileged job. Pass values through `env:`.
    an additional dependency index because it does not mirror dependencies.
 6. Push the immutable production tag `v<VERSION>` from the same reviewed
    commit. Confirm the PyPI metadata, wheel contents, provenance, and install.
-   Both runs print `sha256sum dist/*`; compare the two **before** pushing the
-   production tag, and treat a mismatch as a release blocker. Nothing enforces
-   this — by the time the production digest prints, the artifact is already
-   immutable on PyPI. Note also that a re-run of the rehearsal prints a digest
+   Both runs print `sha256sum dist/*`. Compare them — and be clear-eyed about
+   when you can: the production digest does not exist until the production run
+   is already under way, so this comparison **cannot block that publication**
+   by itself. To make it a gate, add a required reviewer to the `pypi`
+   environment: the build job finishes and prints its digest, and the publish
+   job then waits for approval. Without that, the comparison is a post-hoc
+   check and a mismatch means yanking, not preventing. Note also that a re-run of the rehearsal prints a digest
    for a freshly built file that `skip-existing` may not have uploaded, so
    compare against the digest from the run that actually uploaded. Same commit
    is not by itself the same artifact, which is why the toolchain is pinned in

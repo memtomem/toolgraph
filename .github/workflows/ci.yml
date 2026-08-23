@@ -130,8 +130,11 @@ jobs:
       - name: Verify the distributions
         # Same check release.yml runs, so a source distribution that stops
         # being buildable is caught on the pull request rather than by
-        # whoever downloads it from PyPI.
-        run: scripts/verify-artifacts.sh dist
+        # whoever downloads it from PyPI. There is no tag here, so the version
+        # comes from the package rather than from a filename.
+        run: |
+          VERSION="$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
+          scripts/verify-artifacts.sh dist "$VERSION"
       - name: Verify version single source
         run: uv run python -c "import pathlib, tomllib, toolgraph; assert toolgraph.__version__; assert 'version' not in tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']"
 

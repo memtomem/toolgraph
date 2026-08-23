@@ -53,6 +53,8 @@ for f in "$dist"/*; do
     "toolgraph-$version.tar.gz"|"toolgraph-$version-py3-none-any.whl"|.gitignore) ;;
     *) die "unexpected file in $dist, which is what gets published: $f" ;;
   esac
+  # -f follows symlinks, so a link named like a distribution would pass.
+  [ ! -L "$f" ] || die "symlink in $dist: $f"
   [ -f "$f" ] || die "not a regular file: $f"
 done
 
@@ -60,10 +62,24 @@ echo "sdist: $sdist"
 echo "wheel: $wheel"
 
 # --- (2) sdist contents -----------------------------------------------------
+roots="$(tar tzf "$sdist" | cut -d/ -f1 | sort -u)"
+[ "$roots" = "toolgraph-$version" ] || die "sdist root is not toolgraph-$version: $roots"
+
 listing="$(tar tvzf "$sdist")"
-if grep -vE '^-' <<<"$listing" | grep -q .; then
+# `d` is allowed (tar archives may carry directory entries); everything else
+# -- `l`, `h`, `c`, `b`, `p`, `s` -- is refused.
+# Deliberately not `grep -v … | grep -q .`: under `pipefail` the second grep
+# exits on its first match, the first grep takes SIGPIPE, and the pipeline
+# reports 141 -- so an `if` on it reads "clean" precisely when there are many
+# offending members. Capture, then test the string.
+set +e
+irregular="$(grep -vE '^[-d]' <<<"$listing")"
+status=$?
+set -e
+[ "$status" -le 1 ] || die "grep failed while inspecting the sdist member types"
+if [ -n "$irregular" ]; then
   echo "sdist contains non-regular members (symlink, device, hard link):" >&2
-  grep -vE '^-' <<<"$listing" >&2
+  printf '%s\n' "$irregular" >&2
   exit 1
 fi
 
@@ -92,7 +108,12 @@ if [ -n "$unexpected" ]; then
   printf '  %s\n' "$unexpected" >&2
   exit 1
 fi
-grep -q '^contracts/fixtures/' <<<"$entries" && die "sdist carries contracts/fixtures/, which is test data"
+set +e
+grep -q '^contracts/fixtures/' <<<"$entries"
+status=$?
+set -e
+[ "$status" -ne 0 ] || die "sdist carries contracts/fixtures/, which is test data"
+[ "$status" -le 1 ] || die "grep failed while checking for test fixtures"
 echo "sdist manifest: $(grep -c . <<<"$entries") entries, all allowlisted"
 
 # --- (3) rebuild the wheel from the sdist -----------------------------------
