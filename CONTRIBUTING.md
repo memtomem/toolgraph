@@ -84,7 +84,13 @@ For questions about the CLA, contact contact@dapada.co.kr.
 Security vulnerabilities go through the private channel described in
 [SECURITY.md](SECURITY.md) — please do not open a public issue for them.
 
-For everything else, include the Toolgraph version, the graph backend you are
-using (`neo4j` or `ladybug`), your OS, and your Python version. The two
-backends fail in different ways and that detail is usually what makes a report
-reproducible.
+For everything else, the issue forms ask for what a report needs: the Toolgraph
+version, the graph backend you are using (`neo4j` or `ladybug`), your OS, and
+your Python version. The two backends fail in different ways and that detail is
+usually what makes a report reproducible. Open-ended questions belong in
+[Discussions](https://github.com/memtomem/toolgraph/discussions) rather than in
+an issue.
+
+`toolgraph example init` builds a self-contained offline quickstart. A bug that
+reproduces from it is the most useful kind of report, because it needs no
+access to your servers or your governance manifest.

@@ -1,0 +1,136 @@
+name: Bug report
+description: Report unexpected behavior in toolgraph (CLI, MCP server, crawling, governance ingest, queries, policy bundles)
+title: "[bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a report. A few notes before you start:
+
+        - **Have a question or want to discuss an idea?** Please use [Discussions](https://github.com/memtomem/toolgraph/discussions) instead.
+        - **Found a security issue?** Please follow [SECURITY.md](https://github.com/memtomem/toolgraph/blob/main/SECURITY.md) — do not open a public issue.
+        - **Search first.** A quick check of [open](https://github.com/memtomem/toolgraph/issues) and [closed](https://github.com/memtomem/toolgraph/issues?q=is%3Aissue+is%3Aclosed) issues often turns up the same bug or a related fix.
+        - **Redact before pasting.** Graph output and crawl diagnostics can carry server endpoints and arguments. toolgraph redacts what it persists, but a hand-pasted command line is yours to check.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences on what went wrong.
+      placeholder: "`check-access` says an agent is allowed, but a DENY policy governs the resource the tool writes."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Which part of toolgraph is involved? Pick the closest match.
+      options:
+        - Crawling MCP servers (`crawl`)
+        - Governance ingest (`ingest-manifest`)
+        - Explain and audit queries (`check-access`, `blast-radius`, `drift`, `audit-report`, …)
+        - Tool selection (`rank-features`, `eligible-tools`, `selection-explain`)
+        - Preflight (`preflight`, `control-preflight`)
+        - Policy bundles (`policy compile`, `policy review`)
+        - MCP server (`serve`)
+        - Quickstart (`example init`)
+        - Setup, backends, or config (`init`, `init-schema`, `check`)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Graph backend
+      options:
+        - Ladybug (local, `[ladybug]` extra)
+        - Neo4j (shared)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        Minimal steps that show the bug — exact commands, or the MCP tool call. `toolgraph example init` produces a self-contained, offline quickstart; if the bug reproduces from it, that is the most useful report there is.
+      placeholder: |
+        1. `toolgraph example init smoke && cd smoke`
+        2. `toolgraph init && toolgraph crawl --servers servers.yaml`
+        3. `toolgraph ingest-manifest --governance governance.yaml --strict-drift`
+        4. `toolgraph check-access --agent vibe-coder --tool ...`
+        5. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened, and what makes you expect it — a README section, an ADR under `docs/adr/`, or a contract in `contracts/`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include error messages, stack traces, or relevant output. Use a code block for long output.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: toolgraph version
+      description: Output of `toolgraph --version` (or `uv run toolgraph --version` in a dev checkout).
+      placeholder: "0.0.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - uv tool install
+        - pipx
+        - pip
+        - From source (editable / dev)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`. toolgraph supports 3.12 through 3.14.
+      placeholder: "3.12.7"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - WSL
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else — related issues, the governance manifest shape (redacted), or why the graph state matters here.
+    validations:
+      required: false
