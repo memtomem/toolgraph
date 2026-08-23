@@ -4,7 +4,7 @@ All notable changes to Toolgraph are documented here.
 
 ## 0.1.0 - Unreleased
 
-First public release. The `v0.1.0` tag, and with it the PyPI publication,
+First public release. The `v0.0.1` tag, and with it the PyPI publication,
 follows the repository's visibility switch; see `docs/releasing.md`.
 
 Initial public alpha release.

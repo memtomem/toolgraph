@@ -73,7 +73,7 @@ Maintainers should follow the [release runbook](https://github.com/memtomem/tool
 ### Install
 
 > **Not on PyPI yet.** `toolgraph` has not had its first release, so install
-> from source for now. The PyPI commands below will work from `v0.1.0` on.
+> from source for now. The PyPI commands below will work from `v0.0.1` on.
 
 The recommended local backend is included through the `ladybug` extra:
 
@@ -87,7 +87,7 @@ That puts `toolgraph` on your `PATH`; run `uv tool update-shell` once if `uv`
 says its bin directory is not there yet.
 
 <details>
-<summary>After <code>v0.1.0</code> is published</summary>
+<summary>After <code>v0.0.1</code> is published</summary>
 
 ```bash
 uv tool install "toolgraph[ladybug]"

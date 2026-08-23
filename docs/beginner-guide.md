@@ -19,7 +19,7 @@ runtime enforcement.
 
 ## 1. Install and create the quickstart
 
-> **Not on PyPI yet.** Install from source until `v0.1.0` is published.
+> **Not on PyPI yet.** Install from source until `v0.0.1` is published.
 
 ```bash
 git clone https://github.com/memtomem/toolgraph.git
