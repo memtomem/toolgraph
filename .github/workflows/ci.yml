@@ -125,3 +125,44 @@ jobs:
       - run: uv run twine check dist/*
       - name: Verify version single source
         run: uv run python -c "import pathlib, tomllib, toolgraph; assert toolgraph.__version__; assert 'version' not in tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']"
+
+  # Single stable required check.
+  #
+  # Branch protection must require THIS job and nothing else. The matrix job
+  # above reports as "artifact-smoke (ubuntu-latest, 3.14)" and friends, so
+  # naming those directly means every matrix edit silently orphans a required
+  # check and leaves pull requests waiting forever for a context that will
+  # never report.
+  #
+  # audit-dev is deliberately excluded: it is continue-on-error, so depending
+  # on it would make this gate meaningless. audit-runtime and audit-extras are
+  # included — they are what release.yml runs before publishing, and leaving
+  # them out would make this weaker than the checks it replaces.
+  ci-required:
+    needs:
+      - lint
+      - test
+      - artifact-smoke
+      - minimum-mcp
+      - audit-runtime
+      - audit-extras
+      - package
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every required job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS"
+          failed=$(echo "$RESULTS" | python3 -c "
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = sorted(name for name, job in needs.items() if job.get('result') != 'success')
+          print(' '.join(bad))
+          ")
+          if [ -n "$failed" ]; then
+            echo "::error::required jobs did not succeed: $failed"
+            exit 1
+          fi
+          echo "all required jobs succeeded"
