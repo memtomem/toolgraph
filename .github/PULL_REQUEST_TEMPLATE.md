@@ -7,8 +7,12 @@
 ## Validation
 
 <!--
-Say what you actually ran and what it printed. CI runs `ci-required`, but a
-reviewer should not have to guess which parts you exercised locally.
+Say what you actually ran and what it printed. A reviewer should not have to
+guess which parts you exercised locally.
+
+This is the local release gate from docs/releasing.md, which is what to run
+when CI cannot (Actions does not run on this repository while it is private
+with unpaid minutes):
 
     uv lock --check
     uv sync --frozen --group dev --extra ladybug
@@ -16,11 +20,13 @@ reviewer should not have to guess which parts you exercised locally.
     uv run pytest -q                    # needs a Docker daemon: testcontainers
     scripts/audit-dependencies.sh runtime
     scripts/audit-dependencies.sh extras
-
-Touching packaging or the release workflow? Add:
-
     uv build && uv run twine check dist/*
     scripts/verify-artifacts.sh dist <VERSION>
+
+`ci-required` covers more than this once CI runs -- the artifact quickstart
+across the OS/Python matrix, and the minimum-MCP install. Neither is something
+a single machine reproduces, so say what you could not check rather than
+implying the gate above is equivalent.
 -->
 
 ## Notes for the reviewer

@@ -11,7 +11,7 @@ body:
         - **Have a question or want to discuss an idea?** Please use [Discussions](https://github.com/memtomem/toolgraph/discussions) instead.
         - **Found a security issue?** Please follow [SECURITY.md](https://github.com/memtomem/toolgraph/blob/main/SECURITY.md) — do not open a public issue.
         - **Search first.** A quick check of [open](https://github.com/memtomem/toolgraph/issues) and [closed](https://github.com/memtomem/toolgraph/issues?q=is%3Aissue+is%3Aclosed) issues often turns up the same bug or a related fix.
-        - **Redact before pasting.** Graph output and crawl diagnostics can carry server endpoints and arguments. toolgraph redacts what it persists, but a hand-pasted command line is yours to check.
+        - **Redact before pasting.** toolgraph avoids *persisting* stdio arguments and URL paths, queries, userinfo and fragments — that is the whole of what it redacts. Tool descriptions, schemas, governance ids and authored evidence are stored as written, and a command line you paste here is yours to check.
 
   - type: textarea
     id: summary
@@ -33,7 +33,7 @@ body:
         - Explain and audit queries (`check-access`, `blast-radius`, `drift`, `audit-report`, …)
         - Tool selection (`rank-features`, `eligible-tools`, `selection-explain`)
         - Preflight (`preflight`, `control-preflight`)
-        - Policy bundles (`policy compile`, `policy review`)
+        - Policy bundles (`policy compile`, `policy review-plan`)
         - MCP server (`serve`)
         - Quickstart (`example init`)
         - Setup, backends, or config (`init`, `init-schema`, `check`)
@@ -62,7 +62,7 @@ body:
         1. `toolgraph example init smoke && cd smoke`
         2. `toolgraph init && toolgraph crawl --servers servers.yaml`
         3. `toolgraph ingest-manifest --governance governance.yaml --strict-drift`
-        4. `toolgraph check-access --agent vibe-coder --tool ...`
+        4. `toolgraph check-access vibe-coder "policy-gateway::publish_note"`
         5. Observe ...
     validations:
       required: true

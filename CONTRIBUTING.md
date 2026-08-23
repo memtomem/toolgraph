@@ -84,7 +84,7 @@ For questions about the CLA, contact contact@dapada.co.kr.
 Security vulnerabilities go through the private channel described in
 [SECURITY.md](SECURITY.md) — please do not open a public issue for them.
 
-For everything else, the issue forms ask for what a report needs: the Toolgraph
+For bug reports, the issue form asks for what a report needs: the Toolgraph
 version, the graph backend you are using (`neo4j` or `ladybug`), your OS, and
 your Python version. The two backends fail in different ways and that detail is
 usually what makes a report reproducible. Open-ended questions belong in
