@@ -3,7 +3,7 @@
 ## Supported versions
 
 Toolgraph is an alpha project. Security fixes are provided for the latest
-published `0.1.x` release only.
+published `0.0.x` release only.
 
 ## Reporting a vulnerability
 
