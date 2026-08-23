@@ -2,11 +2,34 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
+
+
+def rfc3339_offset_error(created_at: datetime) -> str | None:
+    """Why *created_at* cannot be stamped on an artifact, or None if it can.
+
+    Returned rather than raised so each producer keeps its own error type.
+    Aware means ``utcoffset()`` returns a value, not merely that tzinfo is
+    set: a tzinfo whose ``utcoffset()`` is None still isoformat()s without an
+    offset, which the schemas' RFC 3339 prose forbids.
+    """
+    offset = created_at.utcoffset()
+    if offset is None:
+        return (
+            "created_at must be timezone-aware — the contract requires an"
+            " RFC 3339 timestamp with a UTC offset"
+        )
+    if offset % timedelta(minutes=1):
+        return (
+            f"created_at offset {offset} has sub-minute resolution — RFC 3339"
+            " offsets are ±HH:MM"
+        )
+    return None
 
 
 def canonical_json_bytes(value: object) -> bytes:

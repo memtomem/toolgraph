@@ -22,6 +22,9 @@ Initial public alpha release.
   are typed at the backend seam, and `retryable` follows the tool's advertised
   read-only annotation instead of being assumed, failing closed to `false`
   whenever that annotation cannot be read.
+- Add a body-free `toolgraph.control-plan` v1 contract and advisory
+  `control-preflight` command that lints bounded DAG topology and evaluates all
+  principal/tool surfaces under one collision-safe graph-state bracket.
 
 ### Upgrade note for pre-release users (historical)
 

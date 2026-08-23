@@ -17,6 +17,7 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0010](0010-portable-policy-bundle-boundary.md) | Portable policy bundle separates control plane from gateway data plane | Accepted |
 | [0011](0011-embedded-ladybug-backend.md) | Ladybug is the embedded local backend; Neo4j remains the shared backend | Accepted |
 | [0012](0012-trace-evidence-policy-review-plan.md) | Trace evidence becomes a human-required policy review plan | Accepted |
+| [0013](0013-bounded-control-plan-preflight.md) | Body-free control plans are advisory topology and policy evidence | Accepted |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.
