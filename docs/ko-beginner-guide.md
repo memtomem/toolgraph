@@ -18,8 +18,13 @@ Toolgraph는 런타임 프록시가 아니라 정책 분석기이자 컴파일�
 
 ## 1. 설치하고 quickstart 만들기
 
+> **아직 PyPI에 없습니다.** `v0.1.0` 배포 전까지는 소스에서 설치하세요.
+
 ```bash
-uv tool install "toolgraph[ladybug]"
+git clone https://github.com/memtomem/toolgraph.git
+cd toolgraph
+uv tool install --from '.[ladybug]' toolgraph
+cd ..
 toolgraph example init toolgraph-quickstart
 cd toolgraph-quickstart
 toolgraph init

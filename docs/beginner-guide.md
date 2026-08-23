@@ -19,8 +19,13 @@ runtime enforcement.
 
 ## 1. Install and create the quickstart
 
+> **Not on PyPI yet.** Install from source until `v0.1.0` is published.
+
 ```bash
-uv tool install "toolgraph[ladybug]"
+git clone https://github.com/memtomem/toolgraph.git
+cd toolgraph
+uv tool install --from '.[ladybug]' toolgraph
+cd ..
 toolgraph example init toolgraph-quickstart
 cd toolgraph-quickstart
 toolgraph init
