@@ -27,13 +27,10 @@ def test_dev_dependency_group_is_not_passed_as_an_extra():
     workflow = (
         ROOT / ".github/workflows/policy-bundle-gateway-smoke.yml"
     ).read_text()
-    operational_guide = (ROOT / "docs/gate-e-p4-operational.md").read_text()
     makefile = (ROOT / "Makefile").read_text()
 
     assert workflow.count("--group dev") == 2
     assert "--extra dev" not in workflow
-    assert "--group dev" in operational_guide
-    assert "--extra dev" not in operational_guide
     assert makefile.count("--group dev") == 2
     assert "--extra dev" not in makefile
 

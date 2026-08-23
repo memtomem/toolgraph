@@ -24,11 +24,18 @@ toolgraph는 현재 비공개다. 부수 효과로 **GitHub Actions가 유료 �
 - **자격증명 형태 문자열은 전부 테스트용 sentinel.** `alice:secret@example.test`,
   `hunter2` 등은 redaction 계약을 검증하는 값이므로 그대로 둔다. 지우면
   유출 방지 기능의 회귀 테스트가 사라진다.
-- **비공개 저장소 하드링크 제거.** `docs/ecosystem-integration-plan.md`의 정본
-  링크 3건과 companion PR 링크 1건을 텍스트로 바꿨다. 공개 독자에게 404가 되고
-  비공개 저장소의 내부 문서 경로·PR 번호를 드러내던 유일한 경로였다.
-  형제 프로젝트 **이름(syncmill/tracegraph)은 유지**한다 — 아키텍처 설명에
-  필수이고, 이름 언급 자체는 노출로 보지 않기로 결정했다.
+- **내부 운영 자료를 비공개 저장소로 이전(2026-08-23).** 아래 6개는
+  `memtomem-docs/toolgraph/`로 옮기고 공개 트리에서 제거했다 — 비공개 형제
+  제품(syncmill/tracegraph)의 구조·진행 상황·운영 방식을 드러내기 때문이다.
+  배너로 "maintainer-only"라고 적어두는 것은 파일이 공개되면 아무것도 지키지
+  못하므로, 표시가 아니라 이전을 택했다.
+  `docs/gate-e-p4-operational.md`, `docs/ecosystem-integration-plan.md`,
+  `scripts/gate_e_operational.py`, `scripts/ecosystem_smoke.py`,
+  `tests/test_gate_e_operational.py`,
+  `examples/governance-syncmill-smoke.yaml`.
+  (이전 항목이던 "비공개 저장소 하드링크 제거"는 그 링크를 담고 있던 문서
+  자체가 이전되면서 해소됐다.) `contracts/`와 ADR의 형제 프로젝트 **이름**은
+  유지한다 — 아키텍처 설명에 필수이고 이름 언급 자체는 노출로 보지 않는다.
 - **로컬 개발 비밀번호 정리.** `docker-compose.yml`이 `NEO4J_PASSWORD`를 따르도록
   바꾸고 "not a secret" 라벨을 달았다. 부수적으로 실제 버그도 고쳤다: 이전에는
   compose가 비밀번호를 하드코딩해서 `.env`에서 바꾸면 DB와 클라이언트가
