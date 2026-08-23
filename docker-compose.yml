@@ -9,7 +9,10 @@ services:
       - "127.0.0.1:7474:7474" # browser, loopback only
       - "127.0.0.1:7687:7687" # bolt, loopback only
     environment:
-      NEO4J_AUTH: neo4j/toolgraph-dev
+      # Local throwaway credential, not a secret: this service is loopback-only
+      # and holds disposable dev data. Follows NEO4J_PASSWORD from .env so the
+      # database and toolgraph/config.py cannot disagree once you change it.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-toolgraph-dev}
       NEO4J_server_memory_heap_max__size: 512M
     volumes:
       - toolgraph-neo4j-data:/data
