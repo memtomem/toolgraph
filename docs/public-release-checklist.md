@@ -1,12 +1,13 @@
 # Public release checklist
 
-**Status:** preparation complete (2026-08-23). **The owner has decided to go
-public**; what remains is execution, not deciding. Every preparation pull
-request has merged (#60, #70–#75, #77, #78) and the source-distribution policy,
-the pre-flip rescan and the refs/metadata audit below are done. What is left is
-owner-only: the visibility switch itself, the repository settings in step 3, the
-`pypi` environment, and the Trusted Publishers in step 5. PR #76 was closed —
-see "Internal operational material" below.
+**Status:** preparation nearly complete (2026-08-23). **The owner has decided
+to go public**; what remains is execution, not deciding. The earlier preparation
+pull requests have merged (#60, #70–#75, #77, #78). Still in review, not done:
+#82 (this source-distribution policy and these audit notes), #55, #79 and #61;
+#80 and #81 need a disposition. After those, what is left is owner-only: the
+visibility switch itself, the repository settings in step 3, the `pypi`
+environment, and the Trusted Publishers in step 5. PR #76 was closed — see
+"Internal operational material" below.
 
 **Purpose:** collect in one place everything that must happen at the moment of
 the private → public switch, so that the *decision* stays separate from the
@@ -136,16 +137,26 @@ was originally filed under exactly that mistaken assumption.
 
 ## Before the flip
 
-1. **Rescan — re-run 2026-08-23, no findings.** All 151 commits reachable from
-   any ref were scanned with the commands below (the earlier pass covered 124).
-   The only hits are this file's own documentation of the patterns it searches
-   for. No `.env`, key, certificate or secret-shaped filename has ever been
-   added on any ref. Commit *messages* carry no local paths and no addresses
-   beyond `contact@dapada.co.kr` (deliberate, in `SECURITY.md`),
-   `support@github.com` (Dependabot sign-off) and assistant/bot noreply
-   addresses. Commit *metadata* still carries the two personal addresses on 144
-   of 302 author/committer entries, which is the accepted decision recorded
-   above, not a new finding. Re-run before the flip if further commits land:
+1. **Rescan — re-run 2026-08-23 over all 155 reachable commits** (the earlier
+   pass covered 124). No secret findings: the only pattern hits are this file's
+   own documentation of the patterns it searches for, and no `.env`, key,
+   certificate or secret-shaped filename has ever been added on any ref.
+
+   **Correction to the first version of this note, which was wrong.** It said
+   commit *messages* carry no personal addresses. They do: eight squash-merge
+   commits carry `Co-authored-by:` trailers with both personal addresses in the
+   message body — `52076c1`, `d5af4ac`, `9be1476`, `64a2dd2`, `4ffea8d`,
+   `60ea017`, `ea5597a`, `b55242c`. The first scan missed them because its
+   output was read truncated. This changes no decision: the same two addresses
+   already appear in author/committer metadata on 144 of 302 entries under the
+   accepted no-rewrite decision above, and that decision is hereby recorded as
+   covering the trailers too. It does mean the audit line was false, which is
+   worse than the exposure it described. Other addresses in commit messages:
+   `contact@dapada.co.kr` (deliberate, in `SECURITY.md`), `support@github.com`
+   (Dependabot sign-off) and assistant/bot noreply addresses. No local paths.
+
+   Counts move with every commit, so re-run this immediately before the flip
+   rather than trusting the numbers here:
 
    ```bash
    git grep -I -n -E 'sk-ant-|ghp_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY' $(git rev-list --all)
@@ -173,10 +184,11 @@ was originally filed under exactly that mistaken assumption.
      comments. **Caveat:** GitHub keeps comment *edit history* visible to anyone
      with read access, so those redactions are cosmetic until each sensitive
      revision is deleted individually in the web UI.
-   - Refs and metadata: audited 2026-08-23. 16 remote branches, all named after
-     their change (`fix/`, `feat/`, `chore/`, `docs/`, `dependabot/`); nothing
-     in a branch name discloses more than the commits already do. 151 commit
-     messages scanned — see step 1. Labels are the GitHub defaults plus
+   - Refs and metadata: audited 2026-08-23. 16 remote branches at audit time,
+     9 after the pruning below, all named after their change (`fix/`, `feat/`,
+     `chore/`, `docs/`, `dependabot/`); nothing in a branch name discloses more
+     than the commits already do. Commit messages scanned — see step 1, and note
+     the correction there. Labels are the GitHub defaults plus
      `dependencies`, `github_actions`, `python:uv`, `public-release` and
      `polish`. No milestones, no project boards, no releases and no tags exist.
      Merged-PR leftover branches were deleted and `delete_branch_on_merge` was
@@ -224,9 +236,17 @@ was originally filed under exactly that mistaken assumption.
    in the tagged commit** (issue #63). The `pypi` environment referenced by
    `release.yml` does not exist on the repository yet. The source distribution
    now has an explicit allowlist (`[tool.hatch.build.targets.sdist]` in
-   `pyproject.toml`): the package, the metadata files PyPI renders, and the JSON
+   `pyproject.toml`): the package, `README.md` (which PyPI renders as the
+   project page), `LICENSE`, `CHANGELOG.md`, `SECURITY.md`, and the JSON
    contracts — 46 entries, down from 145, with tests, docs, examples, scripts,
-   CI workflows, the lockfile and `docker-compose.yml` no longer shipped. A
+   CI workflows, the lockfile and `docker-compose.yml` no longer shipped.
+   **Consequence to state rather than discover later:** the published sdist
+   cannot run the upstream test suite, so a downstream redistributor packaging
+   from PyPI has no tests to run. Shipping a runnable suite would mean shipping
+   `tests/`, `contracts/fixtures/`, `scripts/`, `.github/workflows/`, `docs/`
+   and the `Makefile` — `tests/test_release_hardening.py` reads all of those —
+   which is most of the repository back again. Revisit if a redistributor asks.
+   A
    freshly built archive was inspected and rebuilds the wheel standalone, and
    the wheel is byte-for-byte unaffected. `.gitignore` is still present because
    hatchling always ships the VCS ignore file; an exclude entry for it has no
