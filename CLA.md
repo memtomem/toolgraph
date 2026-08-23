@@ -14,6 +14,11 @@ and future Contributions submitted to Toolgraph. Except for the license
 granted herein to DAPADA and recipients of software distributed by DAPADA,
 You reserve all right, title, and interest in and to Your Contributions.
 
+**Scope.** This Agreement covers Contributions to the Toolgraph repository
+only. It grants DAPADA no rights over work You submit to any other project,
+including other projects owned or managed by DAPADA — those have their own
+agreements and their own signature stores.
+
 ## 1. Definitions
 
 "You" (or "Your") shall mean the copyright owner or legal entity authorized
@@ -24,9 +29,9 @@ are considered to be a single Contributor.
 
 "Contribution" shall mean any original work of authorship, including any
 modifications or additions to an existing work, that is intentionally
-submitted by You to DAPADA for inclusion in, or documentation of, any of
-the products owned or managed by DAPADA (the "Work"). For the purposes of
-this definition, "submitted" means any form of electronic, verbal, or
+submitted by You to DAPADA for inclusion in, or documentation of, the
+Toolgraph project at `github.com/memtomem/toolgraph` (the "Work"). For the
+purposes of this definition, "submitted" means any form of electronic, verbal, or
 written communication sent to DAPADA or its representatives, including but
 not limited to communication on electronic mailing lists, source code
 control systems, and issue tracking systems that are managed by, or on

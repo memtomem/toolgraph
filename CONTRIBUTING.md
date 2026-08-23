@@ -60,12 +60,19 @@ both projects need to sign in each repository (still one-time per account).
 Your signature is stored in `signatures/v1/cla.json` on the `cla-signatures`
 branch of whichever repository you signed.
 
-The CLA is adapted from the Apache Software Foundation Individual Contributor
-License Agreement with one additional section covering future licensing rights.
-This preserves DAPADA Inc.'s ability to adopt different license terms for the
-Work in the future (for example, a dual-licensing arrangement) without needing
-to re-collect consent from every contributor. The CLA does not change the
-current license of the Work, which remains Apache License 2.0.
+**What it covers.** The agreement is scoped to this repository. Signing it
+grants DAPADA Inc. no rights over work you submit to any other project,
+including other DAPADA projects — those have their own agreements.
+
+**What Section 4 does.** The CLA is adapted from the Apache Software Foundation
+Individual Contributor License Agreement with one additional section covering
+future licensing rights. Read it before signing: it lets DAPADA Inc. distribute
+Toolgraph — including your contribution — under different license terms in the
+future. That explicitly includes copyleft licenses, source-available licenses,
+and proprietary or commercial terms offered alongside them. The point is to
+avoid having to re-collect consent from every contributor if the license
+changes. It does **not** change the current license, which remains Apache
+License 2.0, and DAPADA Inc. is under no obligation to adopt any other.
 
 For questions about the CLA, contact contact@dapada.co.kr.
 
