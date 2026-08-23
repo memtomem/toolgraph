@@ -1,15 +1,16 @@
 # Public release checklist
 
-**Status:** preparation essentially done; four pull requests still to land or
-close (2026-08-24).
-**The owner has decided to go public**; what remains is execution, not deciding.
+**Status:** preparation done; two dependabot pull requests to dispose of
+(2026-08-24). **The owner has decided to go public**; what remains is
+execution, not deciding.
 
 Merged: #60, #70–#75, #77, #78 (earlier preparation), then #82 (the
-source-distribution allowlist and these audit notes), #61, #79, #55, and #84
-(the release-pipeline split described in step 5). Open: **#85**, the issue and
-pull request templates; **#80**, which is tree-identical to `main` and should be
-closed rather than merged; and **#81**, the `mcp` 2.0 major bump, deliberately
-deferred until CI runs again.
+source-distribution allowlist and these audit notes), #61, #79, #55, #84 (the
+release-pipeline split described in step 5) and #85 (the issue and pull request
+templates, and the security corrections in step 3). Open: **#80**, whose merge
+result is byte-identical to `main` and which should be closed rather than
+merged; and **#81**, the `mcp` 2.0 major bump, deliberately deferred until CI
+runs again.
 
 Everything else is owner-only: the visibility switch itself, the repository
 settings in step 3, the `pypi` environment, and the Trusted Publishers in
@@ -162,7 +163,7 @@ was originally filed under exactly that mistaken assumption.
    worse than the exposure it described. Other addresses in commit messages:
    `contact@dapada.co.kr` — the organisation address that already appears in
    `pyproject.toml` and `CONTRIBUTING.md`, and in `SECURITY.md` as of the
-   reporting fallback added in #85; deliberate, not an exposure —
+   reporting fallback added in #85 — deliberate, not an exposure —
    `support@github.com` (Dependabot sign-off) and assistant/bot noreply
    addresses. No local paths.
 
@@ -249,15 +250,15 @@ was originally filed under exactly that mistaken assumption.
    `CODE_OF_CONDUCT.md` is in the tree, and the `cla-signatures` branch now
    exists carrying an empty `signatures/v1/cla.json`, which is what
    `.github/cla-check.py` writes signatures into. Issue forms and a pull
-   request template are in review as #85. Discussions still has no category
-   guidance or moderation note while the README links to it.
+   request template landed in #85. Discussions still has no category guidance
+   or moderation note while the README links to it.
 
    **`SECURITY.md` dead-ends until the setting is on.** It sends reporters to
    GitHub's private advisory form (`/security/advisories/new`), and private
    vulnerability reporting is a separate repository setting that is **off** —
-   so that link shows an empty page. PR #85 adds an email fallback so there is
-   a documented channel either way; enable the setting anyway, and treat the
-   fallback as the backstop rather than the plan.
+   so that link shows an empty page. `SECURITY.md` now names an email fallback
+   (#85) so there is a documented channel either way; enable the setting
+   anyway, and treat the fallback as the backstop rather than the plan.
 
    Notes on the CLA gate that earlier drafts got wrong: the `needs-cla` label is
    never read or written by the workflow or the script, and
