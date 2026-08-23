@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 # Verify the built distributions before anything publishes them.
 #
-# Three properties, none of which the build itself checks:
-#   1. exactly one sdist and one wheel are present;
-#   2. the sdist carries what the allowlist in pyproject.toml intends and
-#      nothing else -- checked as rules, not as a file list, so adding a module
-#      or a contract does not require editing this script;
-#   3. the sdist can rebuild the wheel, and rebuilds it byte for byte.
+#   scripts/verify-artifacts.sh [dist-dir] [version]
 #
-# (3) is the one that matters most: it proves the published source archive is
-# a usable build input rather than a decorative copy, which is exactly what an
-# include allowlist can silently break.
+# Checks, in order:
+#   1. `dist/` holds exactly the two files the release is supposed to upload,
+#      under exactly the names they must have. Everything in that directory is
+#      handed to the publisher, and the filenames travel into later steps, so a
+#      surprising name is rejected here rather than carried forward.
+#   2. the sdist carries what the allowlist in pyproject.toml intends and
+#      nothing else -- as rules, so adding a module or a contract needs no edit
+#      here -- and every member is a plain file with no duplicates.
+#   3. the sdist rebuilds the wheel, byte for byte, in this environment.
+#
+# On (3): this is a same-runner comparison. It shows the published source
+# archive is a faithful build input -- exactly what an include allowlist can
+# silently break -- not that the build is reproducible across machines.
 set -euo pipefail
+shopt -s nullglob dotglob
 
 dist="${1:-dist}"
+version="${2:-}"
 
 if command -v sha256sum >/dev/null 2>&1; then
   sha256() { sha256sum "$1" | cut -d' ' -f1; }
@@ -21,77 +28,91 @@ else
   sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
 fi
 
-shopt -s nullglob
-sdists=("$dist"/*.tar.gz)
-wheels=("$dist"/*.whl)
-others=()
+die() { echo "$*" >&2; exit 1; }
+
+# --- (1) exactly the two expected files -------------------------------------
+if [ -z "$version" ]; then
+  # Derived only when the caller did not say. The workflow always says, so the
+  # release path never trusts a filename to tell it what the version is.
+  candidates=("$dist"/*.tar.gz)
+  [ "${#candidates[@]}" -eq 1 ] || die "cannot derive a version: ${#candidates[@]} sdists in $dist"
+  base="$(basename "${candidates[0]}")"
+  version="${base#toolgraph-}"
+  version="${version%.tar.gz}"
+fi
+
+sdist="$dist/toolgraph-$version.tar.gz"
+wheel="$dist/toolgraph-$version-py3-none-any.whl"
+[ -f "$sdist" ] || die "missing $sdist"
+[ -f "$wheel" ] || die "missing $wheel"
+
+# `uv build` writes dist/.gitignore; it is a build-tool artifact, not a
+# distribution, and is never uploaded. Anything else here is refused.
 for f in "$dist"/*; do
-  case "$f" in
-    *.tar.gz|*.whl) ;;
-    *) others+=("$f") ;;
+  case "$(basename "$f")" in
+    "toolgraph-$version.tar.gz"|"toolgraph-$version-py3-none-any.whl"|.gitignore) ;;
+    *) die "unexpected file in $dist, which is what gets published: $f" ;;
   esac
+  [ -f "$f" ] || die "not a regular file: $f"
 done
-shopt -u nullglob
 
-if [ "${#sdists[@]}" -ne 1 ] || [ "${#wheels[@]}" -ne 1 ]; then
-  echo "expected exactly one sdist and one wheel in $dist" >&2
-  printf 'found: %s\n' "${sdists[@]}" "${wheels[@]}" >&2
-  exit 1
-fi
-if [ "${#others[@]}" -ne 0 ]; then
-  # Everything in this directory is uploaded to the index. A stray file here
-  # is a stray file on PyPI.
-  echo "unexpected files in $dist -- they would be published:" >&2
-  printf '  %s\n' "${others[@]}" >&2
-  exit 1
-fi
-
-sdist="${sdists[0]}"
-wheel="${wheels[0]}"
 echo "sdist: $sdist"
 echo "wheel: $wheel"
 
 # --- (2) sdist contents -----------------------------------------------------
-entries="$(tar tzf "$sdist" | sed 's#^[^/]*/##' | grep -v '^$')"
-
-required="pyproject.toml PKG-INFO README.md LICENSE CHANGELOG.md SECURITY.md"
-for name in $required; do
-  if ! grep -qxF "$name" <<<"$entries"; then
-    echo "sdist is missing $name" >&2
-    exit 1
-  fi
-done
-if ! grep -q '^toolgraph/__init__\.py$' <<<"$entries"; then
-  echo "sdist is missing the package" >&2
+listing="$(tar tvzf "$sdist")"
+if grep -vE '^-' <<<"$listing" | grep -q .; then
+  echo "sdist contains non-regular members (symlink, device, hard link):" >&2
+  grep -vE '^-' <<<"$listing" >&2
   exit 1
 fi
 
-# .gitignore is not in the allowlist; hatchling ships the VCS ignore file
-# unconditionally, so it is tolerated rather than allowed.
-unexpected="$(grep -vE '^(toolgraph/|contracts/|README\.md$|LICENSE$|CHANGELOG\.md$|SECURITY\.md$|pyproject\.toml$|PKG-INFO$|\.gitignore$)' <<<"$entries" || true)"
+entries="$(tar tzf "$sdist" | sed 's#^[^/]*/##' | grep -v '^$' | grep -v '/$')"
+dupes="$(sort <<<"$entries" | uniq -d)"
+[ -z "$dupes" ] || die "sdist has duplicate members:"$'\n'"$dupes"
+
+for name in pyproject.toml PKG-INFO README.md LICENSE CHANGELOG.md SECURITY.md; do
+  grep -qxF "$name" <<<"$entries" || die "sdist is missing $name"
+done
+grep -qxF 'toolgraph/__init__.py' <<<"$entries" || die "sdist is missing the package"
+
+# Mirrors [tool.hatch.build.targets.sdist] in pyproject.toml. Keep the two in
+# step: this is a second statement of the same intent, and the release depends
+# on it being the same intent.
+allowed='^(toolgraph/|contracts/|README\.md$|LICENSE$|CHANGELOG\.md$|SECURITY\.md$|pyproject\.toml$|PKG-INFO$|\.gitignore$)'
+# .gitignore is tolerated, not allowed: hatchling ships the VCS ignore file
+# unconditionally and an exclude entry for it has no effect.
+set +e
+unexpected="$(grep -vE "$allowed" <<<"$entries")"
+status=$?
+set -e
+[ "$status" -le 1 ] || die "grep failed while checking the sdist manifest"
 if [ -n "$unexpected" ]; then
   echo "sdist carries paths outside the allowlist:" >&2
-  printf '  %s\n' $unexpected >&2
+  printf '  %s\n' "$unexpected" >&2
   exit 1
 fi
-if grep -q '^contracts/fixtures/' <<<"$entries"; then
-  echo "sdist carries contracts/fixtures/, which is test data" >&2
-  exit 1
-fi
-echo "sdist manifest: $(wc -l <<<"$entries" | tr -d ' ') entries, all allowlisted"
+grep -q '^contracts/fixtures/' <<<"$entries" && die "sdist carries contracts/fixtures/, which is test data"
+echo "sdist manifest: $(grep -c . <<<"$entries") entries, all allowlisted"
 
 # --- (3) rebuild the wheel from the sdist -----------------------------------
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 tar xzf "$sdist" -C "$work"
-srcdir="$(find "$work" -mindepth 1 -maxdepth 1 -type d)"
-( cd "$srcdir" && uv build --wheel --out-dir "$work/out" >/dev/null )
 
-rebuilt="$(find "$work/out" -name '*.whl')"
-if [ "$(sha256 "$rebuilt")" != "$(sha256 "$wheel")" ]; then
-  echo "the wheel rebuilt from the sdist differs from the published wheel" >&2
-  echo "  published: $(sha256 "$wheel")" >&2
-  echo "  rebuilt:   $(sha256 "$rebuilt")" >&2
+srcdirs=("$work"/*/)
+[ "${#srcdirs[@]}" -eq 1 ] || die "sdist does not unpack to a single directory (${#srcdirs[@]})"
+( cd "${srcdirs[0]}" && uv build --wheel --out-dir "$work/out" >/dev/null )
+
+rebuilt=("$work"/out/*.whl)
+[ "${#rebuilt[@]}" -eq 1 ] || die "rebuild produced ${#rebuilt[@]} wheels"
+
+published_digest="$(sha256 "$wheel")"
+rebuilt_digest="$(sha256 "${rebuilt[0]}")"
+if [ "$published_digest" != "$rebuilt_digest" ]; then
+  echo "the wheel rebuilt from the sdist differs from the built wheel" >&2
+  echo "  built:   $published_digest" >&2
+  echo "  rebuilt: $rebuilt_digest" >&2
   exit 1
 fi
-echo "wheel rebuilds from the sdist byte for byte: $(sha256 "$wheel")"
+echo "wheel rebuilds from the sdist in this environment: $published_digest"

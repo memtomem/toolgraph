@@ -6,9 +6,25 @@ token belongs in repository or environment secrets.
 `release.yml` runs as two jobs. `build` checks the tag, runs the audits, builds
 and verifies the distributions, and holds no publishing permission. `publish`
 holds `id-token: write`, does not check out the repository, installs nothing,
-and only downloads what `build` produced and uploads it. Keep that separation:
-a `run:` step added to `publish` puts code inside the job that can publish as
-this project. `tests/test_release_hardening.py` fails if it is broken.
+and only downloads what `build` produced and uploads it.
+
+Be precise about what that buys. The publish job still runs code — the
+artifact download and the PyPI publisher are actions, pinned by commit. The
+claim is narrower: **no checked-out project code and no installed dependency
+runs in the job that can publish as this project**. Its one shell step compares
+the downloaded files against the digests `build` recorded, which proves nothing
+tampered with them between the jobs; it is not an independent attestation of
+the build, because the same job produced both the artifact and the digest. A
+compromised build still publishes a compromised artifact — the split removes
+the much larger surface of build scripts and transitive build dependencies
+reaching the token.
+
+Two rules keep it working, and `tests/test_release_hardening.py` fails if
+either is broken: the publish job runs only the two allowlisted actions plus
+that single digest step, and **nothing is interpolated into a `run:` block**.
+`${{ }}` inside `run:` is textual substitution, so a value a compromised build
+controls — an artifact filename, for instance — would become shell code
+executing inside the privileged job. Pass values through `env:`.
 
 ## One-time public-release setup
 
@@ -37,15 +53,23 @@ this project. `tests/test_release_hardening.py` fails if it is broken.
    scripts/audit-dependencies.sh extras
    uv build
    uv run twine check dist/*
-   scripts/verify-artifacts.sh dist
+   scripts/verify-artifacts.sh dist <VERSION>
    ```
 
    `verify-artifacts.sh` checks that `dist/` holds exactly the two files that
-   will be uploaded, that the sdist carries only what the allowlist in
-   `pyproject.toml` intends, and that the sdist rebuilds the wheel byte for
-   byte. That last property only holds while the build backend is pinned
-   (`[build-system] requires`), so bump that pin deliberately and rehearse
-   after doing so.
+   will be uploaded **under exactly the names they must have** — the release
+   passes the version from the tag, so an unexpected artifact name is rejected
+   before it travels into a later step — that the sdist carries only what the
+   allowlist in `pyproject.toml` intends and nothing but plain files, and that
+   the sdist rebuilds the wheel byte for byte.
+
+   Read that last check for what it is: a same-runner comparison showing the
+   published source archive is a faithful build input, which is exactly what an
+   include allowlist can silently break. It is not a cross-machine
+   reproducibility guarantee — the runner image, the Python version and the
+   isolated build's transitive dependencies all still float. It does depend on
+   the backend being pinned (`[build-system] requires`), so bump that pin
+   deliberately and rehearse after doing so.
 
 3. Merge only after required CI passes.
 4. Push `test-v<VERSION>` first. The release workflow rebuilds and publishes
@@ -57,8 +81,13 @@ this project. `tests/test_release_hardening.py` fails if it is broken.
    an additional dependency index because it does not mirror dependencies.
 6. Push the immutable production tag `v<VERSION>` from the same reviewed
    commit. Confirm the PyPI metadata, wheel contents, provenance, and install.
-   Both runs print `sha256sum dist/*`; compare the two. Same commit is not by
-   itself the same artifact, which is why the toolchain is pinned in
+   Both runs print `sha256sum dist/*`; compare the two **before** pushing the
+   production tag, and treat a mismatch as a release blocker. Nothing enforces
+   this — by the time the production digest prints, the artifact is already
+   immutable on PyPI. Note also that a re-run of the rehearsal prints a digest
+   for a freshly built file that `skip-existing` may not have uploaded, so
+   compare against the digest from the run that actually uploaded. Same commit
+   is not by itself the same artifact, which is why the toolchain is pinned in
    `release.yml` and in `[build-system]`.
 
 Do not reuse a tag after a failed release. Fix forward with a new prerelease or

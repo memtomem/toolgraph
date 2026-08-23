@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -192,17 +194,34 @@ def _release_workflow() -> dict:
     return yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
 
 
+# Actions the publish job is allowed to run. It is an allowlist because the
+# question is not "did someone add a checkout" but "what runs in the job that
+# can publish as this project" -- anything not named here has to be argued for.
+PUBLISH_ALLOWED_ACTIONS = {
+    "actions/download-artifact",
+    "pypa/gh-action-pypi-publish",
+}
+
+
 def test_publishing_authority_is_isolated_from_build_code():
-    """Only the publish job may mint an OIDC token, and it runs no code.
+    """Nothing but the uploader may run in the job that can publish.
 
     This is the property that makes Trusted Publishing safe to enable: a
     compromised build script or transitive build dependency must not execute
-    inside a job that can upload to PyPI as this project. It is invisible in
-    a diff -- adding a `run:` step to the publish job looks harmless -- so it
-    is pinned here.
-    """
-    jobs = _release_workflow()["jobs"]
+    inside a job that can mint an OIDC token and upload as this project. It is
+    invisible in a diff -- one added `run:` step looks harmless -- so the shape
+    of the job is pinned here rather than described in a comment.
 
+    Note what is *not* claimed: `actions/download-artifact` and the PyPI
+    publisher are themselves code, pinned by commit. The claim is that no
+    checked-out project code and no installed dependency runs here.
+    """
+    workflow = _release_workflow()
+    jobs = workflow["jobs"]
+
+    # Workflow-level permissions are inherited, so a job with no `permissions:`
+    # block is not thereby unprivileged.
+    assert "id-token" not in (workflow.get("permissions") or {})
     privileged = [
         name
         for name, job in jobs.items()
@@ -210,20 +229,43 @@ def test_publishing_authority_is_isolated_from_build_code():
     ]
     assert privileged == ["publish"]
 
-    publish_steps = jobs["publish"]["steps"]
-    for step in publish_steps:
-        uses = step.get("uses", "")
-        assert not uses.startswith("actions/checkout@"), (
-            "the publish job must not check out the repository"
+    publish = jobs["publish"]
+    assert publish.get("needs") == "build" or "build" in publish.get("needs", [])
+    assert (publish.get("environment") or {}).get("name") == "pypi"
+
+    run_steps = []
+    for step in publish["steps"]:
+        assert not step.get("continue-on-error"), (
+            "a step in the publish job may not be allowed to fail"
         )
-        assert "setup-uv" not in uses, (
-            "the publish job must not install a toolchain"
+        if "uses" in step:
+            action = step["uses"].split("@")[0]
+            assert action in PUBLISH_ALLOWED_ACTIONS, (
+                f"{action} would run in the job that can publish"
+            )
+            assert "@" in step["uses"] and len(step["uses"].split("@")[1]) == 40, (
+                "actions in the publish job must be pinned to a full commit sha"
+            )
+        if "run" in step:
+            run_steps.append(step)
+
+    # One shell step is tolerated: the digest check. It must not interpolate
+    # anything -- `${{ }}` inside `run:` is textual substitution, so a value a
+    # compromised build controls would become shell code executing right here.
+    assert len(run_steps) == 1, "the publish job should run one shell step"
+    assert "${{" not in run_steps[0]["run"], (
+        "the publish job must not interpolate expressions into a run: block; "
+        "pass values through env: instead"
+    )
+    for forbidden in ("uv ", "pip ", "python ", "scripts/"):
+        assert forbidden not in run_steps[0]["run"], (
+            f"the publish job must not invoke {forbidden.strip()}"
         )
 
     build = jobs["build"]
     assert "id-token" not in (build.get("permissions") or {})
     assert any(
-        step.get("run", "").strip().startswith("scripts/verify-artifacts.sh")
+        "scripts/verify-artifacts.sh" in step.get("run", "")
         for step in build["steps"]
     )
 
@@ -231,25 +273,60 @@ def test_publishing_authority_is_isolated_from_build_code():
 def test_production_publish_does_not_skip_existing_versions():
     """A production version that already exists is a failure, not a no-op.
 
-    `skip-existing` is right for the TestPyPI rehearsal, which gets re-run.
-    On PyPI it would turn a duplicate or partial publication into a green
-    check.
+    `skip-existing` is right for the TestPyPI rehearsal, which gets re-run. On
+    PyPI it would turn a duplicate or partial publication into a green check.
+
+    Keyed on each step's `if:` condition rather than its display name, so
+    renaming a step or adding a second production publisher cannot slip past.
     """
     steps = _release_workflow()["jobs"]["publish"]["steps"]
-    publish_steps = {
-        step["name"]: step
+    publishers = [
+        step
         for step in steps
-        if step.get("name", "").startswith("Publish to ")
-    }
+        if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+    ]
+    assert len(publishers) == 2
 
-    assert "skip-existing" not in publish_steps["Publish to PyPI"]["with"]
-    assert publish_steps["Publish to TestPyPI"]["with"]["skip-existing"] is True
+    production = [
+        step
+        for step in publishers
+        if "!startsWith(github.ref_name, 'test-')" in step.get("if", "")
+    ]
+    rehearsal = [
+        step
+        for step in publishers
+        if step.get("if", "").strip().startswith("${{ startsWith(github.ref_name")
+    ]
+    assert len(production) == 1 and len(rehearsal) == 1
+
+    assert "skip-existing" not in production[0]["with"]
+    assert "repository-url" not in production[0]["with"]
+    assert rehearsal[0]["with"]["skip-existing"] is True
+    assert "test.pypi.org" in rehearsal[0]["with"]["repository-url"]
 
 
 def test_release_build_toolchain_is_pinned():
-    """`test-v*` and `v*` are separate builds; both must use the same tools."""
-    workflow = (ROOT / ".github/workflows/release.yml").read_text()
-    assert 'version: "latest"' not in workflow
+    """`test-v*` and `v*` are separate builds; both must use the same tools.
 
-    pyproject = (ROOT / "pyproject.toml").read_text()
-    assert 'requires = ["hatchling==' in pyproject
+    Checked structurally -- every setup-uv in the release workflow names an
+    exact version -- rather than by grepping for the string "latest".
+    """
+    jobs = _release_workflow()["jobs"]
+    setups = [
+        step
+        for job in jobs.values()
+        for step in job["steps"]
+        if "setup-uv" in step.get("uses", "")
+    ]
+    assert setups, "the release workflow should install uv explicitly"
+    for step in setups:
+        version = (step.get("with") or {}).get("version", "")
+        assert re.fullmatch(r"\d+\.\d+\.\d+", version), (
+            f"setup-uv version must be exact, got {version!r}"
+        )
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    requires = pyproject["build-system"]["requires"]
+    assert requires and all("==" in item for item in requires), (
+        f"the build backend must be pinned exactly, got {requires}"
+    )

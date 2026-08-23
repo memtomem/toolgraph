@@ -39,9 +39,13 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#test-v}"
           VERSION="${VERSION#v}"
-          if grep -qiE "^## ${VERSION} - Unreleased" CHANGELOG.md; then
-            echo "CHANGELOG.md still says ${VERSION} is unreleased." >&2
-            echo "docs/releasing.md requires dating the entry before the tag;" >&2
+          # Require the dated entry rather than merely rejecting one spelling
+          # of "Unreleased": a missing entry must fail too. grep -F on a fixed
+          # prefix, so version punctuation is never regex.
+          if ! grep -F "## ${VERSION} - " CHANGELOG.md \
+             | grep -qE ' - [0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]*$'; then
+            echo "CHANGELOG.md has no dated '## ${VERSION} - YYYY-MM-DD' entry." >&2
+            echo "docs/releasing.md requires dating it before the tag;" >&2
             echo "pyproject.toml embeds README.md as package metadata, so the" >&2
             echo "release notes are frozen at tag time and cannot be fixed." >&2
             exit 1
@@ -51,7 +55,12 @@ jobs:
       - run: uv build
       - run: uv run --frozen --group dev twine check dist/*
       - name: Verify the distributions
-        run: scripts/verify-artifacts.sh dist
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          # The version comes from the tag, not from a filename: this is what
+          # rejects an unexpected artifact name before it reaches a later step.
+          scripts/verify-artifacts.sh dist "$VERSION"
       - name: Record artifact digests
         id: digests
         run: |
@@ -84,13 +93,27 @@ jobs:
         with:
           name: dist
           path: dist
-      - name: Verify the artifacts are the ones that were built
+      - name: Verify the downloaded files match the digests the build recorded
+        # The digests arrive through the environment, never interpolated into
+        # this script. `${{ }}` in a run: block is textual substitution, so a
+        # build-produced filename containing a quote would become shell code --
+        # and it would run here, inside the job that holds id-token: write.
+        # The build job also rejects any filename but the two expected ones.
+        #
+        # What this proves: the files uploaded are the files the build job
+        # produced and verified, so nothing tampered with them in the artifact
+        # store or in transit. It does NOT independently attest the build --
+        # the same job produced both the artifact and the digest.
+        #
         # coreutils only: no checkout, no project code, nothing installed.
+        env:
+          SUMS: ${{ needs.build.outputs.sums }}
         run: |
-          printf '%s\n' '${{ needs.build.outputs.sums }}' > SHA256SUMS
-          cat SHA256SUMS
-          sha256sum --check --strict SHA256SUMS
-          test "$(find dist -type f | wc -l)" -eq "$(grep -c . SHA256SUMS)"
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/SHA256SUMS"
+          cat "$RUNNER_TEMP/SHA256SUMS"
+          test "$(grep -c . "$RUNNER_TEMP/SHA256SUMS")" -eq 2
+          test "$(find dist -type f | wc -l)" -eq 2
+          sha256sum --check --strict "$RUNNER_TEMP/SHA256SUMS"
       - name: Publish to PyPI
         if: ${{ !startsWith(github.ref_name, 'test-') }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
