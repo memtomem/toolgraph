@@ -10,9 +10,9 @@
 Say what you actually ran and what it printed. A reviewer should not have to
 guess which parts you exercised locally.
 
-This is the local release gate from docs/releasing.md, which is what to run
-when CI cannot (Actions does not run on this repository while it is private
-with unpaid minutes):
+This is the local release gate from docs/releasing.md. Run it when CI has not
+reported -- and note that during the private-repository period it could not
+report at all, because Actions bills minutes there:
 
     uv lock --check
     uv sync --frozen --group dev --extra ladybug
@@ -23,10 +23,11 @@ with unpaid minutes):
     uv build && uv run twine check dist/*
     scripts/verify-artifacts.sh dist <VERSION>
 
-`ci-required` covers more than this once CI runs -- the artifact quickstart
-across the OS/Python matrix, and the minimum-MCP install. Neither is something
-a single machine reproduces, so say what you could not check rather than
-implying the gate above is equivalent.
+`ci-required` covers more than this: the artifact quickstart across the
+OS/Python matrix (Windows and Python 3.13/3.14 are not reproducible on one
+developer machine) and the minimum-MCP install, which is a single Ubuntu job
+you can reproduce locally if you need to. Say what you could not check rather
+than implying the gate above is equivalent.
 -->
 
 ## Notes for the reviewer
