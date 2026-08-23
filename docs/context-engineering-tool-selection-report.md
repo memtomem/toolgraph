@@ -1,87 +1,99 @@
-# toolgraph 운영 및 Context Engineering 활용 종합 보고서
+# Toolgraph operations and context-engineering report
 
-## 요약
+## Summary
 
-toolgraph는 현재 런타임 차단 게이트웨이가 아니라 MCP 도구 생태계를 그래프로
-분석하는 advisory analyzer입니다. 이 특성은 tool selection 알고리즘 앞단의
-context engineering 계층으로 활용하기 좋습니다. 선택 모델이 자연어 설명이나
-embedding 유사도만 보고 도구를 고르는 대신, toolgraph가 제공하는 권한, 리소스,
-정책, provenance, drift 정보를 함께 사용하면 후보 도구를 더 안전하게 줄이고
-선택 이유를 설명할 수 있습니다.
+Toolgraph is an advisory analyzer of the MCP tool ecosystem, not a runtime
+blocking gateway. That characteristic makes it a good fit as a context
+engineering layer sitting in front of a tool-selection algorithm. Instead of a
+selection model choosing tools from natural-language descriptions or embedding
+similarity alone, feeding it the permission, resource, policy, provenance and
+drift information Toolgraph provides lets you narrow the candidate set more
+safely and explain why a tool was chosen.
 
-권장 방향은 처음부터 강화학습을 붙이는 것이 아닙니다. 먼저 deterministic
-filtering과 score 기반 ranking을 만들고, 선택/실행 telemetry를 모은 뒤 offline
-evaluation과 learning-to-rank를 거쳐 contextual bandit으로 확장하는 순서가
-현실적입니다. full RL은 장기 계획, multi-step tool chain, 명확한 보상 신호와
-안전한 실험 환경이 준비된 뒤에 검토하는 것이 맞습니다.
+The recommended path does not start with reinforcement learning. Build
+deterministic filtering and score-based ranking first, collect
+selection/execution telemetry, then move through offline evaluation and
+learning-to-rank before extending to a contextual bandit. Full RL is worth
+considering only once there is a long-term plan, multi-step tool chains, a clear
+reward signal and a safe experimentation environment.
 
-## 현재 위치
+## Where we are today
 
-toolgraph가 이미 제공하는 핵심 신호는 다음과 같습니다.
+Toolgraph already provides these core signals:
 
-- `Agent -> Tool -> Resource -> Policy` 경로를 통한 권한 및 정책 도달성
-- `CAN_CALL`, `READS`, `WRITES`, `GOVERNED_BY` 엣지의 provenance
-- `check-access`의 `ALLOW`, `DENY`, `NOT_GRANTED`, `AGENT_NOT_FOUND`,
-  `TOOL_NOT_FOUND`, `AMBIGUOUS_TOOL` verdict
-- `unsafe-tools`의 `violation` / `authorized_but_governed` classification
-- `unmapped-tools`, `unbacked-edges`, `drift` 같은 negative-truth 감사 쿼리
-- `blast-radius`를 통한 리소스나 정책 변경 영향 범위
+- Permission and policy reachability along `Agent -> Tool -> Resource -> Policy`
+- Provenance on `CAN_CALL`, `READS`, `WRITES` and `GOVERNED_BY` edges
+- `check-access` verdicts: `ALLOW`, `DENY`, `NOT_GRANTED`, `AGENT_NOT_FOUND`,
+  `TOOL_NOT_FOUND`, `AMBIGUOUS_TOOL`
+- `unsafe-tools` classification into `violation` and `authorized_but_governed`
+- Negative-truth audit queries such as `unmapped-tools`, `unbacked-edges` and
+  `drift`
+- The impact radius of a resource or policy change, via `blast-radius`
 
-이 정보는 "이 도구가 task와 의미상 맞는가"를 직접 해결하지는 않습니다. 대신
-"이 도구를 이 agent가 지금 선택해도 되는가", "선택했을 때 어떤 정책/리소스에
-닿는가", "이 판단의 근거가 얼마나 신뢰 가능한가"를 구조화된 context로 제공합니다.
+None of this answers "is this tool semantically right for the task" directly.
+What it does provide, as structured context, is "may this agent choose this tool
+right now", "which policies and resources does the call touch" and "how
+trustworthy is the basis for that judgement".
 
-## 운영 관점 리뷰
+## Operational review
 
-### 보안
+### Security
 
-현재 Cypher 쿼리는 대부분 파라미터 바인딩을 사용하고, manifest ingest도 unresolved
-reference가 있으면 전체 적용을 거부합니다. 이 점은 운영 안전성에 긍정적입니다.
-다만 production-like 배치에서는 다음 보강이 필요합니다.
+Cypher queries mostly use parameter binding today, and manifest ingest refuses
+to apply anything when an unresolved reference is present. Both are good for
+operational safety. A production-like deployment still needs the following:
 
-- 기본 Neo4j credential과 docker-compose 포트 공개는 local dev 전제로만 사용해야 합니다.
-- `toolgraph serve --http`는 별도 인증/인가 레이어 없이 MCP query surface를 노출합니다.
-- `servers.yaml`의 stdio `command`는 operator가 신뢰한 설정 파일이라는 전제가 필요합니다.
-- HTTP/SSE crawl target과 headers는 민감 정보를 포함할 수 있으므로 로그와 provenance에
-  secret이 섞이지 않도록 redaction 정책이 필요합니다.
+- The default Neo4j credentials and the exposed docker-compose port must be
+  treated as local-development-only.
+- `toolgraph serve --http` exposes the MCP query surface with no separate
+  authentication or authorization layer.
+- The stdio `command` entries in `servers.yaml` assume the configuration file is
+  operator-trusted.
+- HTTP/SSE crawl targets and headers can carry sensitive values, so a redaction
+  policy is needed to keep secrets out of logs and provenance.
 
-운영 배포 전 최소 기준은 secret rotation, network binding 제한, reverse proxy 인증,
-read-only DB 계정 분리, crawl 설정 리뷰 절차입니다.
+The minimum bar before an operational deployment: secret rotation, restricted
+network binding, reverse-proxy authentication, a separate read-only database
+account, and a review process for crawl configuration.
 
-### 성능
+### Performance
 
-현재 MVP는 explainability와 정확성을 우선합니다. fleet 규모가 커지면 다음 비용이
-커질 수 있습니다.
+The current MVP prioritises explainability and correctness. As fleet size grows,
+these costs can become significant:
 
-- `unmapped-tools`, `unbacked-edges`, `drift`, `orphan-policies`는 전체 그래프를
-  훑는 감사 쿼리입니다.
-- `blast-radius`는 특정 리소스나 정책에 연결된 tool/agent fan-out이 크면 결과가
-  급격히 커집니다.
-- crawl은 서버 단위 timeout과 concurrency를 갖지만, 각 서버의 tool/resource page 수에는
-  별도 상한이 없습니다.
-- MCP server wrapper는 쿼리 결과를 한 번에 반환하므로 대형 graph에서 response size가
-  선택 latency에 직접 영향을 줍니다.
+- `unmapped-tools`, `unbacked-edges`, `drift` and `orphan-policies` are audit
+  queries that sweep the whole graph.
+- `blast-radius` results grow sharply when a resource or policy has a large
+  tool/agent fan-out.
+- Crawling has per-server timeout and concurrency limits, but no separate cap on
+  the number of tool/resource pages per server.
+- The MCP server wrapper returns query results in one shot, so on a large graph
+  response size directly affects selection latency.
 
-운영 최적화는 pagination, `LIMIT`/cursor, query profile 기반 index 점검, selector용
-precomputed feature cache, crawl/ingest 후 cache invalidation 순서로 진행하는 것이 좋습니다.
+A sensible optimisation order: pagination, `LIMIT`/cursor, index review driven by
+query profiles, a precomputed feature cache for the selector, and cache
+invalidation after crawl/ingest.
 
-### 안정성
+### Reliability
 
-manifest ingest는 clean manifest에 대해서만 authored edge를 지우고 다시 적용하므로
-부분 적용으로 false ALLOW가 생기는 위험을 줄입니다. crawler도 서버별 실패를 분리해
-partial success를 허용합니다.
+Manifest ingest clears and reapplies authored edges only for a clean manifest,
+which reduces the risk of a partial application producing a false `ALLOW`. The
+crawler likewise isolates per-server failures and allows partial success.
 
-보강할 부분은 운영 절차입니다.
+What needs strengthening is operational procedure:
 
-- crawl 실패가 있는 상태에서 ingest를 진행할지에 대한 policy가 필요합니다.
-- `drift` 결과가 남아 있을 때 selector가 해당 도구를 자동 후보에서 제외해야 합니다.
-- 대형 변경 전후 graph snapshot이나 export가 있으면 rollback 판단이 쉬워집니다.
-- HTTP serving은 health/readiness, timeout, request size limit, structured logging이
-  필요합니다.
+- A policy is needed for whether ingest may proceed while crawl failures exist.
+- ~~When `drift` results remain, the selector should automatically exclude those
+  tools from the candidate set.~~ **Implemented:** `DRIFTED` is in the reject
+  set of *every* profile — `strict`, `review` and `explore` (`selector.py`).
+- A graph snapshot or export around large changes makes rollback decisions
+  easier.
+- HTTP serving needs health/readiness endpoints, timeouts, request size limits
+  and structured logging.
 
-## Context Engineering 활용 모델
+## Context-engineering model
 
-tool selection을 네 단계로 나누면 toolgraph의 역할이 명확합니다.
+Splitting tool selection into four stages makes Toolgraph's role clear:
 
 ```text
 user/task context
@@ -93,34 +105,39 @@ user/task context
 
 ### 1. Candidate generation
 
-초기 후보는 기존 방식대로 만들 수 있습니다.
+Initial candidates can be produced the usual way:
 
-- tool name / description search
-- embedding similarity
-- task classifier
-- 최근 성공한 tool memory
-- explicit user preference
+- Tool name / description search
+- Embedding similarity
+- Task classifier
+- Memory of recently successful tools
+- Explicit user preference
 
-이 단계는 recall을 높이는 데 집중합니다. 아직 policy 판단을 하지 않습니다.
+This stage focuses on recall. No policy judgement happens yet.
 
 ### 2. Graph-aware filtering
 
-toolgraph는 hard filter로 사용합니다.
+Toolgraph is used as a hard filter here:
 
-- `AGENT_NOT_FOUND`: selection 자체를 중단하고 context 구성 오류로 보고합니다.
-- `TOOL_NOT_FOUND`: 후보에서 제거합니다.
-- `AMBIGUOUS_TOOL`: bare name을 자동 선택하지 않고 server-qualified key를 요구합니다.
-- `NOT_GRANTED`: 후보에서 제거합니다.
-- `DENY` + `violation`: 기본적으로 후보에서 제거합니다.
-- `DENY` + `authorized_but_governed`: override policy가 있을 때만 낮은 우선순위로 유지합니다.
-- `drifted_tools`: 후보에서 제거하거나 operator 확인을 요구합니다.
-- `unmapped_tools`: 안전성이 중요한 task에서는 후보에서 제거하고, 일반 task에서는 패널티를 줍니다.
+- `AGENT_NOT_FOUND`: stop selection entirely and report it as a context
+  construction error.
+- `TOOL_NOT_FOUND`: drop from candidates.
+- `AMBIGUOUS_TOOL`: do not auto-resolve a bare name; require a server-qualified
+  key.
+- `NOT_GRANTED`: drop from candidates.
+- `DENY` + `violation`: drop from candidates by default.
+- `DENY` + `authorized_but_governed`: keep at low priority only when an override
+  policy exists.
+- `drifted_tools`: drop from candidates, or require operator confirmation.
+- `unmapped_tools`: drop for safety-critical tasks; apply a penalty for ordinary
+  tasks.
 
-이 단계의 목적은 모델이 고르면 안 되는 도구를 ranking 이전에 제거하는 것입니다.
+The purpose of this stage is to remove tools the model must not choose *before*
+ranking happens.
 
 ### 3. Graph-aware ranking
 
-남은 후보에는 score를 부여합니다.
+Remaining candidates get a score:
 
 ```text
 score(tool) =
@@ -135,24 +152,24 @@ score(tool) =
   - latency_cost_penalty
 ```
 
-권장 feature는 다음과 같습니다.
+Recommended features:
 
-| Feature | Source | Selection 영향 |
+| Feature | Source | Effect on selection |
 | --- | --- | --- |
-| `permitted` | `check-access` | false면 hard reject |
-| `verdict` | `check-access` | `ALLOW` 우선, `DENY`는 policy에 따라 reject |
-| `classification` | `unsafe-tools` | `violation`은 reject, expected exception은 penalty |
-| `provenance.source` | query result | `crawled`와 evidence 있는 authored edge를 우대 |
-| `provenance.confidence` | query result | low confidence는 penalty |
-| `has_evidence` | `unbacked-edges` inverse | evidence 없는 load-bearing edge는 penalty |
-| `is_mapped` | `unmapped-tools` inverse | data-flow 미작성 도구는 penalty |
-| `is_drifted` | `drift` inverse | stale 도구는 reject |
-| `blast_radius_size` | `blast-radius` | 영향 범위가 큰 도구는 신중하게 penalty |
-| `resource_policy_count` | graph query | 민감 리소스 접점이 많을수록 penalty |
+| `permitted` | `check-access` | Hard reject when false |
+| `verdict` | `check-access` | Prefer `ALLOW`; reject `DENY` depending on policy |
+| `classification` | `unsafe-tools` | Reject `violation`; penalise an expected exception |
+| `provenance.source` | Query result | Favour `crawled` edges and authored edges with evidence |
+| `provenance.confidence` | Query result | Penalise low confidence |
+| `has_evidence` | Inverse of `unbacked-edges` | Penalise load-bearing edges with no evidence |
+| `is_mapped` | Inverse of `unmapped-tools` | Penalise tools with no authored data flow |
+| `is_drifted` | Inverse of `drift` | Reject stale tools |
+| `blast_radius_size` | `blast-radius` | Penalise wide-impact tools with care |
+| `resource_policy_count` | Graph query | Penalise more contact points with sensitive resources |
 
 ### 4. Execution telemetry
 
-선택 결과를 지속 개선하려면 selector가 다음 로그를 남겨야 합니다.
+To keep improving selection, the selector should emit a log like this:
 
 ```json
 {
@@ -182,86 +199,90 @@ score(tool) =
 }
 ```
 
-telemetry는 raw prompt나 secret-bearing resource URI를 그대로 저장하지 않는 정책이
-필요합니다. task text는 hash나 redacted summary로 저장하는 편이 안전합니다.
+Telemetry needs a policy against storing raw prompts or secret-bearing resource
+URIs verbatim. Storing task text as a hash or a redacted summary is safer.
 
-## 성능 최적화 전략
+## Performance strategy
 
 ### Online path
 
-tool selection은 사용자 요청 경로에 있으므로 query budget을 작게 잡아야 합니다.
+Tool selection sits on the user request path, so the query budget must be small.
 
-- 후보 수를 먼저 제한합니다. 예: semantic candidate top 50 이하.
-- 후보별 `check-access`를 N번 호출하지 말고 batch query를 추가합니다.
-- `drift`, `unmapped`, `unbacked` 결과는 selector cache로 유지합니다.
-- crawl/ingest 이후 cache generation을 증가시켜 stale feature를 무효화합니다.
-- `blast-radius`는 모든 후보에 매번 계산하지 말고 high-risk 후보에만 lazy 계산합니다.
+- Cap the candidate count first — for example, the top 50 semantic candidates.
+- Do not call `check-access` N times; add a batch query instead.
+- Keep `drift`, `unmapped` and `unbacked` results in a selector cache.
+- Increment a cache generation after crawl/ingest to invalidate stale features.
+- Do not compute `blast-radius` for every candidate every time; compute it
+  lazily for high-risk candidates only.
 
 ### Offline path
 
-감사와 학습 데이터 준비는 offline job으로 분리합니다.
+Auditing and training-data preparation belong in offline jobs:
 
-- 전체 `unbacked-edges`와 `drift` 스캔
-- policy별 blast-radius report
-- feature distribution drift 감지
-- failed selection replay
-- ranker weight 튜닝
+- Full `unbacked-edges` and `drift` scans
+- Per-policy blast-radius reports
+- Feature distribution drift detection
+- Failed selection replay
+- Ranker weight tuning
 
 ### Neo4j query hygiene
 
-현재 uniqueness constraint는 주요 노드 key에 잡혀 있습니다. 운영 규모에서는 다음을 추가로
-점검합니다.
+Uniqueness constraints currently cover the main node keys. At operational scale,
+also review:
 
-- 자주 쓰는 relationship traversal의 cardinality
-- high-degree resource/policy node
-- `PROFILE` 기준 db hits가 큰 query
-- audit query의 pagination 필요 여부
-- response payload 상한
+- Cardinality of frequently used relationship traversals
+- High-degree resource and policy nodes
+- Queries with large db hits under `PROFILE`
+- Whether audit queries need pagination
+- An upper bound on response payloads
 
-## 지속 개선과 강화학습 검토
+## Continuous improvement and the RL question
 
-### 1단계: Heuristic ranker
+### Stage 1: heuristic ranker
 
-초기에는 사람이 이해할 수 있는 점수표가 낫습니다. 정책 위반, drift, missing evidence는
-명확한 penalty로 두고, task matching은 기존 retrieval score를 사용합니다.
+Early on, a score table a human can read is better. Keep policy violations,
+drift and missing evidence as explicit penalties, and use the existing retrieval
+score for task matching.
 
-장점은 디버깅과 운영 승인입니다. 단점은 weight 조정이 수동이라는 점입니다.
+The advantage is debuggability and operational sign-off. The drawback is that
+weight tuning is manual.
 
-### 2단계: Offline evaluation
+### Stage 2: offline evaluation
 
-과거 selection log를 replay해서 ranker가 어떤 선택을 했을지 비교합니다.
+Replay past selection logs to compare what the ranker would have chosen.
 
-주요 metric은 다음과 같습니다.
+Key metrics:
 
-- task success rate
-- unsafe candidate reject rate
-- unnecessary rejection rate
-- average latency
-- retry count
-- user correction rate
-- policy violation count
+- Task success rate
+- Unsafe candidate reject rate
+- Unnecessary rejection rate
+- Average latency
+- Retry count
+- User correction rate
+- Policy violation count
 
-이 단계 없이는 RL이나 bandit을 붙여도 성능 개선인지 운인지 구분하기 어렵습니다.
+Without this stage, attaching RL or a bandit makes it hard to tell an
+improvement from luck.
 
-### 3단계: Learning-to-rank
+### Stage 3: learning-to-rank
 
-충분한 labeled outcome이 생기면 feature 기반 ranker를 학습할 수 있습니다. 이때도
-hard safety constraint는 모델 밖에 둡니다.
+Once enough labelled outcomes exist, a feature-based ranker can be trained. Even
+then, hard safety constraints stay outside the model:
 
 ```text
 eligible candidates = graph hard filter(context, candidates)
 ranked candidates = learned_ranker(features(eligible candidates))
 ```
 
-모델이 아무리 높은 점수를 줘도 `NOT_GRANTED`, `violation`, `drifted` 같은 hard reject를
-넘을 수 없게 해야 합니다.
+No matter how high a score the model assigns, it must not be able to override a
+hard reject such as `NOT_GRANTED`, `violation` or `drifted`.
 
-### 4단계: Contextual bandit
+### Stage 4: contextual bandit
 
-tool selection은 대부분 "현재 context에서 어떤 tool을 고를까" 문제입니다. 장기 episode
-reward를 다루는 full RL보다 contextual bandit이 먼저 맞습니다.
+Tool selection is mostly a "which tool do I choose in this context" problem. A
+contextual bandit fits before full RL, which deals with long-episode rewards.
 
-가능한 reward는 다음과 같습니다.
+A possible reward:
 
 ```text
 reward =
@@ -273,37 +294,44 @@ reward =
   - policy_violation_penalty
 ```
 
-운영에서는 exploration을 제한해야 합니다. 예를 들어 high-risk policy가 연결된 후보는
-exploration 대상에서 제외하고, low-risk 동등 후보 사이에서만 탐색합니다.
+Exploration must be constrained in production. For example, exclude candidates
+attached to a high-risk policy from exploration and explore only among
+equivalent low-risk candidates.
 
-### 5단계: Full RL
+### Stage 5: full RL
 
-full RL은 다음 조건이 충족될 때만 검토합니다.
+Consider full RL only when all of these hold:
 
-- multi-step tool chain의 상태와 action이 명확히 정의되어 있음
-- delayed reward가 실제로 중요함
-- simulation 또는 replay 환경이 있음
-- safety constraint를 policy 밖에서 강제할 수 있음
-- 실패 비용이 낮은 sandbox에서 학습 가능함
+- The state and action space of multi-step tool chains is clearly defined
+- Delayed reward genuinely matters
+- A simulation or replay environment exists
+- Safety constraints can be enforced outside the policy
+- Training can happen in a sandbox where failure is cheap
 
-현재 toolgraph의 가장 가까운 활용처는 full RL이 아니라 graph-constrained contextual
-ranking입니다.
+Toolgraph's nearest application today is graph-constrained contextual ranking,
+not full RL.
 
-## 권장 API 확장
+## Recommended API extensions
 
-selector 연동을 쉽게 하려면 다음 API가 유용합니다.
+The following APIs make selector integration easier.
 
-> **Erratum (2026-07-09)**: 이 섹션의 API는 2026-06-11에 구현·출하되었습니다.
-> 규범적 형태는 `toolgraph/graph/selector.py`이며
-> `tests/test_selector_contract.py`가 소비자(memtomem-stm) 계약으로 고정합니다.
-> 초안 대비 변경: `path`(단수) → `paths`(리스트), `provenance_score` 필드는
-> `rank_features` 출력에서 제외(unbacked 신호는 `has_unbacked_edges` +
-> risk_score 0.4로 흡수), `risk_score`는 고정 테이블 값. 아래 표본은 구현
-> 형태로 갱신되었습니다.
+> **Status (updated 2026-08-23).** Everything in this section is **implemented
+> and shipped** (since 2026-06-11). The normative form is
+> `toolgraph/graph/selector.py`; all three surfaces are exposed on the CLI
+> (`toolgraph/cli.py`) and through the MCP server (`toolgraph/server/app.py`).
+> `tests/test_selector_contract.py` pins `eligible_tools` and `rank_features`
+> as a consumer contract (memtomem-stm) — note it does **not** pin
+> `selection_explain`.
+>
+> Changes from the original draft: `path` (singular) became `paths` (a list,
+> `selector.py:319`); `provenance_score` was dropped from `rank_features`
+> output (the unbacked signal is absorbed into `has_unbacked_edges` plus a
+> `risk_score` of 0.4); `risk_score` comes from a fixed first-match table
+> (`selector.py`). The samples below reflect the implemented shape.
 
 ### `rank_features(agent, candidates)`
 
-여러 candidate tool에 대해 selection feature를 batch로 반환합니다.
+Returns selection features for several candidate tools in one batch.
 
 ```json
 {
@@ -328,7 +356,7 @@ selector 연동을 쉽게 하려면 다음 API가 유용합니다.
 
 ### `eligible_tools(agent, candidates, profile)`
 
-hard filter 결과와 reject reason을 반환합니다.
+Returns the hard-filter result together with reject reasons.
 
 ```json
 {
@@ -349,12 +377,15 @@ hard filter 결과와 reject reason을 반환합니다.
 
 ### `selection_explain(agent, tool)`
 
-최종 선택 이유를 사용자나 operator에게 설명하기 위한 compact result입니다.
+A compact result for explaining the final choice to a user or operator.
+`decision` is `"eligible"` or `"rejected"` (`selector.py:362`) — it reports
+whether the tool survives the profile's hard filter, not that a selector picked
+it.
 
 ```json
 {
   "tool_key": "git::git_status",
-  "decision": "selected",
+  "decision": "eligible",
   "reasons": [
     "agent has CAN_CALL grant",
     "no DENY policy path found",
@@ -364,31 +395,34 @@ hard filter 결과와 reject reason을 반환합니다.
 }
 ```
 
-## Repo 기준 구현 메모
+## Implementation notes against this repository
 
-현재 코드 구조에서는 다음 위치에 작게 나누어 붙이는 것이 가장 자연스럽습니다.
+**All of the following shipped on 2026-06-11.** The table records where each
+piece landed, not work to do:
 
-| 영역 | 현재 위치 | 확장 방향 |
+| Area | Location | Status |
 | --- | --- | --- |
-| Graph query | `toolgraph/graph/queries.py` | batch candidate feature query 추가 |
-| MCP wrapper | `toolgraph/server/app.py` | `rank_features`, `eligible_tools`, `selection_explain` 노출 |
-| CLI | `toolgraph/cli.py` | operator가 수동 검증할 수 있는 command 추가 |
-| Models | `toolgraph/models.py` | selection feature/result pydantic model 추가 |
-| Tests | `tests/test_queries.py`, `tests/test_server.py` | direct query와 MCP shape 동시 검증 |
+| Selector logic | `toolgraph/graph/selector.py` | Shipped — normative form |
+| Graph query | `toolgraph/graph/queries.py` | Shipped — batch candidate features |
+| MCP wrapper | `toolgraph/server/app.py` | Shipped — `rank_features`, `eligible_tools`, `selection_explain` |
+| CLI | `toolgraph/cli.py` | Shipped — `rank-features`, `eligible-tools`, `selection-explain` |
+| Consumer contract | `tests/test_selector_contract.py` | Shipped — pins `eligible_tools` and `rank_features` |
 
-### `rank_features` query 방향
+### Direction for the `rank_features` query
 
-후보 도구별로 `check-access`를 반복 호출하면 latency가 후보 수에 선형으로 늘어납니다.
-selector용 API는 candidate list를 한 번에 받아 다음 정보를 batch로 반환하는 것이 좋습니다.
+Calling `check-access` repeatedly per candidate makes latency grow linearly with
+candidate count. A selector-facing API should take the candidate list at once and
+return the following in a batch:
 
-- tool resolution 결과: not found, ambiguous, resolved key
-- agent grant 여부
-- DENY path 존재 여부와 classification
-- drift 여부
-- unmapped 여부
-- load-bearing edge의 missing evidence 여부
+- Tool resolution result: not found, ambiguous, or resolved key
+- Whether the agent holds a grant
+- Whether a DENY path exists, and its classification
+- Whether the tool is drifted
+- Whether the tool is unmapped
+- Whether load-bearing edges are missing evidence
 
-MVP에서는 `risk_score`를 학습 모델이 아니라 규칙 기반으로 계산해도 충분합니다.
+For the MVP it is enough to compute `risk_score` from rules rather than a learned
+model:
 
 ```text
 risk_score =
@@ -400,83 +434,96 @@ risk_score =
   0.0 otherwise
 ```
 
-### `eligible_tools` policy 방향
+### Direction for `eligible_tools` policy
 
-hard filter policy는 코드에 흩뿌리지 말고 이름 있는 policy profile로 두는 편이 낫습니다.
+Rather than scattering hard-filter policy through the code, keep it in named
+policy profiles:
 
-| Profile | 용도 | 기본 동작 |
+| Profile | Use | Default behaviour |
 | --- | --- | --- |
-| `strict` | production agent | `ALLOW`만 통과 |
-| `review` | human-in-the-loop review | expected exception은 통과, violation은 reject |
-| `explore` | offline eval/sandbox | not granted와 drift만 reject, 나머지는 penalty |
+| `strict` | Production agents | Only `ALLOW` passes |
+| `review` | Human-in-the-loop review | Expected exceptions pass; violations are rejected |
+| `explore` | Offline eval / sandbox | Only not-granted and drift are rejected; everything else is penalised |
 
-이 profile은 selector 실험을 가능하게 하지만, production default는 `strict`로 두어야 합니다.
+These profiles make selector experiments possible, but the production default
+must remain `strict`.
 
-### Telemetry 저장 방향
+### Direction for telemetry storage
 
-초기에는 DB schema를 크게 늘리기보다 append-only JSONL이나 별도 event sink로 시작하는 것이
-좋습니다. 운영적으로 중요한 것은 학습보다 재현성입니다.
+Rather than growing the database schema early, start with append-only JSONL or a
+separate event sink. Operationally, reproducibility matters more than training.
 
-필수 필드는 다음 네 가지입니다.
+Four fields are essential:
 
-- `ranker_version`: 어떤 selector logic이 선택했는지
-- `graph_generation`: 어떤 crawl/ingest 상태의 feature였는지
-- `reject_reasons`: 후보가 왜 제외되었는지
-- `outcome`: 실행 성공, latency, retry, user correction
+- `ranker_version`: which selector logic made the choice
+- `graph_generation`: which crawl/ingest state the features came from
+- `reject_reasons`: why each candidate was excluded
+- `outcome`: execution success, latency, retries, user correction
 
-`graph_generation`은 아직 코드에 없으므로 crawl/ingest가 끝날 때 증가하는 run id나 timestamp를
-도입하는 것이 후속 작업의 시작점입니다.
+**`graph_generation` already exists** (ADR-0004). Every MCP response is stamped
+with it (`toolgraph/server/app.py`), it is carried through preflight and the CLI
+(`toolgraph/preflight.py`, `toolgraph/cli.py`), and
+`tests/test_selector_contract.py` pins that stamping as part of the consumer
+contract. What is still missing is the *sink*: nothing in this repository
+records selection events, `ranker_version` or outcomes today.
 
-## 검증 기준
+## Verification criteria
 
-selector 연동 PR은 기능 테스트뿐 아니라 운영 회귀 테스트를 포함해야 합니다.
+A selector integration PR should include operational regression tests, not just
+functional ones:
 
-- ambiguous bare tool name은 자동 선택되지 않아야 합니다.
-- `DENY` + `violation` 후보는 `strict` profile에서 제외되어야 합니다.
-- `authorized_but_governed` 후보는 `strict`에서는 제외, `review`에서는 통과해야 합니다.
-- drifted tool은 모든 online profile에서 제외되어야 합니다.
-- unmapped tool은 `strict`에서 제외되거나 명시 penalty를 받아야 합니다.
-- batch API 결과는 candidate 입력 순서와 stable id를 유지해야 합니다.
-- MCP wrapper는 direct query와 같은 structured shape를 반환해야 합니다.
-- telemetry에는 raw secret value나 authorization header가 저장되지 않아야 합니다.
+- An ambiguous bare tool name must not be auto-selected.
+- `DENY` + `violation` candidates must be excluded under the `strict` profile.
+- `authorized_but_governed` candidates must be excluded under `strict` and pass
+  under `review`.
+- Drifted tools must be excluded under every online profile.
+- Unmapped tools must be excluded under `strict` or carry an explicit penalty.
+- Batch API results must preserve candidate input order and stable ids.
+- The MCP wrapper must return the same structured shape as the direct query.
+- Telemetry must never store raw secret values or authorization headers.
 
 ## Roadmap
 
-1. **Selector adapter**
-   기존 selector 앞단에서 `check-access`, `drift`, `unmapped-tools` 결과를 hard filter로 사용합니다.
+Items 1, 2 and 5 are **done**; they are kept here so the sequence still reads as
+a whole.
 
-2. **Batch feature query**
-   후보 N개를 한 번에 평가하는 `rank_features` 계열 쿼리를 추가합니다.
+1. ~~**Selector adapter**~~ — **shipped.** `eligible_tools` applies the hard
+   filter, with `DRIFTED` rejecting under every profile.
+
+2. ~~**Batch feature query**~~ — **shipped.** `rank_features` evaluates N
+   candidates in one call.
 
 3. **Telemetry schema**
-   selection event, execution outcome, user correction, operator override를 저장합니다.
+   Store selection events, execution outcomes, user corrections and operator
+   overrides.
 
 4. **Offline eval**
-   fixed test set과 replay log로 heuristic weight를 조정합니다.
+   Tune heuristic weights against a fixed test set and replay logs.
 
-5. **Feature cache**
-   crawl/ingest generation 단위로 graph-derived feature를 캐시합니다.
+5. ~~**Feature cache**~~ — the generation counter this depends on is shipped
+   (`graph_generation`); the cache layer on top of it is not.
 
 6. **Learning-to-rank**
-   hard filter 이후의 eligible candidate ranking만 학습합니다.
+   Train ranking only over eligible candidates, after the hard filter.
 
 7. **Contextual bandit**
-   low-risk 후보 사이에서 제한된 exploration을 도입합니다.
+   Introduce constrained exploration among low-risk candidates.
 
-8. **Runtime gateway 연계**
-   toolgraph는 analyzer로 유지하고, 실제 차단은 gateway나 execution layer에서 수행합니다.
+8. **Runtime gateway integration**
+   Keep Toolgraph as an analyzer; perform actual blocking in a gateway or the
+   execution layer.
 
-## 결론
+## Conclusion
 
-toolgraph는 tool selection 알고리즘의 "생각하는 모델"을 대체하지 않습니다. 대신 선택에
-필요한 운영 context를 구조화합니다. 권한, 정책, 리소스, provenance, drift를 selection
-context에 넣으면 모델은 더 적은 후보에서, 더 낮은 위험으로, 더 설명 가능한 선택을 할 수
-있습니다.
+Toolgraph does not replace the "thinking model" of a tool-selection algorithm.
+It structures the operational context that selection needs. Putting permissions,
+policies, resources, provenance and drift into the selection context lets the
+model choose from fewer candidates, at lower risk, with a more explainable
+result.
 
-지금 가장 가치 있는 다음 단계는 강화학습이 아니라 다음 세 가지입니다.
-
-1. graph-aware hard filter
-2. batch rank feature API
-3. selection telemetry와 offline evaluation
-
-이 세 가지가 안정화되면 learning-to-rank와 contextual bandit이 자연스럽게 붙습니다.
+The first two of the three steps this report originally recommended are now
+shipped — the graph-aware hard filter and the batch rank-feature API. **The
+remaining one is selection telemetry and offline evaluation**, and nothing in
+this repository writes a selection event yet. That, not reinforcement learning,
+is the next piece of real work; learning-to-rank and a contextual bandit attach
+naturally once it is stable.
