@@ -1,0 +1,66 @@
+name: Feature request
+description: Suggest a new capability, behavior change, or improvement
+title: "[feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Before filing:
+
+        - **Open-ended ideas or questions** belong in [Discussions](https://github.com/memtomem/toolgraph/discussions). Issues are for concrete, actionable requests.
+        - **Search first.** A quick scan of [open](https://github.com/memtomem/toolgraph/issues) and [closed](https://github.com/memtomem/toolgraph/issues?q=is%3Aissue+is%3Aclosed) issues often turns up the same idea or the reason it was declined.
+        - **Know the boundary.** toolgraph is *advisory*: it explains and compiles, and an independent runtime gateway enforces. Requests that ask toolgraph itself to block, execute, or prove runtime conformance are outside that boundary — see the ADRs under `docs/adr/`. Say so if you are proposing to move it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what's blocking or awkward today? Be concrete.
+      placeholder: |
+        I want to know which agents lose access if I tighten one policy, before I edit it — today I re-ingest and diff by hand.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like toolgraph to do? A rough sketch is fine — don't worry about implementation details unless they're load-bearing for the design.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      description: Where would this live? Pick the closest match.
+      options:
+        - Crawling MCP servers
+        - Governance model or manifest schema
+        - Explain and audit queries
+        - Tool selection
+        - Preflight
+        - Policy bundles and the gateway contract
+        - MCP server
+        - CLI ergonomics or output
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you tried or thought about, and why they didn't work.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Use cases, related issues or ADRs, links to similar features elsewhere.
+    validations:
+      required: false
