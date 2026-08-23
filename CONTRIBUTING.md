@@ -2,6 +2,9 @@
 
 Thank you for your interest in contributing to Toolgraph!
 
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md). It applies to
+issues, pull requests, discussions and code review alike.
+
 Toolgraph is an advisory analyzer: it explains reachability and impact over a
 tool/policy graph. It does **not** sit in the traffic path and does not block
 calls at runtime. Changes that would move it toward enforcement are out of

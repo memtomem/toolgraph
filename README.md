@@ -590,6 +590,8 @@ runtime-enforcement wedge belongs to gateways like Kong.
 - **CLA:** [CLA.md](CLA.md). Signing is one-time per GitHub account per
   repository; the workflow comments on your first pull request with
   instructions.
+- **Code of conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — applies to
+  issues, pull requests and discussions.
 - **Security:** [SECURITY.md](SECURITY.md) — please use private vulnerability
   reporting rather than a public issue.
 - **License:** Apache License 2.0 — see [LICENSE](LICENSE).
