@@ -15,3 +15,14 @@ updates:
     groups:
       python-minor-patch:
         update-types: ["minor", "patch"]
+    ignore:
+      # ruff is deliberately held below 0.16: this repository has no
+      # [tool.ruff] configuration, so 0.16's changed defaults surface ~81
+      # unrelated findings and ci.yml runs the unconfigured command.
+      # Take 0.16 deliberately once a rule set is committed, then drop this.
+      - dependency-name: "ruff"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # ladybug is the graph backend; a minor bump changes storage behaviour
+      # and is not covered by anything CI runs today. Bump it deliberately.
+      - dependency-name: "ladybug"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
