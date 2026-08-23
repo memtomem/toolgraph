@@ -9,9 +9,96 @@ on:
 permissions:
   contents: read
 
+# Building and publishing are separate jobs on purpose. Only `publish` holds
+# `id-token: write`, and it runs no repository code, no dependency
+# installation and no checkout -- it downloads the artifacts `build` produced
+# and calls the publish action. When the two were one job, every build script
+# and every transitive build dependency ran inside a job that could mint an
+# OIDC token and upload to PyPI as this project.
+
 jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          # Pinned, not "latest": a tag and its `test-` rehearsal are two runs
+          # on two days, and an unpinned toolchain can build different bytes
+          # from the same commit. Bump this deliberately, with a rehearsal.
+          version: "0.12.3"
+      - name: Verify tag matches package version
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          test "$VERSION" = "$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
+      - name: Verify the changelog entry is dated
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          # Require a dated entry rather than merely rejecting one spelling of
+          # "Unreleased": a missing entry must fail too. Shell pattern matching
+          # against the whole line, so the version is never a regex and the
+          # match is anchored at the heading -- prose mentioning the version
+          # cannot satisfy it.
+          found=""
+          while IFS= read -r line; do
+            case "$line" in
+              "## ${VERSION} - "*)
+                case "${line#"## ${VERSION} - "}" in
+                  [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) found=yes ;;
+                esac
+                ;;
+            esac
+          done < CHANGELOG.md
+          if [ -z "$found" ]; then
+            echo "CHANGELOG.md has no dated '## ${VERSION} - YYYY-MM-DD' entry." >&2
+            echo "docs/releasing.md requires dating it before the tag;" >&2
+            echo "pyproject.toml embeds README.md as package metadata, so the" >&2
+            echo "release notes are frozen at tag time and cannot be fixed." >&2
+            exit 1
+          fi
+      - run: scripts/audit-dependencies.sh runtime
+      - run: scripts/audit-dependencies.sh extras
+      - run: uv build
+      - run: uv run --frozen --group dev twine check dist/*
+      - name: Verify the distributions
+        run: |
+          VERSION="${GITHUB_REF_NAME#test-v}"
+          VERSION="${VERSION#v}"
+          # The version comes from the tag, not from a filename: this is what
+          # rejects an unexpected artifact name before it reaches a later step.
+          scripts/verify-artifacts.sh dist "$VERSION"
+      - name: Record artifact digests
+        id: digests
+        run: |
+          sha256sum dist/* | tee "$RUNNER_TEMP/SHA256SUMS"
+          # Random heredoc delimiter, per GitHub's own guidance for multiline
+          # outputs. The preceding step pins both filenames, so this content is
+          # two lines of hex and two known names -- but a fixed delimiter is a
+          # known escape hatch: a value containing the delimiter closes the
+          # block early and the rest becomes further `key=value` output lines.
+          # Do not hand a producer a delimiter it can predict.
+          delimiter="$(openssl rand -hex 16)"
+          {
+            echo "sums<<${delimiter}"
+            cat "$RUNNER_TEMP/SHA256SUMS"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+    outputs:
+      sums: ${{ steps.digests.outputs.sums }}
+
   publish:
-    name: Build and publish to ${{ startsWith(github.ref_name, 'test-') && 'TestPyPI' || 'PyPI' }}
+    name: Publish to ${{ startsWith(github.ref_name, 'test-') && 'TestPyPI' || 'PyPI' }}
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -20,29 +107,58 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          version: "latest"
-      - name: Verify tag matches package version
+          name: dist
+          path: dist
+      - name: Verify the downloaded files match the digests the build recorded
+        # The digests arrive through the environment, never interpolated into
+        # this script. `${{ }}` in a run: block is textual substitution, so a
+        # build-produced filename containing a quote would become shell code --
+        # and it would run here, inside the job that holds id-token: write.
+        #
+        # What this proves: the two files uploaded are the two files whose
+        # digests the build job recorded, under the names the tag implies --
+        # so nothing tampered with them in the artifact store or in transit,
+        # and the manifest cannot point somewhere else instead.
+        #
+        # What it does NOT prove: that the build itself was honest. The same
+        # job produced the artifact and the digest, and a build that is
+        # already compromised can also defeat the filename check in the step
+        # before it. The split's value is removing build scripts and
+        # transitive build dependencies from the job that holds the token,
+        # not making a compromised build harmless.
+        #
+        # coreutils only: no checkout, no project code, nothing installed.
+        env:
+          SUMS: ${{ needs.build.outputs.sums }}
         run: |
           VERSION="${GITHUB_REF_NAME#test-v}"
           VERSION="${VERSION#v}"
-          test "$VERSION" = "$(uv run --frozen python -c 'import toolgraph; print(toolgraph.__version__)')"
-      - run: scripts/audit-dependencies.sh runtime
-      - run: scripts/audit-dependencies.sh extras
-      - run: uv build
-      - run: uv run --frozen --group dev twine check dist/*
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/SHA256SUMS"
+          cat "$RUNNER_TEMP/SHA256SUMS"
+          # Bind the manifest to the two files that must be uploaded. Counting
+          # lines is not enough on its own: two valid records for the same
+          # path, or for a path outside dist/, would satisfy a count and a
+          # --check while saying nothing about what is in dist/.
+          expected="$(printf 'dist/toolgraph-%s-py3-none-any.whl\ndist/toolgraph-%s.tar.gz\n' "$VERSION" "$VERSION" | sort)"
+          actual="$(sed -E 's/^[0-9a-f]{64} [ *]//' "$RUNNER_TEMP/SHA256SUMS" | sort)"
+          test "$actual" = "$expected"
+          test "$(find dist -type f | wc -l)" -eq 2
+          sha256sum --check --strict "$RUNNER_TEMP/SHA256SUMS"
       - name: Publish to PyPI
         if: ${{ !startsWith(github.ref_name, 'test-') }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist
-          skip-existing: true
+          # No skip-existing on production. A version that is already there
+          # means something went wrong; silently reporting success would hide
+          # a partial or duplicate publication behind a green check.
       - name: Publish to TestPyPI
         if: ${{ startsWith(github.ref_name, 'test-') }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           repository-url: https://test.pypi.org/legacy/
           packages-dir: dist
+          # Rehearsals are re-run; a repeated TestPyPI upload is not a failure.
           skip-existing: true
