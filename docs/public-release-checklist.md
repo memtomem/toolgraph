@@ -1,13 +1,18 @@
 # Public release checklist
 
-**Status:** preparation nearly complete (2026-08-23). **The owner has decided
-to go public**; what remains is execution, not deciding. The earlier preparation
-pull requests have merged (#60, #70–#75, #77, #78). Still in review, not done:
-#82 (this source-distribution policy and these audit notes), #55, #79 and #61;
-#80 and #81 need a disposition. After those, what is left is owner-only: the
-visibility switch itself, the repository settings in step 3, the `pypi`
-environment, and the Trusted Publishers in step 5. PR #76 was closed — see
-"Internal operational material" below.
+**Status:** preparation complete except for owner-only actions (2026-08-24).
+**The owner has decided to go public**; what remains is execution, not deciding.
+
+Merged: #60, #70–#75, #77, #78 (earlier preparation), then #82 (the
+source-distribution allowlist and these audit notes), #61, #79, #55, and #84
+(the release-pipeline split described in step 5). Open: **#85**, the issue and
+pull request templates; **#80**, which is tree-identical to `main` and should be
+closed rather than merged; and **#81**, the `mcp` 2.0 major bump, deliberately
+deferred until CI runs again.
+
+Everything else is owner-only: the visibility switch itself, the repository
+settings in step 3, the `pypi` environment, and the Trusted Publishers in
+step 5. PR #76 was closed — see "Internal operational material" below.
 
 **Purpose:** collect in one place everything that must happen at the moment of
 the private → public switch, so that the *decision* stays separate from the
@@ -137,10 +142,12 @@ was originally filed under exactly that mistaken assumption.
 
 ## Before the flip
 
-1. **Rescan — re-run 2026-08-23 over all 155 reachable commits** (the earlier
-   pass covered 124). No secret findings: the only pattern hits are this file's
-   own documentation of the patterns it searches for, and no `.env`, key,
-   certificate or secret-shaped filename has ever been added on any ref.
+1. **Rescan — re-run 2026-08-24 over all 166 reachable commits** (earlier
+   passes covered 124, then 155). No secret findings: the only pattern hits are
+   this file's own documentation of the patterns it searches for, and no
+   `.env`, key, certificate or secret-shaped filename has ever been added on
+   any ref. Read the scan output as a **count**, never through `head` — the
+   false line corrected below is exactly what a truncated read produces.
 
    **Correction to the first version of this note, which was wrong.** It said
    commit *messages* carry no personal addresses. They do: eight squash-merge
@@ -148,7 +155,7 @@ was originally filed under exactly that mistaken assumption.
    message body — `52076c1`, `d5af4ac`, `9be1476`, `64a2dd2`, `4ffea8d`,
    `60ea017`, `ea5597a`, `b55242c`. The first scan missed them because its
    output was read truncated. This changes no decision: the same two addresses
-   already appear in author/committer metadata on 144 of 302 entries under the
+   already appear in author/committer metadata on 146 of 332 entries under the
    accepted no-rewrite decision above, and that decision is hereby recorded as
    covering the trailers too. It does mean the audit line was false, which is
    worse than the exposure it described. Other addresses in commit messages:
@@ -184,10 +191,11 @@ was originally filed under exactly that mistaken assumption.
      comments. **Caveat:** GitHub keeps comment *edit history* visible to anyone
      with read access, so those redactions are cosmetic until each sensitive
      revision is deleted individually in the web UI.
-   - Refs and metadata: audited 2026-08-23. 16 remote branches at audit time,
-     9 after the pruning below, all named after their change (`fix/`, `feat/`,
-     `chore/`, `docs/`, `dependabot/`); nothing in a branch name discloses more
-     than the commits already do. Commit messages scanned — see step 1, and note
+   - Refs and metadata: audited 2026-08-23, rechecked 2026-08-24. 16 remote
+     branches at first audit, 6 now that merged branches are pruned and
+     `delete_branch_on_merge` is on, all named after their change (`fix/`,
+     `feat/`, `chore/`, `docs/`, `dependabot/`); nothing in a branch name
+     discloses more than the commits already do. Commit messages scanned — see step 1, and note
      the correction there. Labels are the GitHub defaults plus
      `dependencies`, `github_actions`, `python:uv`, `public-release` and
      `polish`. No milestones, no project boards, no releases and no tags exist.
@@ -212,8 +220,16 @@ was originally filed under exactly that mistaken assumption.
    Done since: the repository description, topics and homepage are set,
    `CODE_OF_CONDUCT.md` is in the tree, and the `cla-signatures` branch now
    exists carrying an empty `signatures/v1/cla.json`, which is what
-   `.github/cla-check.py` writes signatures into. Discussions still has no
-   category guidance or moderation note while the README links to it.
+   `.github/cla-check.py` writes signatures into. Issue forms and a pull
+   request template are in review as #85. Discussions still has no category
+   guidance or moderation note while the README links to it.
+
+   **`SECURITY.md` currently dead-ends.** It sends reporters exclusively to
+   GitHub's private advisory form
+   (`/security/advisories/new`), and private vulnerability reporting is a
+   separate repository setting that is **off**. The first person to follow that
+   link after the flip finds nothing there. Enabling it is listed above; until
+   it is on, there is no working private channel at all — not a degraded one.
 
    Notes on the CLA gate that earlier drafts got wrong: the `needs-cla` label is
    never read or written by the workflow or the script, and
@@ -233,12 +249,29 @@ was originally filed under exactly that mistaken assumption.
    `test-v<VERSION>` → TestPyPI, clean-install verification, then the production
    `v<VERSION>` tag from the same reviewed commit. `pyproject.toml` embeds the
    README as package metadata, so **README and CHANGELOG must already be final
-   in the tagged commit** (issue #63). The `pypi` environment referenced by
-   `release.yml` does not exist on the repository yet. The source distribution
+   in the tagged commit** (issue #63) — the README's "Not on PyPI yet" banner
+   has to come out *in* that commit, not after it.
+
+   PR #84 changed how that workflow runs, and two of its consequences are
+   yours to act on:
+
+   - `release.yml` is now two jobs. `build` verifies and has no publishing
+     permission; `publish` holds `id-token: write`, checks out nothing and
+     installs nothing. **The `pypi` environment still does not exist** — create
+     it before the first tag. Give it a required reviewer if you want the
+     digest comparison below to be a gate rather than a post-hoc check: without
+     one, the production digest only exists once the artifact is already
+     immutable on PyPI.
+   - The release now **fails** if `CHANGELOG.md` has no dated
+     `## <VERSION> - YYYY-MM-DD` heading, and if `dist/` holds anything but the
+     two expected files. Both are deliberate; do not work around them at tag
+     time.
+
+   The source distribution
    now has an explicit allowlist (`[tool.hatch.build.targets.sdist]` in
    `pyproject.toml`): the package, `README.md` (which PyPI renders as the
    project page), `LICENSE`, `CHANGELOG.md`, `SECURITY.md`, and the JSON
-   contracts — 46 entries, down from 145, with tests, docs, examples, scripts,
+   contracts — 48 entries, down from 145, with tests, docs, examples, scripts,
    CI workflows, the lockfile and `docker-compose.yml` no longer shipped.
    **Consequence to state rather than discover later:** the published sdist
    cannot run the upstream test suite, so a downstream redistributor packaging
@@ -246,12 +279,15 @@ was originally filed under exactly that mistaken assumption.
    `tests/`, `contracts/fixtures/`, `scripts/`, `.github/workflows/`, `docs/`
    and the `Makefile` — `tests/test_release_hardening.py` reads all of those —
    which is most of the repository back again. Revisit if a redistributor asks.
-   A
-   freshly built archive was inspected and rebuilds the wheel standalone, and
-   the wheel is byte-for-byte unaffected. `.gitignore` is still present because
-   hatchling always ships the VCS ignore file; an exclude entry for it has no
-   effect. **Inspect the archive again in the release PR** rather than trusting
-   this note.
+
+   A freshly built archive was inspected and rebuilds the wheel byte for byte;
+   `scripts/verify-artifacts.sh` now asserts that on every release and every
+   pull request, so it is checked rather than remembered. `.gitignore` is still
+   present because hatchling always ships the VCS ignore file; an exclude entry
+   for it has no effect. The archive is 48 entries as of `main` — the count
+   moves whenever a module or contract is added, which is why the check is a
+   rule and not a file list. **Inspect the archive again in the release PR**
+   rather than trusting this note.
 
 ## Execution
 
