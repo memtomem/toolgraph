@@ -73,5 +73,28 @@ path = "toolgraph/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["toolgraph"]
 
+# Explicit allowlist for the source distribution. Without it hatchling ships
+# everything Git tracks (145 entries: tests, docs, examples, CI workflows,
+# docker-compose.yml, the lockfile). The sdist is a build input for the wheel,
+# not a repository mirror: it carries the package, the metadata files PyPI
+# renders, and the JSON contracts that define the published interfaces.
+# `contracts/fixtures/` is test data and is excluded with the tests.
+[tool.hatch.build.targets.sdist]
+include = [
+    "toolgraph/",
+    "contracts/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "SECURITY.md",
+    "pyproject.toml",
+]
+exclude = [
+    "contracts/fixtures/",
+    "docs/",
+]
+# Note: hatchling always ships the VCS ignore file (.gitignore) in an sdist;
+# an exclude entry for it has no effect.
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
