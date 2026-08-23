@@ -83,8 +83,9 @@ crawler likewise isolates per-server failures and allows partial success.
 What needs strengthening is operational procedure:
 
 - A policy is needed for whether ingest may proceed while crawl failures exist.
-- When `drift` results remain, the selector should automatically exclude those
-  tools from the candidate set.
+- ~~When `drift` results remain, the selector should automatically exclude those
+  tools from the candidate set.~~ **Implemented:** `DRIFTED` is in the reject
+  set of *every* profile — `strict`, `review` and `explore` (`selector.py`).
 - A graph snapshot or export around large changes makes rollback decisions
   easier.
 - HTTP serving needs health/readiness endpoints, timeouts, request size limits
@@ -314,14 +315,19 @@ not full RL.
 
 The following APIs make selector integration easier.
 
-> **Erratum (2026-07-09):** the APIs in this section were implemented and
-> shipped on 2026-06-11. The normative form is `toolgraph/graph/selector.py`,
-> and `tests/test_selector_contract.py` pins it as a consumer contract
-> (memtomem-stm). Changes from the draft: `path` (singular) became `paths` (a
-> list); the `provenance_score` field was dropped from `rank_features` output
-> (the unbacked signal is absorbed into `has_unbacked_edges` plus a risk_score
-> of 0.4); `risk_score` comes from a fixed table. The samples below have been
-> updated to the implemented shape.
+> **Status (updated 2026-08-23).** Everything in this section is **implemented
+> and shipped** (since 2026-06-11). The normative form is
+> `toolgraph/graph/selector.py`; all three surfaces are exposed on the CLI
+> (`toolgraph/cli.py`) and through the MCP server (`toolgraph/server/app.py`).
+> `tests/test_selector_contract.py` pins `eligible_tools` and `rank_features`
+> as a consumer contract (memtomem-stm) — note it does **not** pin
+> `selection_explain`.
+>
+> Changes from the original draft: `path` (singular) became `paths` (a list,
+> `selector.py:319`); `provenance_score` was dropped from `rank_features`
+> output (the unbacked signal is absorbed into `has_unbacked_edges` plus a
+> `risk_score` of 0.4); `risk_score` comes from a fixed first-match table
+> (`selector.py`). The samples below reflect the implemented shape.
 
 ### `rank_features(agent, candidates)`
 
@@ -372,11 +378,14 @@ Returns the hard-filter result together with reject reasons.
 ### `selection_explain(agent, tool)`
 
 A compact result for explaining the final choice to a user or operator.
+`decision` is `"eligible"` or `"rejected"` (`selector.py:362`) — it reports
+whether the tool survives the profile's hard filter, not that a selector picked
+it.
 
 ```json
 {
   "tool_key": "git::git_status",
-  "decision": "selected",
+  "decision": "eligible",
   "reasons": [
     "agent has CAN_CALL grant",
     "no DENY policy path found",
@@ -388,16 +397,16 @@ A compact result for explaining the final choice to a user or operator.
 
 ## Implementation notes against this repository
 
-Given the current code structure, the most natural approach is to add small
-pieces in these places:
+**All of the following shipped on 2026-06-11.** The table records where each
+piece landed, not work to do:
 
-| Area | Current location | Direction |
+| Area | Location | Status |
 | --- | --- | --- |
-| Graph query | `toolgraph/graph/queries.py` | Add a batch candidate feature query |
-| MCP wrapper | `toolgraph/server/app.py` | Expose `rank_features`, `eligible_tools`, `selection_explain` |
-| CLI | `toolgraph/cli.py` | Add commands an operator can verify by hand |
-| Models | `toolgraph/models.py` | Add pydantic models for selection features/results |
-| Tests | `tests/test_queries.py`, `tests/test_server.py` | Verify the direct query and the MCP shape together |
+| Selector logic | `toolgraph/graph/selector.py` | Shipped — normative form |
+| Graph query | `toolgraph/graph/queries.py` | Shipped — batch candidate features |
+| MCP wrapper | `toolgraph/server/app.py` | Shipped — `rank_features`, `eligible_tools`, `selection_explain` |
+| CLI | `toolgraph/cli.py` | Shipped — `rank-features`, `eligible-tools`, `selection-explain` |
+| Consumer contract | `tests/test_selector_contract.py` | Shipped — pins `eligible_tools` and `rank_features` |
 
 ### Direction for the `rank_features` query
 
@@ -451,9 +460,12 @@ Four fields are essential:
 - `reject_reasons`: why each candidate was excluded
 - `outcome`: execution success, latency, retries, user correction
 
-`graph_generation` does not exist in the code yet, so introducing a run id or
-timestamp that increments when crawl/ingest finishes is the starting point for
-follow-up work.
+**`graph_generation` already exists** (ADR-0004). Every MCP response is stamped
+with it (`toolgraph/server/app.py`), it is carried through preflight and the CLI
+(`toolgraph/preflight.py`, `toolgraph/cli.py`), and
+`tests/test_selector_contract.py` pins that stamping as part of the consumer
+contract. What is still missing is the *sink*: nothing in this repository
+records selection events, `ranker_version` or outcomes today.
 
 ## Verification criteria
 
@@ -472,12 +484,14 @@ functional ones:
 
 ## Roadmap
 
-1. **Selector adapter**
-   Use `check-access`, `drift` and `unmapped-tools` results as a hard filter in
-   front of the existing selector.
+Items 1, 2 and 5 are **done**; they are kept here so the sequence still reads as
+a whole.
 
-2. **Batch feature query**
-   Add a `rank_features`-style query that evaluates N candidates at once.
+1. ~~**Selector adapter**~~ — **shipped.** `eligible_tools` applies the hard
+   filter, with `DRIFTED` rejecting under every profile.
+
+2. ~~**Batch feature query**~~ — **shipped.** `rank_features` evaluates N
+   candidates in one call.
 
 3. **Telemetry schema**
    Store selection events, execution outcomes, user corrections and operator
@@ -486,8 +500,8 @@ functional ones:
 4. **Offline eval**
    Tune heuristic weights against a fixed test set and replay logs.
 
-5. **Feature cache**
-   Cache graph-derived features per crawl/ingest generation.
+5. ~~**Feature cache**~~ — the generation counter this depends on is shipped
+   (`graph_generation`); the cache layer on top of it is not.
 
 6. **Learning-to-rank**
    Train ranking only over eligible candidates, after the hard filter.
@@ -507,11 +521,9 @@ policies, resources, provenance and drift into the selection context lets the
 model choose from fewer candidates, at lower risk, with a more explainable
 result.
 
-The most valuable next steps are not reinforcement learning, but these three:
-
-1. A graph-aware hard filter
-2. A batch rank-feature API
-3. Selection telemetry and offline evaluation
-
-Once those three are stable, learning-to-rank and a contextual bandit attach
-naturally.
+The first two of the three steps this report originally recommended are now
+shipped — the graph-aware hard filter and the batch rank-feature API. **The
+remaining one is selection telemetry and offline evaluation**, and nothing in
+this repository writes a selection event yet. That, not reinforcement learning,
+is the next piece of real work; learning-to-rank and a contextual bandit attach
+naturally once it is stable.

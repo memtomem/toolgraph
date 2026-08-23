@@ -1,8 +1,9 @@
 # Public release checklist
 
-**Status:** preparation in progress (2026-08-23). The visibility decision has
-not been made. Open blockers are tracked as issues #63 and #67 and as pull
-requests #70–#76.
+**Status:** preparation in progress (2026-08-23). **The owner has decided to go
+public**; what remains is finishing the items below, not deciding. Open blockers
+are tracked as issues #63 and #67 and as pull requests #70–#75 and #77.
+PR #76 was closed — see "Internal operational material" below.
 
 **Purpose:** collect in one place everything that must happen at the moment of
 the private → public switch, so that the *decision* stays separate from the
@@ -24,9 +25,11 @@ decision, never a reason to make it. Settle the exposure items below first.
 Two facts govern everything else in this document, and they were nearly missed:
 
 1. **Deleting a file does not remove it.** Under the no-history-rewrite
-   decision below, every blob ever committed stays readable — `git show
-   <commit>:<path>` works for anyone. Removing something in a new commit only
-   changes the branch tip and the next sdist.
+   decision below, any blob still reachable — from a retained branch, tag, PR
+   ref or unchanged history — stays readable via `git show <commit>:<path>`.
+   Removing something in a new commit only changes the branch tip and the next
+   sdist. (Objects that become genuinely unreachable can eventually be garbage
+   collected; nothing here relies on that.)
 2. **Open branches carry their own copies.** A file removed on one branch is
    still at the tip of every other open branch until those are merged or
    deleted.
@@ -37,13 +40,15 @@ was originally filed under exactly that mistaken assumption.
 
 ## Completed (2026-08-18)
 
-- **No real secrets.** Every blob across all 124 commits of history was scanned
+- **No matches in the scoped secret scan.** Every blob across all 124 commits was scanned
   for `sk-ant-` / `ghp_` / `AKIA` / `AIza` / `xox*-` / `BEGIN * PRIVATE KEY`
   patterns: no matches. The only sensitive-looking filename ever committed is
   `.env.example`; no real `.env` exists. No local absolute paths (`/Users/…`),
   private IPs or internal hostnames appear in the documents.
-  **Know this scan's limits:** it covers token patterns and filenames inside Git
-  objects only, so "no secrets" is a claim about *tracked files*.
+  **Know this scan's limits:** it covers a short list of token patterns and
+  filenames inside tracked Git objects only. That bounds both *where* it looked
+  and *what* it could detect — it is not evidence that no secret of any shape
+  exists.
 - **Credential-shaped strings are all test sentinels.** `alice:secret@example.test`,
   `hunter2` and similar exist to verify the redaction contract. Deleting them
   would remove the regression coverage that prevents credential leaks.
@@ -68,7 +73,7 @@ was originally filed under exactly that mistaken assumption.
   `ref: default_branch` with `persist-credentials: false` and never runs
   PR-branch code — the same pattern memtomem runs in production. Anyone editing
   that workflow must preserve that property.
-- **Licensing aligned with memtomem (PRs #70, #71).** `LICENSE` is already
+- **Licensing alignment — prepared, NOT merged (PRs #70, #71 are still open).** `LICENSE` is already
   byte-identical to memtomem's, including the trailing
   `Copyright 2025-2026 DAPADA Inc. and memtomem contributors`, and
   `pyproject.toml` uses the same `authors` form. Added on top: `CLA.md`
@@ -99,20 +104,32 @@ was originally filed under exactly that mistaken assumption.
   If the policy ever changes, the mailmap must map **email only and preserve
   author names** — the original draft rewrote the names too, erasing attribution.
 
-- **Internal operational material — moved for tidiness, not for privacy
-  (corrected 2026-08-23).** Six files describing the toolgraph / syncmill /
-  tracegraph integration were moved to the private `memtomem-docs` repository
-  (PR #76 here, memtomem-docs#64 there):
-  `docs/gate-e-p4-operational.md`, `docs/ecosystem-integration-plan.md`,
-  `scripts/gate_e_operational.py`, `scripts/ecosystem_smoke.py`,
-  `tests/test_gate_e_operational.py`,
-  `examples/governance-syncmill-smoke.yaml`.
-  This was originally justified as protecting confidential material. **That
-  justification was wrong** and is retracted: under the no-rewrite decision the
-  content stays readable in history and at the tip of every other open branch,
-  so the move privatizes nothing. It was reviewed on 2026-08-23 and the material
-  was accepted as non-confidential. The move stands only as decluttering of the
-  public tree; it cost eight tests, which is worth revisiting.
+- **Internal operational material — kept; the move was retracted (2026-08-23).**
+  PR #76 proposed moving six files describing the toolgraph / syncmill /
+  tracegraph integration into the private `memtomem-docs` repository, on the
+  grounds that they were confidential. **That reasoning was wrong** — see the
+  section above: the content stays readable in history and at the tip of every
+  other open branch, so the move privatized nothing. The material was then
+  reviewed and accepted as **not confidential**, which removed the only reason
+  to move it.
+
+  PR #76 was therefore **closed rather than merged**. Merging it would have cost
+  1,439 lines, two runnable integration scripts, eight tests and two
+  release-hardening assertions, while orphaning `scripts/gate_e_mcp_stub.py`
+  (its only caller was the script #76 deleted) — all for no privacy benefit. A
+  copy remains in `memtomem-docs` (memtomem-docs#64) as a harmless backup. If
+  this material later becomes genuinely obsolete, remove it through a
+  deprecation PR that says so and handles the stub.
+
+- **Documentation language.** English is the default for every document.
+  Korean is allowed only as an explicitly paired translation of an English
+  original — currently `docs/beginner-guide.md` +
+  `docs/ko-beginner-guide.md`, both linked from the README. That pair is a
+  deliberate exception to the rule, not an oversight.
+  All three previously Korean-only documents are now English: this checklist,
+  `docs/context-engineering-tool-selection-report.md` and
+  `docs/ecosystem-integration-plan.md` (the last of which stays in this
+  repository now that #76 is closed).
 
 ## Before the flip
 
@@ -145,11 +162,13 @@ was originally filed under exactly that mistaken assumption.
      comments. **Caveat:** GitHub keeps comment *edit history* visible to anyone
      with read access, so those redactions are cosmetic until each sensitive
      revision is deleted individually in the web UI.
-   - Refs and metadata: **not yet audited.** Branch names, 138 commit messages,
+   - Refs and metadata: **not yet audited.** Branch names, 139 commit messages,
      labels, milestones and project boards all become public.
    - Forks: 0. Watchers: 0.
 
-3. **Repository settings.** Enable immediately after the flip: secret scanning
+3. **Repository settings.** Note first that **changing visibility disables push
+   rulesets**, so there is an unprotected window straight after the flip —
+   re-enable and verify them as the first action, not later. Then enable: secret scanning
    and push protection, Dependabot alerts, code scanning, **private
    vulnerability reporting** (`SECURITY.md` already promises this channel but it
    is a separate, currently unset repository setting), and branch protection on
@@ -165,9 +184,13 @@ was originally filed under exactly that mistaken assumption.
    and homepage are empty, and Discussions was enabled without a code of
    conduct, moderation policy or category guidance while the README links to it.
 
-   The CLA workflow additionally needs a `PERSONAL_ACCESS_TOKEN` secret, a
-   `cla-signatures` branch and a `needs-cla` label. **None of these exist yet**,
-   so the workflow fails on its first run as things stand.
+   The CLA workflow needs a `cla-signatures` branch before it can record a
+   signature; that branch does not exist. Corrections to the earlier note here:
+   the `needs-cla` label is never read or written by the workflow or the script,
+   and `PERSONAL_ACCESS_TOKEN` is optional — `.github/cla-check.py` falls back to
+   `GITHUB_TOKEN`. Separately, **PR #70 is not mergeable as written**: `CLA.md`
+   grants rights over every product "owned or managed by DAPADA", contradicting
+   the per-repository promise in `CONTRIBUTING.md`.
 
 4. **CI.** Standard runners are free once public, so jobs should run regardless
    of billing. Note what that first green run actually proves: the Windows and
@@ -183,11 +206,12 @@ was originally filed under exactly that mistaken assumption.
    README as package metadata, so **README and CHANGELOG must already be final
    in the tagged commit** (issue #63). The `pypi` environment referenced by
    `release.yml` does not exist on the repository yet. The source distribution
-   has no include/exclude policy and currently ships workflows, tests, scripts,
-   docs and this checklist — define an explicit allowlist and inspect the final
-   archive before publishing.
+   has no include/exclude policy: a 0.1.0 archive built earlier contained 139
+   entries including workflows, tests, scripts and docs. Define an explicit
+   allowlist and **inspect a freshly built archive** before publishing rather
+   than inferring from that older build.
 
-## Not decided
+## Execution
 
-Whether to go public at all. It is hard to reverse and exposes the whole
-history, so the repository owner decides and executes it directly.
+The visibility switch itself is hard to reverse and exposes the whole history,
+so the repository owner executes it directly once the items above are closed.
