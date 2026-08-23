@@ -4,6 +4,9 @@ All notable changes to Toolgraph are documented here.
 
 ## 0.0.1 - Unreleased
 
+First public release. The `v0.0.1` tag, and with it the PyPI publication,
+follows the repository's visibility switch; see `docs/releasing.md`.
+
 Initial public alpha release.
 
 - Crawl MCP servers into a graph and combine factual capability data with
@@ -20,7 +23,7 @@ Initial public alpha release.
   read-only annotation instead of being assumed, failing closed to `false`
   whenever that annotation cannot be read.
 
-### Upgrade note for pre-release users
+### Upgrade note for pre-release users (historical)
 
 `driver.session()` and `driver.verify_connectivity()` now raise
 `BackendUnavailableError` where they previously surfaced the raw `neo4j`
