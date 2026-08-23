@@ -1,6 +1,10 @@
 # Toolgraph
 
-> **Alpha (`0.1.x`).** Interfaces and artifact schemas may change before 1.0.
+> 🚧 **Alpha** — APIs and defaults may change between `0.x` minor releases.
+> Feedback and issue reports are especially welcome:
+> [Issues](https://github.com/memtomem/toolgraph/issues) ·
+> [Discussions](https://github.com/memtomem/toolgraph/discussions)
+>
 > Toolgraph is an advisory control-plane tool, not a runtime security boundary.
 
 A graph-native registry for MCP tools. It crawls MCP servers into a Neo4j graph,

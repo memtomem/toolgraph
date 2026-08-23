@@ -2,7 +2,7 @@
 
 All notable changes to Toolgraph are documented here.
 
-## 0.1.0 - Unreleased
+## 0.0.1 - Unreleased
 
 Initial public alpha release.
 
