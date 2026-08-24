@@ -76,27 +76,15 @@ Maintainers should follow the [release runbook](https://github.com/memtomem/tool
 
 ### Install
 
-> **Not on PyPI yet.** `toolgraph` has not had its first release, so install
-> from source for now. The PyPI commands below will work from `v0.0.1` on.
-
 The recommended local backend is included through the `ladybug` extra:
-
-```bash
-git clone https://github.com/memtomem/toolgraph.git
-cd toolgraph
-uv tool install --from '.[ladybug]' toolgraph
-```
-
-That puts `toolgraph` on your `PATH`; run `uv tool update-shell` once if `uv`
-says its bin directory is not there yet.
-
-<details>
-<summary>After <code>v0.0.1</code> is published</summary>
 
 ```bash
 uv tool install "toolgraph[ladybug]"
 # or: python -m pip install "toolgraph[ladybug]"
 ```
+
+That puts `toolgraph` on your `PATH`; run `uv tool update-shell` once if `uv`
+says its bin directory is not there yet.
 
 You can also inspect the CLI without a persistent install:
 
@@ -104,12 +92,20 @@ You can also inspect the CLI without a persistent install:
 uvx --from "toolgraph[ladybug]" toolgraph --version
 ```
 
+<details>
+<summary>From source</summary>
+
+```bash
+git clone https://github.com/memtomem/toolgraph.git
+cd toolgraph
+uv tool install --from '.[ladybug]' toolgraph
+```
+
 </details>
 
 ### First policy bundle
 
-Once `toolgraph` is on your `PATH`, no Docker or Node.js is required — and
-after the first release, no clone either:
+Once `toolgraph` is on your `PATH`, no Docker, Node.js or clone is required:
 
 ```bash
 toolgraph example init toolgraph-quickstart
