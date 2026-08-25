@@ -468,76 +468,91 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
     an ``AGENT_NOT_FOUND`` verdict) if you need to distinguish "no unsafe
     tools" from "agent doesn't exist".
     """
-    rows: list[dict] = []
     with session() as s:
-        # Same exception-collection rule as _deny_evidence_for: one row per
-        # deny path, the most specific matching exception wins the reason.
-        for r in s.run(
-            """
-            MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)
-                  -[acc:READS|WRITES]->(res:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-            OPTIONAL MATCH (exc:ExpectedException {agent:$agent, tool_key:t.key, policy:p.id})
-              WHERE exc.resource IS NULL OR exc.resource = res.uri
-            WITH t.key AS tool_key, t.name AS tool, t.server AS server,
-                 type(acc) AS mode, res.uri AS resource, p.id AS policy,
-                 acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
-                 gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-                 collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-                   {resource: exc.resource, reason: exc.reason} END) AS exceptions
-            RETURN tool_key, tool, server, 'resource' AS via, mode, resource, policy,
-                   source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
-                   exceptions
-            ORDER BY tool, resource
-            """,
-            agent=agent,
-        ):
-            d = dict(r)
-            d["path"] = _resource_path(d["tool"], d["mode"], d["resource"], d["policy"])
-            d["provenance"] = _prov(r)
-            exception = _picked_exception(r)
-            policy_prov = _gov_prov(r)
-            if policy_prov is not None:
-                d["policy_provenance"] = policy_prov
-            d["classification"] = (
-                "authorized_but_governed" if exception else "violation"
-            )
-            d["exception_reason"] = exception.get("reason") if exception else None
-            for k in ("source", "confidence", "evidence",
-                      "gov_source", "gov_confidence", "gov_evidence",
-                      "exceptions"):
-                d.pop(k, None)
-            if d.get("exception_reason") is None:
-                d.pop("exception_reason", None)
-            rows.append(d)
-        for r in s.run(
-            """
-            MATCH (:Agent {id:$agent})-[:CAN_CALL]->(t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-            OPTIONAL MATCH (exc:ExpectedException {agent:$agent, tool_key:t.key, policy:p.id})
-              WHERE exc.resource IS NULL
-            WITH t.key AS tool_key, t.name AS tool, t.server AS server, p.id AS policy,
-                 g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-                 collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-                   {resource: exc.resource, reason: exc.reason} END) AS exceptions
-            RETURN tool_key, tool, server, 'tool' AS via, null AS mode, null AS resource,
-                   policy, source, confidence, evidence,
-                   exceptions
-            ORDER BY tool
-            """,
-            agent=agent,
-        ):
-            d = dict(r)
-            d["path"] = _tool_path(d["tool"], d["policy"])
-            d["provenance"] = _prov(r)
-            exception = _picked_exception(r)
-            d["classification"] = (
-                "authorized_but_governed" if exception else "violation"
-            )
-            d["exception_reason"] = exception.get("reason") if exception else None
-            for k in ("source", "confidence", "evidence", "exceptions"):
-                d.pop(k, None)
-            if d.get("exception_reason") is None:
-                d.pop("exception_reason", None)
-            rows.append(d)
+        rows = _unsafe_callable_rows(s, [agent])
+    for d in rows:
+        d.pop("agent", None)
+    return rows
+
+
+def _unsafe_callable_rows(s: Session, agents: list[str]) -> list[dict]:
+    """Unsafe-callable rows for every agent in ``agents``, in two queries.
+
+    Batched so ``audit_report`` costs a fixed number of queries instead of
+    two per agent. Rows carry an ``agent`` key and come back ordered by
+    (agent, tool, resource) — the same order the per-agent loop produced.
+    """
+    rows: list[dict] = []
+    # Same exception-collection rule as _deny_evidence_for: one row per
+    # deny path, the most specific matching exception wins the reason.
+    for r in s.run(
+        """
+        MATCH (a:Agent)-[:CAN_CALL]->(t:Tool)
+              -[acc:READS|WRITES]->(res:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+        WHERE a.id IN $agents
+        OPTIONAL MATCH (exc:ExpectedException {tool_key:t.key, policy:p.id})
+          WHERE exc.agent = a.id AND (exc.resource IS NULL OR exc.resource = res.uri)
+        WITH a.id AS agent, t.key AS tool_key, t.name AS tool, t.server AS server,
+             type(acc) AS mode, res.uri AS resource, p.id AS policy,
+             acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
+             gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
+             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+               {resource: exc.resource, reason: exc.reason} END) AS exceptions
+        RETURN agent, tool_key, tool, server, 'resource' AS via, mode, resource, policy,
+               source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
+               exceptions
+        ORDER BY agent, tool, resource
+        """,
+        agents=agents,
+    ):
+        d = dict(r)
+        d["path"] = _resource_path(d["tool"], d["mode"], d["resource"], d["policy"])
+        d["provenance"] = _prov(r)
+        exception = _picked_exception(r)
+        policy_prov = _gov_prov(r)
+        if policy_prov is not None:
+            d["policy_provenance"] = policy_prov
+        d["classification"] = (
+            "authorized_but_governed" if exception else "violation"
+        )
+        d["exception_reason"] = exception.get("reason") if exception else None
+        for k in ("source", "confidence", "evidence",
+                  "gov_source", "gov_confidence", "gov_evidence",
+                  "exceptions"):
+            d.pop(k, None)
+        if d.get("exception_reason") is None:
+            d.pop("exception_reason", None)
+        rows.append(d)
+    for r in s.run(
+        """
+        MATCH (a:Agent)-[:CAN_CALL]->(t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
+        WHERE a.id IN $agents
+        OPTIONAL MATCH (exc:ExpectedException {tool_key:t.key, policy:p.id})
+          WHERE exc.agent = a.id AND exc.resource IS NULL
+        WITH a.id AS agent, t.key AS tool_key, t.name AS tool, t.server AS server, p.id AS policy,
+             g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
+             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+               {resource: exc.resource, reason: exc.reason} END) AS exceptions
+        RETURN agent, tool_key, tool, server, 'tool' AS via, null AS mode, null AS resource,
+               policy, source, confidence, evidence,
+               exceptions
+        ORDER BY agent, tool
+        """,
+        agents=agents,
+    ):
+        d = dict(r)
+        d["path"] = _tool_path(d["tool"], d["policy"])
+        d["provenance"] = _prov(r)
+        exception = _picked_exception(r)
+        d["classification"] = (
+            "authorized_but_governed" if exception else "violation"
+        )
+        d["exception_reason"] = exception.get("reason") if exception else None
+        for k in ("source", "confidence", "evidence", "exceptions"):
+            d.pop(k, None)
+        if d.get("exception_reason") is None:
+            d.pop("exception_reason", None)
+        rows.append(d)
     return rows
 
 
@@ -551,9 +566,16 @@ def audit_report(include_grants: bool = False) -> dict:
     unsafe_violations: list[dict] = []
     authorized_but_governed: list[dict] = []
     agents = _agent_ids()
+    # One batched pass instead of two whole-graph traversals per agent.
+    # Rows regroup agent-major so the output order matches the historical
+    # per-agent loop exactly.
+    by_agent: dict[str, list[dict]] = {agent: [] for agent in agents}
+    if agents:
+        with session() as s:
+            for row in _unsafe_callable_rows(s, agents):
+                by_agent[row["agent"]].append(row)
     for agent in agents:
-        for row in unsafe_callable_tools(agent):
-            row = {"agent": agent, **row}
+        for row in by_agent[agent]:
             if row.get("classification") == "violation":
                 unsafe_violations.append(row)
             else:
