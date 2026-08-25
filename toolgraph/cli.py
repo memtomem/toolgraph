@@ -743,7 +743,10 @@ def policy_review_plan(
             {
                 "kind": artifact["kind"],
                 "output": str(output),
-                "artifact_digest": digest,
+                # Prefixed like preflight/control-preflight: artifact_digest
+                # follows SyncMill's ^sha256:[0-9a-f]{64}$ contract; bare hex
+                # is reserved for bundle_digest (memtomem-stm).
+                "artifact_digest": f"sha256:{digest}",
                 "graph_state": artifact["graph_state"],
                 "agent": artifact["agent"],
                 "profile": artifact["profile"],

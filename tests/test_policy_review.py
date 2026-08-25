@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -113,6 +114,11 @@ def test_review_plan_cli_writes_private_atomic_artifact(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     summary = json.loads(result.stdout)
     assert summary["decision_mode"] == "human_required"
+    # Ecosystem-facing artifact digests are sha256:-prefixed (SyncMill's
+    # ^sha256:[0-9a-f]{64}$); bare hex is reserved for bundle_digest.
+    assert summary["artifact_digest"] == (
+        "sha256:" + hashlib.sha256(output.read_bytes()).hexdigest()
+    )
     assert json.loads(output.read_text())["candidates"][0]["automatic_change"] is False
     if os.name != "nt":
         assert output.stat().st_mode & 0o777 == 0o600
