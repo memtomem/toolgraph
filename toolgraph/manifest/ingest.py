@@ -485,17 +485,31 @@ def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestRepo
 
 
 def governance_counts() -> dict[str, int]:
-    queries = {
-        "agent": "MATCH (n:Agent) RETURN count(n) AS count",
-        "policy": "MATCH (n:Policy) RETURN count(n) AS count",
-        "can_call": "MATCH ()-[r:CAN_CALL]->() RETURN count(r) AS count",
-        "reads": "MATCH ()-[r:READS]->() RETURN count(r) AS count",
-        "writes": "MATCH ()-[r:WRITES]->() RETURN count(r) AS count",
-        "governed_by": "MATCH ()-[r:GOVERNED_BY]->() RETURN count(r) AS count",
-        "expected_exception": "MATCH (n:ExpectedException) RETURN count(n) AS count",
-    }
+    """Authored-governance tallies in one UNION ALL statement."""
+    query = """
+        MATCH (n:Agent) RETURN 'agent' AS name, count(n) AS count
+        UNION ALL
+        MATCH (n:Policy) RETURN 'policy' AS name, count(n) AS count
+        UNION ALL
+        MATCH ()-[r:CAN_CALL]->() RETURN 'can_call' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:READS]->() RETURN 'reads' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:WRITES]->() RETURN 'writes' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:GOVERNED_BY]->() RETURN 'governed_by' AS name, count(r) AS count
+        UNION ALL
+        MATCH (n:ExpectedException) RETURN 'expected_exception' AS name, count(n) AS count
+    """
+    names = (
+        "agent",
+        "policy",
+        "can_call",
+        "reads",
+        "writes",
+        "governed_by",
+        "expected_exception",
+    )
     with session() as s:
-        return {
-            name: (record["count"] if (record := s.run(query).single()) else 0)
-            for name, query in queries.items()
-        }
+        counts = {r["name"]: r["count"] for r in s.run(query)}
+    return {name: counts.get(name, 0) for name in names}

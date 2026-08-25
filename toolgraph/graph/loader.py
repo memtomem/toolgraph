@@ -257,16 +257,22 @@ def retire_unlisted_servers(keep: set[str]) -> tuple[list[str], list[str]]:
 
 
 def graph_counts() -> dict[str, int]:
-    """Node/edge tallies — used by the idempotency check and the demo."""
-    queries = {
-        "mcpserver": "MATCH (n:MCPServer) RETURN count(n) AS count",
-        "tool": "MATCH (n:Tool) RETURN count(n) AS count",
-        "resource": "MATCH (n:Resource) RETURN count(n) AS count",
-        "exposes": "MATCH ()-[r:EXPOSES]->() RETURN count(r) AS count",
-        "provides": "MATCH ()-[r:PROVIDES]->() RETURN count(r) AS count",
-    }
+    """Node/edge tallies — used by the idempotency check and the demo.
+
+    One UNION ALL statement instead of five separate count queries.
+    """
+    query = """
+        MATCH (n:MCPServer) RETURN 'mcpserver' AS name, count(n) AS count
+        UNION ALL
+        MATCH (n:Tool) RETURN 'tool' AS name, count(n) AS count
+        UNION ALL
+        MATCH (n:Resource) RETURN 'resource' AS name, count(n) AS count
+        UNION ALL
+        MATCH ()-[r:EXPOSES]->() RETURN 'exposes' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:PROVIDES]->() RETURN 'provides' AS name, count(r) AS count
+    """
+    names = ("mcpserver", "tool", "resource", "exposes", "provides")
     with session() as s:
-        return {
-            name: (record["count"] if (record := s.run(query).single()) else 0)
-            for name, query in queries.items()
-        }
+        counts = {r["name"]: r["count"] for r in s.run(query)}
+    return {name: counts.get(name, 0) for name in names}
