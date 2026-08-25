@@ -27,7 +27,6 @@ from toolgraph.models import (
 )
 from toolgraph.preflight import build_preflight
 from toolgraph.review_candidates import (
-    LoadedReviewReport,
     ReviewCandidateError,
     ReviewCandidateDurabilityWarning,
     _writer_lock,
