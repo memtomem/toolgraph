@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 import re
+import threading
 from typing import Any
 
 from neo4j import Driver, GraphDatabase, Session
@@ -25,6 +26,11 @@ from toolgraph import config
 
 _driver: Driver | None = None
 _ladybug_database: Any | None = None
+# Serializes lazy backend construction. The streamable-HTTP MCP server can run
+# two first-requests concurrently; an unguarded check-then-set would leak one
+# Neo4j driver, or open a second Ladybug Database that trips the file lock and
+# misreports a spurious BACKEND_LOCKED.
+_backend_lock = threading.Lock()
 
 
 class BackendConfigurationError(RuntimeError):
@@ -190,10 +196,12 @@ def get_driver() -> Driver:
         raise BackendConfigurationError("Neo4j driver requested while backend=ladybug")
     global _driver
     if _driver is None:
-        _driver = GraphDatabase.driver(
-            config.settings.neo4j_uri,
-            auth=(config.settings.neo4j_user, config.settings.neo4j_password),
-        )
+        with _backend_lock:
+            if _driver is None:
+                _driver = GraphDatabase.driver(
+                    config.settings.neo4j_uri,
+                    auth=(config.settings.neo4j_user, config.settings.neo4j_password),
+                )
     return _driver
 
 
@@ -208,18 +216,21 @@ def _get_ladybug_database() -> Any:
             "backend=ladybug requires the 'ladybug' extra: "
             "install with `uv sync --extra ladybug` or `pip install toolgraph[ladybug]`"
         ) from exc
-    path = Path(config.settings.db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        _ladybug_database = lb.Database(path)
-    except RuntimeError as exc:
-        message = str(exc)
-        if "lock" in message.lower() or "another process" in message.lower():
-            raise BackendLockedError(
-                f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
-            ) from exc
-        raise
-    return _ladybug_database
+    with _backend_lock:
+        if _ladybug_database is not None:
+            return _ladybug_database
+        path = Path(config.settings.db_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _ladybug_database = lb.Database(path)
+        except RuntimeError as exc:
+            message = str(exc)
+            if "lock" in message.lower() or "another process" in message.lower():
+                raise BackendLockedError(
+                    f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
+                ) from exc
+            raise
+        return _ladybug_database
 
 
 def verify_connectivity() -> None:
@@ -255,9 +266,10 @@ def session() -> Iterator[Session | LadybugSession]:
 
 def close_driver() -> None:
     global _driver, _ladybug_database
-    if _driver is not None:
-        _driver.close()
-        _driver = None
-    if _ladybug_database is not None:
-        _ladybug_database.close()
-        _ladybug_database = None
+    with _backend_lock:
+        if _driver is not None:
+            _driver.close()
+            _driver = None
+        if _ladybug_database is not None:
+            _ladybug_database.close()
+            _ladybug_database = None
