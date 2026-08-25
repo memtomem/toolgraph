@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from enum import Enum
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -143,15 +144,24 @@ def example_init(
             f"destination already exists: {destination}", param_hint="DESTINATION"
         )
     source = files("toolgraph").joinpath("quickstart")
-    with as_file(source) as source_path:
-        shutil.copytree(source_path, destination)
-    servers_path = destination / "servers.yaml"
-    servers_path.write_text(
-        servers_path.read_text(encoding="utf-8").replace(
-            "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
-        ),
-        encoding="utf-8",
-    )
+    # Stage next to the destination and rename once complete: a failure
+    # mid-copy must not leave a half-populated quickstart that blocks the
+    # "destination already exists" guard on the next run.
+    staging = destination.parent / f".{destination.name}.tmp-{os.getpid()}"
+    try:
+        with as_file(source) as source_path:
+            shutil.copytree(source_path, staging)
+        servers_path = staging / "servers.yaml"
+        servers_path.write_text(
+            servers_path.read_text(encoding="utf-8").replace(
+                "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
+            ),
+            encoding="utf-8",
+        )
+        os.rename(staging, destination)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     typer.echo(f"Created Toolgraph quickstart at {destination}")
     typer.echo(f"Next: cd {destination} && toolgraph init")
 
@@ -185,6 +195,7 @@ def init_backend(
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
     previous = config.settings
+    db_existed = db_path.exists()
     config.settings = config.Settings(backend=normalized, db_path=db_path)
     driver.close_driver()
     try:
@@ -200,6 +211,14 @@ def init_backend(
     except Exception:
         config.settings = previous
         driver.close_driver()
+        if not db_existed:
+            # init created the database but never got its config written;
+            # leaving it behind makes the next init meet an unowned DB.
+            for leftover in (db_path, Path(f"{db_path}.wal")):
+                if leftover.is_dir():
+                    shutil.rmtree(leftover, ignore_errors=True)
+                else:
+                    leftover.unlink(missing_ok=True)
         raise
     typer.echo(f"Initialized backend={normalized} config={runtime_path}")
 
@@ -338,7 +357,14 @@ def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL
         typer.echo("Refusing to wipe the graph without --yes")
         raise typer.Exit(code=1)
     with driver.session() as s:
-        s.run("MATCH (n) DETACH DELETE n")
+        # Batched: one unbounded DETACH DELETE builds a transaction holding
+        # every node and can OOM the server on a large graph.
+        while True:
+            record = s.run(
+                "MATCH (n) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted"
+            ).single()
+            if not record or not record["deleted"]:
+                break
     # Recreate GraphMeta at generation 0 with a fresh instance id. A reset may
     # reuse generation numbers but must never reuse an external graph-state key.
     schema.init_schema()

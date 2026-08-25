@@ -49,7 +49,12 @@ async def test_crawl_then_load_creates_edges(graph, stdio_spec):
 
 @pytest.fixture
 def http_url():
-    port = 8077
+    # Pick an ephemeral free port instead of a hardcoded one: a busy CI
+    # runner with 8077 taken made this fixture flaky. The tiny window
+    # between closing the probe socket and the server binding is accepted.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
     proc = subprocess.Popen([sys.executable, FIXTURE, "http", str(port)])
     deadline = time.time() + 25
     try:
