@@ -340,33 +340,43 @@ def _ingest(
         ids=policy_ids,
     )
 
-    for agent, key, granted_by, prov in resolved_grants:
+    if resolved_grants:
+        # One UNWIND batch instead of a round trip per grant (the same shape
+        # policies and exceptions already use).
         tx.run(
             """
-            MERGE (a:Agent {id:$agent})
-            WITH a MATCH (t:Tool {key:$key})
+            UNWIND $rows AS row
+            MERGE (a:Agent {id:row.agent})
+            WITH a, row MATCH (t:Tool {key:row.key})
             MERGE (a)-[r:CAN_CALL]->(t)
-            SET r.granted_by=$granted_by,
-                r.source=$source, r.confidence=$confidence, r.evidence=$evidence
+            SET r.granted_by=row.granted_by,
+                r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
             """,
-            agent=agent,
-            key=key,
-            granted_by=granted_by,
-            **prov,
+            rows=[
+                {"agent": agent, "key": key, "granted_by": granted_by, **prov}
+                for agent, key, granted_by, prov in resolved_grants
+            ],
         )
 
-    for key, mode, uri, prov in resolved_access:
-        # mode is a validated Literal -> safe to inline as the relationship type.
+    # mode is a validated Literal -> safe to inline as the relationship type;
+    # one UNWIND batch per relationship type instead of a round trip per edge.
+    for mode in ("READS", "WRITES"):
+        batch = [
+            {"key": key, "uri": uri, **prov}
+            for key, row_mode, uri, prov in resolved_access
+            if row_mode == mode
+        ]
+        if not batch:
+            continue
         tx.run(
             f"""
-            MATCH (t:Tool {{key:$key}})
-            MERGE (res:Resource {{uri:$uri}})
+            UNWIND $rows AS row
+            MATCH (t:Tool {{key:row.key}})
+            MERGE (res:Resource {{uri:row.uri}})
             MERGE (t)-[r:{mode}]->(res)
-            SET r.source=$source, r.confidence=$confidence, r.evidence=$evidence
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
             """,
-            key=key,
-            uri=uri,
-            **prov,
+            rows=batch,
         )
 
     if resolved_exceptions:
@@ -394,36 +404,40 @@ def _ingest(
     # this resource (or tool) is bound to this policy. Bare-string entries in
     # ``governed_by`` lift to bindings with no evidence (operator_asserted/high
     # by default), so unbacked_edges still surfaces them as needing a citation.
-    for kind, ref, bindings in resolved_governed:
-        if not bindings:
-            continue
-        payload = [
-            {"pid": pid, **prov} for pid, prov in bindings
-        ]
-        if kind == "resource":
-            tx.run(
-                """
-                MERGE (res:Resource {uri:$ref})
-                WITH res UNWIND $bindings AS b
-                MATCH (p:Policy {id:b.pid})
-                MERGE (res)-[r:GOVERNED_BY]->(p)
-                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
-                """,
-                ref=ref,
-                bindings=payload,
-            )
-        else:
-            tx.run(
-                """
-                MATCH (t:Tool {key:$ref})
-                UNWIND $bindings AS b
-                MATCH (p:Policy {id:b.pid})
-                MERGE (t)-[r:GOVERNED_BY]->(p)
-                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
-                """,
-                ref=ref,
-                bindings=payload,
-            )
+    resource_bindings = [
+        {"ref": ref, "pid": pid, **prov}
+        for kind, ref, bindings in resolved_governed
+        if kind == "resource"
+        for pid, prov in bindings
+    ]
+    tool_bindings = [
+        {"ref": ref, "pid": pid, **prov}
+        for kind, ref, bindings in resolved_governed
+        if kind != "resource"
+        for pid, prov in bindings
+    ]
+    if resource_bindings:
+        tx.run(
+            """
+            UNWIND $rows AS row
+            MERGE (res:Resource {uri:row.ref})
+            WITH res, row MATCH (p:Policy {id:row.pid})
+            MERGE (res)-[r:GOVERNED_BY]->(p)
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
+            """,
+            rows=resource_bindings,
+        )
+    if tool_bindings:
+        tx.run(
+            """
+            UNWIND $rows AS row
+            MATCH (t:Tool {key:row.ref})
+            MATCH (p:Policy {id:row.pid})
+            MERGE (t)-[r:GOVERNED_BY]->(p)
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
+            """,
+            rows=tool_bindings,
+        )
 
     # ADR-0001: node existence is a truth signal, for Resources too. A
     # resource the manifest stopped mentioning had its authored edges cleared
