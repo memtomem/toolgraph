@@ -55,7 +55,10 @@ def build_preflight(
         )
 
     def fetch() -> dict:
-        filtered = selector.eligible_tools(agent, candidates, profile=profile)
+        # One graph evaluation: the filter is a pure function over the ranked
+        # features, so --features must not pay a second full pass.
+        ranked = selector.rank_features(agent, candidates)
+        filtered = selector.filter_features(ranked, profile)
         result = {
             "agent": agent,
             "agent_found": filtered["agent_found"],
@@ -64,7 +67,7 @@ def build_preflight(
             "rejected": filtered["rejected"],
         }
         if include_features:
-            result["features"] = selector.rank_features(agent, candidates)["features"]
+            result["features"] = ranked["features"]
         return result
 
     verdict = queries.with_graph_state(fetch, strict=True)

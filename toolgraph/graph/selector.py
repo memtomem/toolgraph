@@ -274,22 +274,19 @@ def _applicable_reasons(feature: dict) -> list[str]:
     return reasons
 
 
-def eligible_tools(
-    agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE
-) -> dict:
-    """Hard filter with reject reasons and policy-evidence paths (ADR-0005).
+def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
+    """Pure hard filter over an already-computed ``rank_features`` result.
 
-    ``eligible`` holds resolved tool keys in candidate input order; every
-    rejected row keeps the input ref (``candidate``), the winning ``reason``
-    (first by precedence among the profile's reject set), and — for DENY
-    reasons — the graph paths that prove it. A learned consumer may rerank
-    ``eligible`` but may never resurrect a rejected row.
+    Runs no queries: producers that need both the filter verdict and the
+    feature rows (policy bundle, preflight ``--features``, explain) call
+    ``rank_features`` once and filter its output, instead of paying the full
+    graph evaluation twice inside the generation-retry bracket.
     """
     if profile not in PROFILES:
         raise ValueError(
             f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
         )
-    ranked = rank_features(agent, candidates)
+    agent = ranked["agent"]
     if not ranked["agent_found"]:
         return {
             "agent": agent,
@@ -336,6 +333,24 @@ def eligible_tools(
     }
 
 
+def eligible_tools(
+    agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE
+) -> dict:
+    """Hard filter with reject reasons and policy-evidence paths (ADR-0005).
+
+    ``eligible`` holds resolved tool keys in candidate input order; every
+    rejected row keeps the input ref (``candidate``), the winning ``reason``
+    (first by precedence among the profile's reject set), and — for DENY
+    reasons — the graph paths that prove it. A learned consumer may rerank
+    ``eligible`` but may never resurrect a rejected row.
+    """
+    if profile not in PROFILES:
+        raise ValueError(
+            f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
+        )
+    return filter_features(rank_features(agent, candidates), profile)
+
+
 def selection_explain(
     agent: str, tool: str, profile: str = DEFAULT_PROFILE
 ) -> dict:
@@ -358,7 +373,7 @@ def selection_explain(
         }
 
     feature = ranked["features"][0]
-    filtered = eligible_tools(agent, [tool], profile=profile)
+    filtered = filter_features(ranked, profile)
     decision = "eligible" if filtered["eligible"] else "rejected"
 
     reasons: list[str] = []

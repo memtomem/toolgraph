@@ -96,10 +96,13 @@ def build_policy_bundle(
                 " compiling"
             )
         candidates = [row["tool_key"] for row in contracts]
-        filtered = reader.eligible_tools(agent, candidates, profile)
-        if not filtered["agent_found"]:
-            raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+        # One graph evaluation for the whole catalog: the hard filter is a
+        # pure function over the ranked features (ADR-0005), so compiling
+        # must not run the full selector pass twice per bracket attempt.
         ranked = reader.rank_features(agent, candidates)
+        if not ranked["agent_found"]:
+            raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+        filtered = selector.filter_features(ranked, profile)
         return {
             "governance_digest": state.governance_digest,
             "contracts": contracts,
