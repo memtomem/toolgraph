@@ -304,6 +304,9 @@ def _ingest(
         return warnings, notices
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
+    # Deliberate size tradeoff: this transaction scales with the total number
+    # of authored edges and cannot be batched — a partial apply could clear a
+    # DENY and leave a false ALLOW (see the module docstring / ADR-0002).
     tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]->() DELETE r")
     # ExpectedException nodes are pure authored bookkeeping — clear and re-apply
     # alongside the edges so a removed exception promotes the row back to violation.

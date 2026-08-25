@@ -421,6 +421,9 @@ def normalize_note(value: str | None) -> str | None:
 @contextmanager
 def _writer_lock(path: Path) -> Iterator[None]:
     """Serialize local writers; the OS releases this lock after a crash."""
+    # The .lock file is deliberately never removed: unlinking a file another
+    # process is about to flock() reintroduces the race this lock exists to
+    # close. One empty file per sidecar is the accepted cost.
     # Resolve aliases before deriving the lock name.  Otherwise two processes
     # can address one sidecar through real/symlink paths and take distinct locks.
     lock_path = Path(f"{path.resolve()}.lock")
