@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 import json
+import time
 
 from neo4j import Session
 
@@ -27,6 +28,16 @@ from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 
 _GENERATION_RETRIES = 5
+# Exponential backoff between bracket retries (0.05/0.1/0.2/0.4s). Without
+# it, a strict producer on a graph under sustained write churn re-reads
+# immediately and can burn all five attempts inside one mutation burst —
+# a liveness failure the pause largely avoids for ~750ms worst case.
+_RETRY_BACKOFF_SECONDS = 0.05
+
+
+def _bracket_backoff(attempt: int) -> None:
+    if attempt + 1 < _GENERATION_RETRIES:
+        time.sleep(_RETRY_BACKOFF_SECONDS * (2**attempt))
 
 
 @dataclass(frozen=True)
@@ -51,11 +62,12 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     after retry exhaustion; persisted artifact producers pass ``strict=True``
     so they fail instead of writing a potentially mislabelled artifact.
     """
-    for _ in range(_GENERATION_RETRIES):
+    for attempt in range(_GENERATION_RETRIES):
         before = graph_generation()
         result = fetch()
         if graph_generation() == before:
             return {**result, "graph_generation": before}
+        _bracket_backoff(attempt)
     if strict:
         raise RuntimeError("graph generation changed during every read attempt")
     return {**result, "graph_generation": graph_generation()}
@@ -63,7 +75,7 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
 
 def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     """Return ``fetch`` bracketed by the collision-safe graph state token."""
-    for _ in range(_GENERATION_RETRIES):
+    for attempt in range(_GENERATION_RETRIES):
         before = graph_state()
         result = fetch()
         if graph_state() == before:
@@ -74,6 +86,7 @@ def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict
                 "graph_instance_id": before.instance_id,
                 "graph_state": token,
             }
+        _bracket_backoff(attempt)
     if strict:
         raise RuntimeError("graph state changed during every read attempt")
     current = graph_state()
