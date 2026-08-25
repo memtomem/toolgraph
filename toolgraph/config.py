@@ -19,11 +19,19 @@ def runtime_config_path() -> Path:
     return Path(value).expanduser()
 
 
+_MAX_CONFIG_BYTES = 1_000_000
+
+
 def _runtime_config() -> dict:
     path = runtime_config_path()
     if not path.exists():
         return {}
     try:
+        if path.stat().st_size > _MAX_CONFIG_BYTES:
+            raise RuntimeError(
+                f"invalid Toolgraph runtime config at {path}: exceeds"
+                f" the {_MAX_CONFIG_BYTES}-byte limit"
+            )
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"invalid Toolgraph runtime config at {path}: {exc}") from exc

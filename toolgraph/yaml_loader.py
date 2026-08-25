@@ -44,8 +44,15 @@ UniqueKeySafeLoader.add_constructor(
 )
 
 
+MAX_YAML_BYTES = 5_000_000
+
+
 def load_yaml_mapping(path: Path) -> dict[str, Any]:
-    """Load a YAML mapping and reject duplicate keys and non-mapping roots."""
+    """Load a size-bounded YAML mapping; reject duplicate keys, non-mapping roots."""
+    if path.stat().st_size > MAX_YAML_BYTES:
+        raise ValueError(
+            f"refusing to load {path}: exceeds the {MAX_YAML_BYTES}-byte limit"
+        )
     loader = UniqueKeySafeLoader(path.read_text(encoding="utf-8"))
     try:
         value = loader.get_single_data()

@@ -24,6 +24,8 @@ SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
 RESULT_KIND = "toolgraph.control-preflight"
 MAX_PLAN_BYTES = 1_000_000
+# JSON nesting bound for the body-free walk (and json.loads' own recursion).
+_MAX_PLAN_DEPTH = 100
 
 _QUALIFIED_TOOL = re.compile(r"^[^:\s]+::[^:\s]+$")
 _FORBIDDEN_KEYS = frozenset(
@@ -229,6 +231,12 @@ class ControlPlan(_AdditiveModel):
 
 
 def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
+    # A 1MB plan can still nest thousands of levels deep; cap the walk so a
+    # pathological plan fails as a typed error instead of a RecursionError.
+    if len(path) > _MAX_PLAN_DEPTH:
+        raise ControlPlanError(
+            f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit"
+        )
     if isinstance(value, dict):
         for key, child in value.items():
             lowered = str(key).lower()
@@ -271,6 +279,11 @@ def load_control_plan(raw: bytes) -> ControlPlan:
         decoded = json.loads(raw, object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ControlPlanError(f"control plan is not valid UTF-8 JSON: {exc}") from exc
+    except RecursionError as exc:
+        # json.loads itself recurses; a deeply nested plan must fail typed.
+        raise ControlPlanError(
+            f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit"
+        ) from exc
     if not isinstance(decoded, dict):
         raise ControlPlanError("control plan must be a JSON object")
     _assert_body_free(decoded)

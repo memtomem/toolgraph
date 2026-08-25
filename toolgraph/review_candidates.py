@@ -212,6 +212,23 @@ def _sha256(raw: bytes) -> str:
     return f"sha256:{hashlib.sha256(raw).hexdigest()}"
 
 
+# Reports and sidecars are operator-provided files; nothing else in this
+# module bounds them, so a runaway file would otherwise be read whole.
+MAX_REPORT_BYTES = 50_000_000
+
+
+def _read_capped(path: Path, kind: str) -> bytes:
+    try:
+        if path.stat().st_size > MAX_REPORT_BYTES:
+            raise ReviewCandidateError(
+                f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit"
+            )
+        return path.read_bytes()
+    except OSError as exc:
+        detail = exc.strerror or type(exc).__name__
+        raise ReviewCandidateError(f"cannot read {kind}: {detail}") from exc
+
+
 def _candidate_tuple(candidate: ReviewCandidate) -> tuple[str, str, int, str, str]:
     return (
         candidate.run_id,
@@ -243,11 +260,7 @@ def candidate_id(candidate: ReviewCandidate) -> str:
 
 def load_report(path: str | Path) -> LoadedReviewReport:
     """Load, project, sort, and bind one complete Tracegraph report."""
-    try:
-        raw = Path(path).read_bytes()
-    except OSError as exc:
-        detail = exc.strerror or type(exc).__name__
-        raise ReviewCandidateError(f"cannot read review-candidate report: {detail}") from exc
+    raw = _read_capped(Path(path), "review-candidate report")
     try:
         report = TracegraphReviewReport.model_validate_json(raw)
     except ValidationError as exc:
@@ -292,11 +305,7 @@ def _new_annotations(report: LoadedReviewReport) -> AnnotationReport:
 def _load_annotations(path: Path, report: LoadedReviewReport) -> AnnotationReport:
     if not path.exists():
         return _new_annotations(report)
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        detail = exc.strerror or type(exc).__name__
-        raise ReviewCandidateError(f"cannot read review annotations: {detail}") from exc
+    raw = _read_capped(path, "review annotations")
     try:
         annotations = AnnotationReport.model_validate_json(raw)
     except ValidationError as exc:
@@ -551,13 +560,7 @@ def annotate_candidate(
         # publishing a sidecar that claims to describe different bytes.  A
         # digest comparison over the raw bytes is sufficient — any content
         # change alters the digest — and skips re-validating the whole report.
-        try:
-            current_raw = report_file.read_bytes()
-        except OSError as exc:
-            detail = exc.strerror or type(exc).__name__
-            raise ReviewCandidateError(
-                f"cannot read review-candidate report: {detail}"
-            ) from exc
+        current_raw = _read_capped(report_file, "review-candidate report")
         if _sha256(current_raw) != report.source_report_digest:
             raise ReviewCandidateError("source report changed while annotation was being written")
         try:

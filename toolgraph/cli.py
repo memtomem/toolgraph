@@ -16,7 +16,11 @@ import typer
 from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
-from toolgraph.control_plan import ControlPlanError, build_control_preflight
+from toolgraph.control_plan import (
+    MAX_PLAN_BYTES,
+    ControlPlanError,
+    build_control_preflight,
+)
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -548,6 +552,20 @@ def _selector_profile(profile: str) -> str:
     return profile
 
 
+# Mirrors the control-plan bound (control_plan.py): the selector is batch-first,
+# but an unbounded candidate list still UNWINDs as one query parameter.
+MAX_CLI_CANDIDATES = 4096
+
+
+def _bounded_candidates(candidates: list[str]) -> list[str]:
+    if len(candidates) > MAX_CLI_CANDIDATES:
+        raise typer.BadParameter(
+            f"{len(candidates)} candidates exceed the {MAX_CLI_CANDIDATES} limit",
+            param_hint="CANDIDATES",
+        )
+    return candidates
+
+
 def _require_agent(agent: str) -> None:
     """Selection with an unknown agent is a context-construction error, not an
     empty result — mirror unsafe-tools: diagnostic to stderr, exit 1."""
@@ -565,6 +583,7 @@ def rank_features(agent: str, candidates: list[str]) -> None:
     mapping, evidence coverage, annotation self-claims — plus the rule-based
     risk_score from the published fixed table. No relevance, no learning.
     """
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(json.dumps(selector.rank_features(agent, candidates), indent=2))
 
@@ -585,6 +604,7 @@ def eligible_tools(
     a rejected row (ADR-0005).
     """
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(
         json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2)
@@ -624,6 +644,7 @@ def preflight(
 ) -> None:
     """Produce an advisory preflight artifact for a candidate tool batch."""
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     try:
         artifact = build_preflight(
             agent=agent,
@@ -684,6 +705,12 @@ def control_preflight(
     _selector_profile(profile)
     digest: str | None = None
     try:
+        # Check the size before reading: MAX_PLAN_BYTES otherwise bounds only
+        # validation cost, after the whole file is already in memory.
+        if plan.stat().st_size > MAX_PLAN_BYTES:
+            raise ControlPlanError(
+                f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
+            )
         raw_plan = plan.read_bytes()
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
