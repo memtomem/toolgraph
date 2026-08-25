@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
+import functools
 import hashlib
 import json
 import os
@@ -221,18 +222,23 @@ def _candidate_tuple(candidate: ReviewCandidate) -> tuple[str, str, int, str, st
     )
 
 
-def candidate_id(candidate: ReviewCandidate) -> str:
-    """Return the UUIDv5 used by the merged SyncMill board consumer."""
+@functools.lru_cache(maxsize=4096)
+def _candidate_id_for(identity_tuple: tuple[str, str, int, str, str]) -> str:
     identity = json.dumps(
-        [
-            TRACEGRAPH_SCHEMA_VERSION,
-            TRACEGRAPH_KIND,
-            *_candidate_tuple(candidate),
-        ],
+        [TRACEGRAPH_SCHEMA_VERSION, TRACEGRAPH_KIND, *identity_tuple],
         ensure_ascii=False,
         separators=(",", ":"),
     )
     return str(uuid.uuid5(_ITEM_NAMESPACE, identity))
+
+
+def candidate_id(candidate: ReviewCandidate) -> str:
+    """Return the UUIDv5 used by the merged SyncMill board consumer.
+
+    Cached on the identity tuple: one review pass recomputes the same ids
+    in load, event validation, and payload rendering.
+    """
+    return _candidate_id_for(_candidate_tuple(candidate))
 
 
 def load_report(path: str | Path) -> LoadedReviewReport:
@@ -307,6 +313,10 @@ def _validate_events(
     candidates = {candidate_id(candidate): candidate for candidate in report.candidates}
     states: dict[str, Disposition] = {item_id: "open" for item_id in candidates}
     histories: dict[str, list[AnnotationEvent]] = {item_id: [] for item_id in candidates}
+    # Dump each source candidate once, not once per referencing event.
+    source_dumps = {
+        item_id: candidate.model_dump() for item_id, candidate in candidates.items()
+    }
     for expected_sequence, event in enumerate(annotations.events, start=1):
         if event.sequence != expected_sequence:
             raise ReviewCandidateError("review annotation event sequence is not contiguous")
@@ -314,7 +324,7 @@ def _validate_events(
         if source_candidate is None:
             raise ReviewCandidateError("review annotation references an unknown candidate")
         if (
-            event.candidate.model_dump() != source_candidate.model_dump()
+            event.candidate.model_dump() != source_dumps[event.candidate_id]
             or candidate_id(event.candidate) != event.candidate_id
         ):
             raise ReviewCandidateError("review annotation candidate snapshot does not match its id")
@@ -538,8 +548,17 @@ def annotate_candidate(
         )
 
         # The source is immutable evidence.  Catch a concurrent rewrite before
-        # publishing a sidecar that claims to describe different bytes.
-        if load_report(report_file).source_report_digest != report.source_report_digest:
+        # publishing a sidecar that claims to describe different bytes.  A
+        # digest comparison over the raw bytes is sufficient — any content
+        # change alters the digest — and skips re-validating the whole report.
+        try:
+            current_raw = report_file.read_bytes()
+        except OSError as exc:
+            detail = exc.strerror or type(exc).__name__
+            raise ReviewCandidateError(
+                f"cannot read review-candidate report: {detail}"
+            ) from exc
+        if _sha256(current_raw) != report.source_report_digest:
             raise ReviewCandidateError("source report changed while annotation was being written")
         try:
             _save_atomic(updated, annotation_file)

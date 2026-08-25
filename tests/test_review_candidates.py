@@ -403,21 +403,20 @@ def test_source_race_is_detected_before_sidecar_replace(tmp_path, monkeypatch):
     source = _source(tmp_path)
     from toolgraph import review_candidates as review_module
 
-    real_load = review_module.load_report
+    # The pre-replace race check hashes the report bytes again inside the
+    # writer lock; simulate a concurrent rewrite by making that second hash
+    # disagree with the digest captured at load time.
+    real_sha = review_module._sha256
     calls = 0
 
-    def raced_load(path):
+    def raced_sha(raw):
         nonlocal calls
         calls += 1
-        loaded = real_load(path)
         if calls == 2:
-            return LoadedReviewReport(
-                source_report_digest="sha256:" + "0" * 64,
-                candidates=loaded.candidates,
-            )
-        return loaded
+            return "sha256:" + "0" * 64
+        return real_sha(raw)
 
-    monkeypatch.setattr(review_module, "load_report", raced_load)
+    monkeypatch.setattr(review_module, "_sha256", raced_sha)
     with pytest.raises(ReviewCandidateError, match="changed while"):
         annotate_candidate(
             source,
