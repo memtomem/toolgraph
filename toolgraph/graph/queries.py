@@ -89,12 +89,23 @@ def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict
 
 
 def resolve_tool_keys(s: Session, ref: str) -> list[str]:
-    """All Tool keys matching a ref (exact key, or bare name across servers)."""
-    rows = s.run(
-        "MATCH (t:Tool) WHERE t.key = $ref OR (NOT $ref CONTAINS '::' AND t.name = $ref) "
-        "RETURN t.key AS key ORDER BY key",
-        ref=ref,
-    )
+    """All Tool keys matching a ref (exact key, or bare name across servers).
+
+    Keys are always ``<server>::<tool>`` (schema.py), so a qualified ref can
+    only match by key and a bare ref only by name. Splitting the two cases
+    keeps the qualified path on the ``tool_key`` unique index instead of the
+    full label scan the old ``key = $ref OR (... name = $ref)`` disjunction
+    forced on every resolution.
+    """
+    if "::" in ref:
+        rows = s.run(
+            "MATCH (t:Tool {key:$ref}) RETURN t.key AS key ORDER BY key", ref=ref
+        )
+    else:
+        rows = s.run(
+            "MATCH (t:Tool) WHERE t.name = $ref RETURN t.key AS key ORDER BY key",
+            ref=ref,
+        )
     return [r["key"] for r in rows]
 
 

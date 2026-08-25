@@ -101,26 +101,35 @@ def _risk_score(feature: dict) -> float | None:
 
 
 def _resolve_all(s, refs: list[str]) -> dict[str, list[str]]:
-    """Resolve every candidate ref in ONE query: ref -> matching tool keys.
+    """Resolve every candidate ref in at most two batch queries.
 
     Same resolution rule as ``resolve_tool_keys`` (exact key, or bare name
     across servers) so the selector can never disagree with ``check_access``
     about tool identity.
     """
-    rows = s.run(
-        """
-        UNWIND $refs AS ref
-        OPTIONAL MATCH (t:Tool)
-          WHERE t.key = ref OR (NOT ref CONTAINS '::' AND t.name = ref)
-        WITH ref, t.key AS key
-        RETURN ref, collect(key) AS keys
-        """,
-        refs=sorted(set(refs)),
-    )
-    return {
-        r["ref"]: sorted(key for key in (r["keys"] or []) if key is not None)
-        for r in rows
-    }
+    unique = sorted(set(refs))
+    # Keys are always "<server>::<tool>", so qualified refs resolve on the
+    # tool_key unique index and bare refs on one name-equality batch —
+    # instead of the per-ref label scan the old OR-disjunction forced.
+    qualified = [ref for ref in unique if "::" in ref]
+    bare = [ref for ref in unique if "::" not in ref]
+    resolved: dict[str, list[str]] = {ref: [] for ref in unique}
+    if qualified:
+        rows = s.run(
+            "MATCH (t:Tool) WHERE t.key IN $keys RETURN t.key AS key",
+            keys=qualified,
+        )
+        for r in rows:
+            resolved[r["key"]].append(r["key"])
+    if bare:
+        rows = s.run(
+            "MATCH (t:Tool) WHERE t.name IN $names "
+            "RETURN t.name AS name, t.key AS key",
+            names=bare,
+        )
+        for r in rows:
+            resolved[r["name"]].append(r["key"])
+    return {ref: sorted(keys) for ref, keys in resolved.items()}
 
 
 def _tool_facts(s, keys: list[str], agent: str) -> dict[str, dict]:
