@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from toolgraph.graph.driver import backend_name, session
+from toolgraph.graph.driver import BackendConfigurationError, backend_name, session
+
+# Version of the physical backend schema this code understands. Bumped only
+# when a table/constraint shape changes incompatibly. IF NOT EXISTS silently
+# skips outdated tables, so without this gate an old database meets new code
+# only as confusing query-time errors.
+BACKEND_SCHEMA_VERSION = 1
 
 CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT mcpserver_name IF NOT EXISTS FOR (s:MCPServer) REQUIRE s.name IS UNIQUE",
@@ -85,13 +91,36 @@ def tool_key(server_name: str, tool_name: str) -> str:
 
 
 def init_schema() -> None:
-    """Create all constraints (idempotent)."""
+    """Create all constraints (idempotent) and gate on the schema version."""
     with session() as s:
         for stmt in LADYBUG_SCHEMA if backend_name() == "ladybug" else CONSTRAINTS:
             s.run(stmt)
         # Backfill databases created before the graph-state contract without
         # invalidating caches: no authored or crawled graph fact changed.
         s.run(ENSURE_GRAPH_META, graph_instance_id=str(uuid4()))
+        record = s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) "
+            "RETURN m.backend_schema_version AS version"
+        ).single()
+        stored = record["version"] if record else None
+        if stored is None:
+            # Every database ever shipped has the v1 shape; stamp it so a
+            # future incompatible bump can refuse instead of half-working.
+            s.run(
+                "MATCH (m:GraphMeta {id:'singleton'}) "
+                "SET m.backend_schema_version = $version",
+                version=BACKEND_SCHEMA_VERSION,
+            )
+        elif stored != BACKEND_SCHEMA_VERSION:
+            raise BackendConfigurationError(
+                f"backend schema version {stored} does not match this build's "
+                f"{BACKEND_SCHEMA_VERSION} — "
+                + (
+                    "upgrade toolgraph to a version that understands it"
+                    if stored > BACKEND_SCHEMA_VERSION
+                    else "migrate the database (no automatic migration exists)"
+                )
+            )
 
 
 def list_constraints() -> list[dict]:

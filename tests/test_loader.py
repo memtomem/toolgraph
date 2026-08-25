@@ -38,3 +38,25 @@ def test_input_schema_roundtrips_as_json(graph):
     with driver.session() as s:
         rec = s.run("MATCH (t:Tool {name:'read_file'}) RETURN t.input_schema AS s").single()
     assert json.loads(rec["s"]) == {"type": "object"}
+
+
+def test_init_schema_refuses_mismatched_backend_schema_version(graph):
+    import pytest
+
+    from toolgraph.graph import driver, schema
+    from toolgraph.graph.driver import BackendConfigurationError
+
+    schema.init_schema()  # the graph fixture wiped GraphMeta; recreate it
+    with driver.session() as s:
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 99"
+        )
+    with pytest.raises(BackendConfigurationError, match="backend schema version 99"):
+        schema.init_schema()
+    # Restore so the fixture teardown and later assertions stay clean.
+    with driver.session() as s:
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = $v",
+            v=schema.BACKEND_SCHEMA_VERSION,
+        )
+    schema.init_schema()

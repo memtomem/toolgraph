@@ -11,8 +11,13 @@ URI through ``normalize_resource_uri`` at both write and read boundaries.
 from __future__ import annotations
 
 import re
+import warnings
 
 from pydantic import AnyUrl, ValidationError
+
+
+class ResourceUriNormalizationWarning(UserWarning):
+    """A URL-shaped resource identifier could not be canonicalized."""
 
 # A URI scheme (RFC 3986): scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
@@ -28,6 +33,19 @@ def normalize_resource_uri(uri: str) -> str:
     try:
         return str(AnyUrl(uri))
     except (ValidationError, ValueError):
+        if "://" in uri:
+            # A string that *looks* like a URL but fails to parse is exactly
+            # the identity-split hazard this module's docstring describes: if
+            # the other boundary's pydantic parses it, a deny-governed
+            # resource and its crawled twin become two different nodes. Custom
+            # non-URL identifiers (no "://") fall through silently by design.
+            warnings.warn(
+                "resource URI could not be canonicalized and is used verbatim;"
+                " if the crawler and manifest disagree about this URI, its"
+                " governance may not attach",
+                ResourceUriNormalizationWarning,
+                stacklevel=2,
+            )
         return uri
 
 
