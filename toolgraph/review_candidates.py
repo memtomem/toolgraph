@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import errno
 import hashlib
 import json
 import os
@@ -21,6 +20,8 @@ import uuid
 import warnings
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from toolgraph.artifacts import fsync_parent_dir
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows CI/users
     import msvcrt
@@ -433,28 +434,6 @@ def _writer_lock(path: Path) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _fsync_parent(path: Path) -> None:
-    """Make the atomic rename durable on filesystems that support dir fsync."""
-    if os.name == "nt":  # pragma: no cover - Windows has no directory fd
-        return
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    try:
-        descriptor = os.open(path.parent, flags)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError as exc:
-        unsupported = {
-            errno.EINVAL,
-            errno.ENOTSUP,
-            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
-            errno.EROFS,
-        }
-        if exc.errno not in unsupported:
-            raise
-
-
 def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
     payload = json.dumps(
         annotations.model_dump(mode="json"), indent=2, sort_keys=True
@@ -476,7 +455,7 @@ def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, path)
         try:
-            _fsync_parent(path)
+            fsync_parent_dir(path)
         except OSError:
             # The event is already atomically visible.  Reporting total failure
             # would invite a retry that appends a duplicate event; surface the
