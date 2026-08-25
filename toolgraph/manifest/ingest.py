@@ -343,6 +343,15 @@ def _ingest(
         ids=policy_ids,
     )
 
+    # Deduplicate to last-entry-wins BEFORE batching: the old per-row loops
+    # deterministically left the later manifest entry's metadata on a
+    # duplicate logical edge, while UNWIND gives repeated SETs on one
+    # relationship an undefined winner. dict insertion order preserves the
+    # manifest order, and overwriting keeps the last occurrence.
+    resolved_grants = list({(row[0], row[1]): row for row in resolved_grants}.values())
+    resolved_access = list(
+        {(row[0], row[1], row[2]): row for row in resolved_access}.values()
+    )
     if resolved_grants:
         # One UNWIND batch instead of a round trip per grant (the same shape
         # policies and exceptions already use).
@@ -419,6 +428,13 @@ def _ingest(
         if kind != "resource"
         for pid, prov in bindings
     ]
+    # Same last-entry-wins rule for duplicate (node, policy) bindings.
+    resource_bindings = list(
+        {(row["ref"], row["pid"]): row for row in resource_bindings}.values()
+    )
+    tool_bindings = list(
+        {(row["ref"], row["pid"]): row for row in tool_bindings}.values()
+    )
     if resource_bindings:
         tx.run(
             """

@@ -27,13 +27,16 @@ def _runtime_config() -> dict:
     if not path.exists():
         return {}
     try:
-        if path.stat().st_size > _MAX_CONFIG_BYTES:
+        # Bounded read from one open descriptor (stat-then-read is a TOCTOU).
+        with path.open("rb") as handle:
+            raw = handle.read(_MAX_CONFIG_BYTES + 1)
+        if len(raw) > _MAX_CONFIG_BYTES:
             raise RuntimeError(
                 f"invalid Toolgraph runtime config at {path}: exceeds"
                 f" the {_MAX_CONFIG_BYTES}-byte limit"
             )
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise RuntimeError(f"invalid Toolgraph runtime config at {path}: {exc}") from exc
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise RuntimeError(f"unsupported Toolgraph runtime config at {path}")

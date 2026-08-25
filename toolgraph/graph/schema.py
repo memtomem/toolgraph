@@ -86,41 +86,68 @@ def exception_key(agent: str, tool_key: str, resource: str | None, policy: str) 
 
 
 def tool_key(server_name: str, tool_name: str) -> str:
-    """Stable identity for a Tool node."""
+    """Stable identity for a Tool node.
+
+    Components must not contain the delimiter: (server="a", tool="b::c") and
+    (server="a::b", tool="c") would otherwise collapse onto one key and MERGE
+    the same node. Model validation enforces this at the crawl boundary; this
+    check covers programmatic callers.
+    """
+    if "::" in server_name or "::" in tool_name:
+        raise ValueError(
+            "server and tool names must not contain '::' (the tool-key delimiter)"
+        )
     return f"{server_name}::{tool_name}"
+
+
+def _stored_backend_schema_version(s) -> int | None:
+    try:
+        record = s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) "
+            "RETURN m.backend_schema_version AS version"
+        ).single()
+    except RuntimeError:
+        # Fresh embedded database: the GraphMeta table does not exist yet.
+        return None
+    return record["version"] if record else None
+
+
+def _refuse_version_mismatch(stored: int | None) -> None:
+    if stored is not None and stored != BACKEND_SCHEMA_VERSION:
+        raise BackendConfigurationError(
+            f"backend schema version {stored} does not match this build's "
+            f"{BACKEND_SCHEMA_VERSION} — "
+            + (
+                "upgrade toolgraph to a version that understands it"
+                if stored > BACKEND_SCHEMA_VERSION
+                else "migrate the database (no automatic migration exists)"
+            )
+        )
 
 
 def init_schema() -> None:
     """Create all constraints (idempotent) and gate on the schema version."""
     with session() as s:
+        # Gate BEFORE running any version-specific DDL: an incompatible client
+        # must not mutate the database on its way to the mismatch error.
+        _refuse_version_mismatch(_stored_backend_schema_version(s))
         for stmt in LADYBUG_SCHEMA if backend_name() == "ladybug" else CONSTRAINTS:
             s.run(stmt)
         # Backfill databases created before the graph-state contract without
         # invalidating caches: no authored or crawled graph fact changed.
         s.run(ENSURE_GRAPH_META, graph_instance_id=str(uuid4()))
-        record = s.run(
+        # Stamp without clobbering: coalesce keeps whatever version a
+        # concurrent initializer already wrote; every shipped database has the
+        # v1 shape, so a null stamp is always safe to fill.
+        s.run(
             "MATCH (m:GraphMeta {id:'singleton'}) "
-            "RETURN m.backend_schema_version AS version"
-        ).single()
-        stored = record["version"] if record else None
-        if stored is None:
-            # Every database ever shipped has the v1 shape; stamp it so a
-            # future incompatible bump can refuse instead of half-working.
-            s.run(
-                "MATCH (m:GraphMeta {id:'singleton'}) "
-                "SET m.backend_schema_version = $version",
-                version=BACKEND_SCHEMA_VERSION,
-            )
-        elif stored != BACKEND_SCHEMA_VERSION:
-            raise BackendConfigurationError(
-                f"backend schema version {stored} does not match this build's "
-                f"{BACKEND_SCHEMA_VERSION} — "
-                + (
-                    "upgrade toolgraph to a version that understands it"
-                    if stored > BACKEND_SCHEMA_VERSION
-                    else "migrate the database (no automatic migration exists)"
-                )
-            )
+            "SET m.backend_schema_version = "
+            "coalesce(m.backend_schema_version, $version)",
+            version=BACKEND_SCHEMA_VERSION,
+        )
+        # Re-read: if a different-version initializer won the coalesce race,
+        # refuse now instead of proceeding against its database.
+        _refuse_version_mismatch(_stored_backend_schema_version(s))
 
 
 def list_constraints() -> list[dict]:

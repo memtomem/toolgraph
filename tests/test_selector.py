@@ -378,3 +378,10 @@ def test_cli_rejects_unknown_profile(graph):
     assert result.exit_code == 2
     if CLICK_SPLITS_STREAMS:
         assert "unknown profile" in result.stderr
+
+
+def test_rank_features_refuses_oversized_candidate_batches():
+    from toolgraph.graph import selector
+
+    with pytest.raises(ValueError, match="4096"):
+        selector.rank_features("any", ["t"] * (selector.MAX_CANDIDATES + 1))

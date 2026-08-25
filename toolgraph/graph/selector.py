@@ -57,6 +57,11 @@ PROFILES: dict[str, frozenset[str]] = {
 
 DEFAULT_PROFILE = "strict"
 
+# Batch bound, mirroring the control-plan limit: the selector is batch-first,
+# but an unbounded candidate list still UNWINDs as one query parameter. Lives
+# here so every surface — CLI, MCP server, library callers — is bounded.
+MAX_CANDIDATES = 4096
+
 # Drift rejects in EVERY profile (the report's regression criteria): a tool no
 # server currently exposes cannot be called, so passing it is never useful.
 _REASON_PRECEDENCE = (
@@ -185,6 +190,10 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     the four annotation self-claims (ADR-0006), and the rule-based
     ``risk_score`` (see ``_risk_score`` for the fixed table).
     """
+    if len(candidates) > MAX_CANDIDATES:
+        raise ValueError(
+            f"{len(candidates)} candidates exceed the {MAX_CANDIDATES} limit"
+        )
     if not agent_exists(agent):
         return {"agent": agent, "agent_found": False, "features": []}
 

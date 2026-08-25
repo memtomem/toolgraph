@@ -218,15 +218,19 @@ MAX_REPORT_BYTES = 50_000_000
 
 
 def _read_capped(path: Path, kind: str) -> bytes:
+    # Bounded read from one open descriptor: a stat-then-read pair is a
+    # TOCTOU — the file can be replaced or grown between the two calls.
     try:
-        if path.stat().st_size > MAX_REPORT_BYTES:
-            raise ReviewCandidateError(
-                f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit"
-            )
-        return path.read_bytes()
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_REPORT_BYTES + 1)
     except OSError as exc:
         detail = exc.strerror or type(exc).__name__
         raise ReviewCandidateError(f"cannot read {kind}: {detail}") from exc
+    if len(raw) > MAX_REPORT_BYTES:
+        raise ReviewCandidateError(
+            f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit"
+        )
+    return raw
 
 
 def _candidate_tuple(candidate: ReviewCandidate) -> tuple[str, str, int, str, str]:

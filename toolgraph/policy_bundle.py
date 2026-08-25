@@ -96,18 +96,29 @@ def build_policy_bundle(
                 " compiling"
             )
         candidates = [row["tool_key"] for row in contracts]
-        # One graph evaluation for the whole catalog: the hard filter is a
-        # pure function over the ranked features (ADR-0005), so compiling
-        # must not run the full selector pass twice per bracket attempt.
-        ranked = reader.rank_features(agent, candidates)
-        if not ranked["agent_found"]:
-            raise PolicyBundleError(f"agent {agent!r} not found in the graph")
-        filtered = selector.filter_features(ranked, profile)
+        # One graph evaluation for the whole catalog when the adapter supports
+        # it: the hard filter is a pure function over the ranked features
+        # (ADR-0005), so compiling must not run the full selector pass twice
+        # per bracket attempt. Adapters without ``evaluate`` keep the original
+        # two-call contract — their rank rows never promised selector-internal
+        # fields, so we must not filter them ourselves.
+        evaluate = getattr(reader, "evaluate", None)
+        if evaluate is not None:
+            evaluated = evaluate(agent, candidates, profile)
+            if not evaluated["agent_found"]:
+                raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+            filtered = evaluated["filtered"]
+            features = evaluated["features"]
+        else:
+            filtered = reader.eligible_tools(agent, candidates, profile)
+            if not filtered["agent_found"]:
+                raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+            features = reader.rank_features(agent, candidates)["features"]
         return {
             "governance_digest": state.governance_digest,
             "contracts": contracts,
             "filtered": filtered,
-            "features": ranked["features"],
+            "features": features,
         }
 
     compiled = queries.with_graph_state(fetch, strict=True)

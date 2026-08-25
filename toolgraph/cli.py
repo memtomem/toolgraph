@@ -208,12 +208,14 @@ def init_backend(
             }
         )
         atomic_write_private(runtime_path, payload)
-    except Exception:
+    except Exception as exc:
         config.settings = previous
         driver.close_driver()
-        if not db_existed:
-            # init created the database but never got its config written;
-            # leaving it behind makes the next init meet an unowned DB.
+        # Clean up only a database this invocation plausibly created.
+        # BACKEND_LOCKED means another process owns it — it may have created
+        # the file after our db_existed check, and deleting here would
+        # destroy the winner's database.
+        if not db_existed and not isinstance(exc, driver.BackendLockedError):
             for leftover in (db_path, Path(f"{db_path}.wal")):
                 if leftover.is_dir():
                     shutil.rmtree(leftover, ignore_errors=True)
@@ -352,10 +354,18 @@ def ingest_manifest(
 @app.command()
 @_reports_backend_outage
 def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL graph data.")) -> None:
-    """Delete every node and relationship (keeps constraints). Destructive."""
+    """Delete every node and relationship (keeps constraints). Destructive.
+
+    Not atomic: deletion runs in batches, so run it inside a maintenance
+    window on a shared backend — a concurrent writer can interleave, and an
+    outage mid-way leaves a partially erased graph (re-run to finish).
+    """
     if not yes:
         typer.echo("Refusing to wipe the graph without --yes")
         raise typer.Exit(code=1)
+    # Enforce the schema-version gate BEFORE destroying GraphMeta: an older
+    # binary must not erase a newer database and then re-stamp it as its own.
+    schema.init_schema()
     with driver.session() as s:
         # Batched: one unbounded DETACH DELETE builds a transaction holding
         # every node and can OOM the server on a large graph.
@@ -578,9 +588,9 @@ def _selector_profile(profile: str) -> str:
     return profile
 
 
-# Mirrors the control-plan bound (control_plan.py): the selector is batch-first,
-# but an unbounded candidate list still UNWINDs as one query parameter.
-MAX_CLI_CANDIDATES = 4096
+# The binding bound lives in the selector (every surface shares it); the CLI
+# pre-checks only to produce a usage error instead of a traceback.
+MAX_CLI_CANDIDATES = selector.MAX_CANDIDATES
 
 
 def _bounded_candidates(candidates: list[str]) -> list[str]:
@@ -731,13 +741,14 @@ def control_preflight(
     _selector_profile(profile)
     digest: str | None = None
     try:
-        # Check the size before reading: MAX_PLAN_BYTES otherwise bounds only
-        # validation cost, after the whole file is already in memory.
-        if plan.stat().st_size > MAX_PLAN_BYTES:
+        # Bounded read: MAX_PLAN_BYTES must limit memory, not just validation
+        # cost, and a stat-then-read pair would be a TOCTOU.
+        with plan.open("rb") as handle:
+            raw_plan = handle.read(MAX_PLAN_BYTES + 1)
+        if len(raw_plan) > MAX_PLAN_BYTES:
             raise ControlPlanError(
                 f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
             )
-        raw_plan = plan.read_bytes()
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
