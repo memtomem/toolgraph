@@ -3,46 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import re
-from urllib.parse import urlsplit, urlunsplit
+from toolgraph.artifacts import rfc3339_offset_error
+from toolgraph.artifact_safety import safe_artifact, validate_identity
+from toolgraph.artifact_safety import redact as redact
 
 from toolgraph.graph import queries, selector
 
 SCHEMA_VERSION = 1
 KIND = "toolgraph.preflight"
-_URI = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s)]+")
-
-
-def _redact_uri(value: str) -> str:
-    """Remove URI userinfo and query strings without changing ordinary text."""
-    if "://" not in value:
-        return value
-    parts = urlsplit(value)
-    # Use the original netloc rather than ``parts.hostname``: urlsplit
-    # lowercases hostname accessors, while graph resource identity preserves
-    # the authored case. Only userinfo and query data are sensitive here.
-    host = parts.netloc.rsplit("@", 1)[-1]
-    return urlunsplit((parts.scheme, host, parts.path, "", ""))
-
-
-_MAX_REDACT_DEPTH = 100
-
-
-def redact(value, *, _depth: int = 0):
-    """Recursively scrub strings that may contain resource URI credentials."""
-    if _depth > _MAX_REDACT_DEPTH:
-        raise ValueError(
-            f"artifact nesting exceeds the {_MAX_REDACT_DEPTH}-level redaction limit"
-        )
-    if isinstance(value, dict):
-        return {key: redact(item, _depth=_depth + 1) for key, item in value.items()}
-    if isinstance(value, list):
-        return [redact(item, _depth=_depth + 1) for item in value]
-    if isinstance(value, str):
-        # Evidence paths contain a URI inside surrounding graph notation.
-        return _URI.sub(lambda match: _redact_uri(match.group(0)), value)
-    return value
-
 
 def build_preflight(
     *,
@@ -54,6 +22,10 @@ def build_preflight(
     created_at: datetime | None = None,
 ) -> dict:
     """Build one schema-v1 advisory verdict over a bracketed graph state."""
+    for identity in [agent, run_id, *candidates]:
+        validate_identity(identity)
+    if created_at is not None and (problem := rfc3339_offset_error(created_at)):
+        raise ValueError(problem)
     if not run_id:
         raise ValueError("run_id must not be empty")
     if profile not in selector.PROFILES:
@@ -102,4 +74,4 @@ def build_preflight(
         "features": verdict.get("features", []),
     }
     artifact["decision"] = decision
-    return redact(artifact)
+    return safe_artifact(artifact)

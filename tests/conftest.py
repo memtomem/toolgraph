@@ -34,3 +34,32 @@ def graph(neo4j_container, monkeypatch):
         s.run("MATCH (n) DETACH DELETE n")
     yield
     driver.close_driver()
+
+
+@pytest.fixture(params=["neo4j", "ladybug"])
+def backend_graph(request, tmp_path, monkeypatch):
+    """Required dual-backend regression fixture; missing Ladybug is an error."""
+    if request.param == "neo4j":
+        request.getfixturevalue("graph")
+        yield "neo4j"
+        return
+    import ladybug  # noqa: F401
+
+    monkeypatch.setattr(config, "settings", config.Settings(
+        backend="ladybug", db_path=tmp_path / "regression.lbug"
+    ))
+    driver.close_driver()
+    schema.init_schema()
+    try:
+        yield "ladybug"
+    finally:
+        driver.close_driver()
+
+
+@pytest.fixture(scope="session")
+def artifact_format_checker():
+    from jsonschema import FormatChecker
+
+    checker = FormatChecker()
+    assert "date-time" in checker.checkers, "install the dev dependency group with formats"
+    return checker

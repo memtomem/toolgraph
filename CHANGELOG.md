@@ -26,6 +26,29 @@ Initial public alpha release.
   `control-preflight` command that lints bounded DAG topology and evaluates all
   principal/tool surfaces under one collision-safe graph-state bracket.
 
+### Implementation review fixes (2026-09-07)
+
+- Handle empty crawl and manifest collections on both backends while retaining
+  stale-edge reconciliation, revocation, and transactional generation updates.
+- Preserve opaque artifact identities, including ordinary URI queries/fragments.
+  Reject credential-shaped identities and redact only evidence fields, including
+  policy review paths. Existing v1 schemas and decision vocabularies are unchanged.
+- Use collision-safe `v2:` exception keys and deterministic last-entry-wins
+  metadata for duplicate logical exceptions. No physical schema migration is
+  required: existing keys remain readable. Re-ingest the original governance
+  manifest to rebuild keys and restore entries lost to old key collisions, then
+  recompile policy bundles. Old artifacts cannot reconstruct lost manifest rows.
+- Require control-plan fields exactly as published: missing `maximum_cycles`,
+  explicit null bounds, string/boolean coercions are rejected. JSON integer
+  numbers such as `2.0` remain accepted; additive same-major fields remain valid.
+- Compile catalogs in chunks of at most 4,096 candidates under one strict state
+  bracket; reject incomplete or conflicting evaluations. Injected readers own
+  all state reads, and adapters without the optional `evaluate` capability work.
+- Load runtime settings lazily so help/version and explicit configuration remain
+  usable when the default config is broken. Invalid selected configs fail clearly.
+- Reject naive and sub-minute timestamps before preflight/review I/O; development
+  validation now installs and checks the RFC 3339 format validator.
+
 ### Upgrade note for pre-release users (historical)
 
 `driver.session()` and `driver.verify_connectivity()` now raise

@@ -73,12 +73,18 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     return {**result, "graph_generation": graph_generation()}
 
 
-def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
+def with_graph_state(
+    fetch: Callable[[], dict],
+    *,
+    strict: bool = False,
+    state_reader: Callable[[], GraphState] | None = None,
+) -> dict:
     """Return ``fetch`` bracketed by the collision-safe graph state token."""
+    read_state = state_reader if state_reader is not None else graph_state
     for attempt in range(_GENERATION_RETRIES):
-        before = graph_state()
+        before = read_state()
         result = fetch()
-        if graph_state() == before:
+        if read_state() == before:
             token = {"instance_id": before.instance_id, "generation": before.generation}
             return {
                 **result,
@@ -89,7 +95,7 @@ def with_graph_state(fetch: Callable[[], dict], *, strict: bool = False) -> dict
         _bracket_backoff(attempt)
     if strict:
         raise RuntimeError("graph state changed during every read attempt")
-    current = graph_state()
+    current = read_state()
     return {
         **result,
         "graph_generation": current.generation,

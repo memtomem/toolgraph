@@ -317,15 +317,16 @@ def _ingest(
     # node — see GovernedByBinding. Policy nodes carry only declaration data.
     # Null assignments drop the legacy ``prov_*`` properties left over from the
     # pre-completion-round shape, so an upgrading graph cleans itself up.
-    tx.run(
-        """
-        UNWIND $policies AS p
-        MERGE (pol:Policy {id:p.id})
-        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
-        SET pol.prov_source=null, pol.prov_confidence=null, pol.prov_evidence=null
-        """,
-        policies=[p.model_dump() for p in gov.policies],
-    )
+    if gov.policies:
+        tx.run(
+            """
+            UNWIND $policies AS p
+            MERGE (pol:Policy {id:p.id})
+            SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
+            SET pol.prov_source=null, pol.prov_confidence=null, pol.prov_evidence=null
+            """,
+            policies=[p.model_dump() for p in gov.policies],
+        )
     # Declarative manifest: prune Agent + Policy nodes the operator removed
     # from this manifest. The new ``found`` / ``agent_found`` API treats
     # node existence as a truth signal; leaking renamed-away nodes would
@@ -391,6 +392,7 @@ def _ingest(
             rows=batch,
         )
 
+    resolved_exceptions = list({row[:4]: row for row in resolved_exceptions}.values())
     if resolved_exceptions:
         tx.run(
             """

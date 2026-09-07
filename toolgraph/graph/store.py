@@ -21,6 +21,8 @@ class GraphReader(Protocol):
 
     def rank_features(self, agent: str, candidates: list[str]) -> dict: ...
 
+
+class EvaluatingGraphReader(GraphReader, Protocol):
     # Optional: adapters that can evaluate once and filter in memory expose
     # this combined form; build_policy_bundle prefers it and falls back to the
     # eligible_tools + rank_features pair for adapters that do not.

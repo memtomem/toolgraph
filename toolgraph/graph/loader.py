@@ -54,24 +54,25 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
     # Annotation hints (ADR-0006) are SET unconditionally: a null value removes
     # the property, so a hint the server stopped sending is cleared on the same
     # crawl pass that owns the node (same lifecycle as description).
-    tx.run(
-        """
-        MATCH (s:MCPServer {name:$name})
-        UNWIND $tools AS t
-        MERGE (tool:Tool {key:t.key})
-        SET tool.name=t.name, tool.server=$name,
-            tool.description=t.description, tool.input_schema=t.input_schema,
-            tool.read_only_hint=t.read_only_hint,
-            tool.destructive_hint=t.destructive_hint,
-            tool.idempotent_hint=t.idempotent_hint,
-            tool.open_world_hint=t.open_world_hint
-        MERGE (s)-[e:EXPOSES]->(tool)
-        SET e.source='crawled', e.confidence='high', e.evidence=$evidence
-        """,
-        name=result.server_name,
-        tools=tools,
-        evidence=f"crawled from {endpoint}",
-    )
+    if tools:
+        tx.run(
+            """
+            MATCH (s:MCPServer {name:$name})
+            UNWIND $tools AS t
+            MERGE (tool:Tool {key:t.key})
+            SET tool.name=t.name, tool.server=$name,
+                tool.description=t.description, tool.input_schema=t.input_schema,
+                tool.read_only_hint=t.read_only_hint,
+                tool.destructive_hint=t.destructive_hint,
+                tool.idempotent_hint=t.idempotent_hint,
+                tool.open_world_hint=t.open_world_hint
+            MERGE (s)-[e:EXPOSES]->(tool)
+            SET e.source='crawled', e.confidence='high', e.evidence=$evidence
+            """,
+            name=result.server_name,
+            tools=tools,
+            evidence=f"crawled from {endpoint}",
+        )
 
     resources = [
         {
@@ -82,19 +83,20 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
         }
         for r in result.resources
     ]
-    tx.run(
-        """
-        MATCH (s:MCPServer {name:$name})
-        UNWIND $resources AS r
-        MERGE (res:Resource {uri:r.uri})
-        SET res.name=r.name, res.mime_type=r.mime_type, res.description=r.description
-        MERGE (s)-[p:PROVIDES]->(res)
-        SET p.source='crawled', p.confidence='high', p.evidence=$evidence
-        """,
-        name=result.server_name,
-        resources=resources,
-        evidence=f"crawled from {endpoint}",
-    )
+    if resources:
+        tx.run(
+            """
+            MATCH (s:MCPServer {name:$name})
+            UNWIND $resources AS r
+            MERGE (res:Resource {uri:r.uri})
+            SET res.name=r.name, res.mime_type=r.mime_type, res.description=r.description
+            MERGE (s)-[p:PROVIDES]->(res)
+            SET p.source='crawled', p.confidence='high', p.evidence=$evidence
+            """,
+            name=result.server_name,
+            resources=resources,
+            evidence=f"crawled from {endpoint}",
+        )
 
     # Reconcile tools this server no longer exposes. Drop the EXPOSES edge always;
     # DETACH DELETE only pure crawl artifacts (no authored governance). Tools that

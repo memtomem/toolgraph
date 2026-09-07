@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolgraph.artifacts import rfc3339_offset_error, sha256_bytes
 from toolgraph.graph import queries, selector
-from toolgraph.preflight import redact
+from toolgraph.artifact_safety import _CREDENTIAL_QUERY, _CREDENTIAL_URI, safe_artifact
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
@@ -71,10 +71,6 @@ _FORBIDDEN_KEY_FRAGMENTS = (
     "stdout",
     "token",
 )
-_CREDENTIAL_URI = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")
-_CREDENTIAL_QUERY = re.compile(
-    r"[?&](?:api[_-]?key|password|secret|token)=[^&#\s]+", re.IGNORECASE
-)
 _ABSOLUTE_PATH = re.compile(r"^(?:/|\\\\|[A-Za-z]:[\\/])")
 
 
@@ -85,7 +81,33 @@ class ControlPlanError(ValueError):
 class _AdditiveModel(BaseModel):
     """Versioned artifact model: same-major additive fields are ignored."""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _json_numbers(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        for name, field in cls.model_fields.items():
+            if name not in value:
+                continue
+            item = value[name]
+            if item is None and not field.is_required():
+                raise ValueError(f"{name} cannot be null")
+            # JSON Schema treats integral JSON numbers as integers, but never
+            # booleans. Pydantic Literal[0/1] alone accepts bool equality.
+            numeric = name in {
+                "schema_version", "maximum_cycles", "maximum_agent_calls",
+                "maximum_parallelism", "max_invocations", "max_parallelism",
+                "timeout_seconds", "max_fan_out",
+            }
+            if numeric:
+                if isinstance(item, bool):
+                    raise ValueError(f"{name} must be an integer")
+                if isinstance(item, float) and item.is_integer():
+                    value[name] = int(item)
+        return value
 
 
 class Producer(_AdditiveModel):
@@ -193,7 +215,7 @@ class ControlEdge(_AdditiveModel):
 class ControlLimits(_AdditiveModel):
     maximum_agent_calls: int = Field(ge=1)
     maximum_parallelism: int = Field(ge=1)
-    maximum_cycles: Literal[0] = 0
+    maximum_cycles: Literal[0]
 
 
 class ControlPlan(_AdditiveModel):
@@ -467,6 +489,6 @@ def build_control_preflight(
         # which breaks the run correlation this artifact exists for. Identity
         # fields are already credential-free; load_control_plan rejects a plan
         # carrying credential-shaped values.
-        "evaluations": redact(compiled["evaluations"]),
+        "evaluations": safe_artifact(compiled["evaluations"]),
         "findings": findings,
     }

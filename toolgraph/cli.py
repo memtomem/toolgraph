@@ -93,6 +93,9 @@ def _reports_backend_outage(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except config.RuntimeConfigurationError as exc:
+            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
         except driver.BackendUnavailableError as exc:
             typer.echo(f"ERROR: backend unavailable: {redact_text(exc)}", err=True)
             raise typer.Exit(code=1) from None

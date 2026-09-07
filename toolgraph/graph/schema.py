@@ -81,8 +81,12 @@ LADYBUG_SCHEMA: list[str] = [
 
 
 def exception_key(agent: str, tool_key: str, resource: str | None, policy: str) -> str:
-    """Stable identity for ExpectedException; ``resource=*`` collapses 'any resource'."""
-    return f"{agent}|{tool_key}|{resource or '*'}|{policy}"
+    """Collision-safe identity; null denotes an exception for any resource."""
+    from toolgraph.artifacts import canonical_json_bytes, sha256_bytes
+    from toolgraph.uris import normalize_resource_uri
+
+    resource = normalize_resource_uri(resource) if resource is not None else None
+    return "v2:" + sha256_bytes(canonical_json_bytes([agent, tool_key, resource, policy]))
 
 
 def tool_key(server_name: str, tool_name: str) -> str:
