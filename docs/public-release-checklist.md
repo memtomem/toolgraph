@@ -1,5 +1,12 @@
 # Public release checklist
 
+> Status refresh, 2026-09-08: the repository remains private, but current
+> Actions runs execute successfully. The counts and PR lists below describe
+> the dated August audit, not current blockers. PR #92 at `b34cec4` passed
+> `ci-required` with 496 tests; its optional dev audit reported pip 26.1.2.
+> See [current stabilization work](reviews/2026-09-08-stabilization.md).
+> Public transition and publication remain a separate delivery track.
+
 **Status:** preparation done; two dependabot pull requests to dispose of
 (2026-08-24). **The owner has decided to go public**; what remains is
 execution, not deciding.

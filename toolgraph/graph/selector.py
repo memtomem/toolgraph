@@ -22,7 +22,7 @@ consumer may never override a hard reject (NOT_GRANTED, violation, drifted).
 from __future__ import annotations
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.queries import _deny_evidence_batch, agent_exists
+from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
 
 # Hard-filter rule sets (ADR-0005). Reasons are checked in _REASON_PRECEDENCE
 # order; the first applicable reason that the profile rejects wins. These are
@@ -106,35 +106,8 @@ def _risk_score(feature: dict) -> float | None:
 
 
 def _resolve_all(s, refs: list[str]) -> dict[str, list[str]]:
-    """Resolve every candidate ref in at most two batch queries.
-
-    Same resolution rule as ``resolve_tool_keys`` (exact key, or bare name
-    across servers) so the selector can never disagree with ``check_access``
-    about tool identity.
-    """
-    unique = sorted(set(refs))
-    # Keys are always "<server>::<tool>", so qualified refs resolve on the
-    # tool_key unique index and bare refs on one name-equality batch —
-    # instead of the per-ref label scan the old OR-disjunction forced.
-    qualified = [ref for ref in unique if "::" in ref]
-    bare = [ref for ref in unique if "::" not in ref]
-    resolved: dict[str, list[str]] = {ref: [] for ref in unique}
-    if qualified:
-        rows = s.run(
-            "MATCH (t:Tool) WHERE t.key IN $keys RETURN t.key AS key",
-            keys=qualified,
-        )
-        for r in rows:
-            resolved[r["key"]].append(r["key"])
-    if bare:
-        rows = s.run(
-            "MATCH (t:Tool) WHERE t.name IN $names "
-            "RETURN t.name AS name, t.key AS key",
-            names=bare,
-        )
-        for r in rows:
-            resolved[r["name"]].append(r["key"])
-    return {ref: sorted(keys) for ref, keys in resolved.items()}
+    """Use the same bounded resolution as ingest and single-tool queries."""
+    return resolve_tool_refs(s, refs)
 
 
 def _tool_facts(s, keys: list[str], agent: str) -> dict[str, dict]:

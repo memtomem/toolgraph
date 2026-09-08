@@ -107,25 +107,39 @@ def with_graph_state(
     }
 
 
-def resolve_tool_keys(s: Session, ref: str) -> list[str]:
-    """All Tool keys matching a ref (exact key, or bare name across servers).
+RESOLVE_BATCH_SIZE = 4096
 
-    Keys are always ``<server>::<tool>`` (schema.py), so a qualified ref can
-    only match by key and a bare ref only by name. Splitting the two cases
-    keeps the qualified path on the ``tool_key`` unique index instead of the
-    full label scan the old ``key = $ref OR (... name = $ref)`` disjunction
-    forced on every resolution.
+
+def resolve_tool_refs(s: Session, refs: list[str]) -> dict[str, list[str]]:
+    """Resolve unique refs in bounded batches on the caller's transaction.
+
+    Qualified keys and bare names stay separate, preserving index-friendly
+    resolution and every ambiguous match. Empty and repeated refs cost no
+    additional queries. Results are deterministic on both graph backends.
     """
-    if "::" in ref:
-        rows = s.run(
-            "MATCH (t:Tool {key:$ref}) RETURN t.key AS key ORDER BY key", ref=ref
-        )
-    else:
-        rows = s.run(
-            "MATCH (t:Tool) WHERE t.name = $ref RETURN t.key AS key ORDER BY key",
-            ref=ref,
-        )
-    return [r["key"] for r in rows]
+    unique = sorted(set(refs))
+    resolved: dict[str, list[str]] = {ref: [] for ref in unique}
+    qualified = [ref for ref in unique if "::" in ref]
+    bare = [ref for ref in unique if "::" not in ref]
+    for start in range(0, len(qualified), RESOLVE_BATCH_SIZE):
+        for row in s.run(
+            "MATCH (t:Tool) WHERE t.key IN $keys RETURN t.key AS key",
+            keys=qualified[start:start + RESOLVE_BATCH_SIZE],
+        ):
+            resolved[row["key"]].append(row["key"])
+    for start in range(0, len(bare), RESOLVE_BATCH_SIZE):
+        for row in s.run(
+            "MATCH (t:Tool) WHERE t.name IN $names "
+            "RETURN t.name AS name, t.key AS key",
+            names=bare[start:start + RESOLVE_BATCH_SIZE],
+        ):
+            resolved[row["name"]].append(row["key"])
+    return {ref: sorted(keys) for ref, keys in resolved.items()}
+
+
+def resolve_tool_keys(s: Session, ref: str) -> list[str]:
+    """All matches for one exact qualified key or bare name."""
+    return resolve_tool_refs(s, [ref])[ref]
 
 
 def graph_generation() -> int:

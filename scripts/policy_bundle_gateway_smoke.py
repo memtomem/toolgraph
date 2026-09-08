@@ -25,13 +25,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import yaml
 
+from ecosystem_smoke import SmokeError, dependency_evidence, require_clean_checkout
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "examples" / "policy_gateway_server.py"
-
-
-class SmokeError(RuntimeError):
-    """The integration contract did not hold."""
 
 
 def run(
@@ -392,6 +390,7 @@ async def assert_list(
     expected_present: bool,
     review_call: bool = False,
     spool: Path | None = None,
+    expected_would_block: int | None = 1,
 ) -> int:
     with errlog.open("w", encoding="utf-8") as errors:
         async with stdio_client(
@@ -407,7 +406,7 @@ async def assert_list(
                 if spool is None:
                     raise SmokeError("review call requires an invocation sentinel")
                 before = spool_count(spool, "read_note")
-                called = await session.call_tool("demo__read_note", {"note_id": "review"})
+                called = await session.call_tool("demo__read_note", {"note_id": "review" if expected_would_block else "disabled"})
                 if called.isError:
                     raise SmokeError("review mode blocked a would-block call")
                 if spool_count(spool, "read_note") != before + 1:
@@ -415,7 +414,16 @@ async def assert_list(
                 health = await session.call_tool("stm_proxy_health", {})
                 if health.isError:
                     raise SmokeError("review health surface was not callable")
-                return 1
+                if expected_would_block is None:
+                    return 0
+                payload = getattr(health, "structuredContent", None)
+                if payload is None:
+                    payload = json.loads(next(c.text for c in health.content if c.type == "text"))
+                from ecosystem_smoke import nested_values
+                counts = nested_values(payload, "would_block_calls")
+                if counts != [expected_would_block]:
+                    raise SmokeError("review health did not record the expected would-block count")
+                return counts[0]
 
 
 async def expect_start_failure(
@@ -444,6 +452,8 @@ def main() -> int:
     parser.add_argument("--memtomem-stm-root", type=Path, required=True)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
     parser.add_argument("--keep-workspace", action="store_true")
+    parser.add_argument("--toolgraph-ref", required=True, help="Full clean Toolgraph HEAD SHA")
+    parser.add_argument("--memtomem-stm-ref", required=True, help="Full clean STM HEAD SHA")
     args = parser.parse_args()
 
     stm_root = args.memtomem_stm_root.expanduser().resolve()
@@ -456,6 +466,12 @@ def main() -> int:
     try:
         # Keep ref discovery inside the artifact-producing failure boundary.
         refs = {"toolgraph": git_state(ROOT), "memtomem_stm": git_state(stm_root)}
+        require_clean_checkout(ROOT, args.toolgraph_ref)
+        require_clean_checkout(stm_root, args.memtomem_stm_ref)
+        dependencies = {
+            "toolgraph": dependency_evidence(ROOT),
+            "memtomem_stm": dependency_evidence(stm_root),
+        }
         stm_python = venv_python(stm_root)
         tg = toolgraph_cli()
         stm_toolgraph_import_probe = run(
@@ -680,8 +696,20 @@ def main() -> int:
             )
         )
 
+        # The one-field rollback must bypass even a missing policy artifact.
+        missing_config["toolgraph"]["enabled"] = False
+        write_json(config_path, missing_config)
+        asyncio.run(assert_list(
+            stm_python=stm_python, config=config_path,
+            errlog=workspace / "disabled.stderr.log", expected_present=True,
+            review_call=True, spool=spool, expected_would_block=None,
+        ))
+
+        require_clean_checkout(ROOT, args.toolgraph_ref)
+        require_clean_checkout(stm_root, args.memtomem_stm_ref)
         summary = {
             "schema_version": 1,
+            "dependencies": dependencies,
             "status": "pass",
             "refs": refs,
             "bundles": {
@@ -705,6 +733,7 @@ def main() -> int:
                 "call_allowed": True,
                 "would_block_calls": would_block,
             },
+            "disabled_missing_bundle_call_allowed": True,
             "toolgraph_imported_by_stm": False,
         }
         write_json(summary_path, summary)

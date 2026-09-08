@@ -41,3 +41,36 @@ enables strict by default, accepts a synthetic finding as governance, or edits a
 manifest. On success only the summary, raw OTLP, normalized artifact, candidate
 report, and annotation sidecar remain. On failure the private workspace is
 preserved and printed for diagnosis.
+
+## Fixture-only validation at explicit commits
+
+Use the following for integration acceptance without paid agent calls. The
+arguments must be full 40-character commit SHAs already present in the source
+repositories. No source ref is fetched or moved, and dirty source files are not
+copied. Each package and governance fixture comes from its requested commit.
+The runner's own digest is recorded separately from the tested package SHAs.
+
+```bash
+uv run --group dev python scripts/ecosystem_smoke.py \
+  --toolgraph-ref <toolgraph-sha> \
+  --syncmill-root ../syncmill --syncmill-ref <syncmill-sha> \
+  --tracegraph-root ../tracegraph --tracegraph-ref <tracegraph-sha> \
+  --artifacts-dir /private/tmp/ecosystem-evidence
+```
+
+For Toolgraph-to-STM bundle validation, prepare clean checkouts at the desired
+SHAs and sync each checkout from its frozen lockfile, including Toolgraph's dev
+group and Ladybug extra. Run from that Toolgraph checkout:
+
+```bash
+uv run --group dev --extra ladybug python scripts/policy_bundle_gateway_smoke.py \
+  --toolgraph-ref <toolgraph-sha> \
+  --memtomem-stm-root ../memtomem-stm --memtomem-stm-ref <stm-sha> \
+  --artifacts-dir /private/tmp/gateway-evidence
+```
+
+The gateway runner rejects dirty checkouts and mismatched HEADs before starting
+MCP processes, and checks again before reporting success. Both summaries record
+installed dependencies and lockfile digests. Use a fresh artifacts directory per
+run. These tests are separate from the paid-provider Gate E canaries above;
+they do not promote a persistent project's configuration.

@@ -1,5 +1,20 @@
 # Toolgraph operations and context-engineering report
 
+## Current ownership and status (2026-09-08)
+
+This report includes the original research sequence. ADR-0005 is normative:
+Toolgraph supplies deterministic eligibility and features; consumers own
+telemetry, relevance ranking, replay, and learning. STM already has a selection
+log, graph-generation telemetry, and a startup consult disk cache, as documented
+in its `docs/selection-telemetry.md` and `proxy/toolgraph_cache.py`.
+These capabilities must not be counted as missing Toolgraph features.
+
+The current work removes ingest Phase 1's per-reference queries using bounded
+resolution on the existing transaction. Phase 2 batching, selector batching,
+generation invalidation and the crawler's 1,000-page cap already exist.
+See the [stabilization review](reviews/2026-09-08-stabilization.md) for dated
+verification rather than treating the historical roadmap as an open backlog.
+
 ## Summary
 
 Toolgraph is an advisory analyzer of the MCP tool ecosystem, not a runtime
@@ -65,8 +80,9 @@ these costs can become significant:
   queries that sweep the whole graph.
 - `blast-radius` results grow sharply when a resource or policy has a large
   tool/agent fan-out.
-- Crawling has per-server timeout and concurrency limits, but no separate cap on
-  the number of tool/resource pages per server.
+- Crawling has per-server timeout and concurrency limits and a 1,000-page
+  enumeration cap; large individual pages and audit responses still need
+  representative-scale measurement.
 - The MCP server wrapper returns query results in one shot, so on a large graph
   response size directly affects selection latency.
 
@@ -464,8 +480,9 @@ Four fields are essential:
 with it (`toolgraph/server/app.py`), it is carried through preflight and the CLI
 (`toolgraph/preflight.py`, `toolgraph/cli.py`), and
 `tests/test_selector_contract.py` pins that stamping as part of the consumer
-contract. What is still missing is the *sink*: nothing in this repository
-records selection events, `ranker_version` or outcomes today.
+contract. The sink belongs to the consumer: STM records selection events and
+`ranker_version` in its selection log. Toolgraph deliberately does not store
+execution outcomes.
 
 ## Verification criteria
 
@@ -484,8 +501,8 @@ functional ones:
 
 ## Roadmap
 
-Items 1, 2 and 5 are **done**; they are kept here so the sequence still reads as
-a whole.
+Items 1, 2, 3, 5 and 8 have implementations; the ownership below distinguishes
+Toolgraph from its consumer. Research extensions are not release blockers.
 
 1. ~~**Selector adapter**~~ — **shipped.** `eligible_tools` applies the hard
    filter, with `DRIFTED` rejecting under every profile.
@@ -493,15 +510,15 @@ a whole.
 2. ~~**Batch feature query**~~ — **shipped.** `rank_features` evaluates N
    candidates in one call.
 
-3. **Telemetry schema**
-   Store selection events, execution outcomes, user corrections and operator
-   overrides.
+3. **Telemetry schema — consumer-owned, implemented in STM.**
+   Further outcome attribution and evaluation belong to the consumer.
 
 4. **Offline eval**
    Tune heuristic weights against a fixed test set and replay logs.
 
-5. ~~**Feature cache**~~ — the generation counter this depends on is shipped
-   (`graph_generation`); the cache layer on top of it is not.
+5. **Feature cache — consumer-owned, implemented in STM.** Toolgraph emits
+   graph state; the startup consult cache lives in STM. A cache hit does not
+   establish runtime enforcement or a strict persisted-artifact snapshot.
 
 6. **Learning-to-rank**
    Train ranking only over eligible candidates, after the hard filter.
@@ -509,9 +526,9 @@ a whole.
 7. **Contextual bandit**
    Introduce constrained exploration among low-risk candidates.
 
-8. **Runtime gateway integration**
-   Keep Toolgraph as an analyzer; perform actual blocking in a gateway or the
-   execution layer.
+8. **Runtime gateway integration — implemented.**
+   STM consumes portable bundles and enforces at list/call time. Current-head
+   cross-repository validation remains separate from historical smoke results.
 
 ## Conclusion
 
@@ -521,9 +538,7 @@ policies, resources, provenance and drift into the selection context lets the
 model choose from fewer candidates, at lower risk, with a more explainable
 result.
 
-The first two of the three steps this report originally recommended are now
-shipped — the graph-aware hard filter and the batch rank-feature API. **The
-remaining one is selection telemetry and offline evaluation**, and nothing in
-this repository writes a selection event yet. That, not reinforcement learning,
-is the next piece of real work; learning-to-rank and a contextual bandit attach
-naturally once it is stable.
+The hard filter and batch features are implemented, and the first consumer
+already records selection telemetry and caches consults. The next Toolgraph
+work is reproducible integration evidence and bounded ingest resolution.
+Offline evaluation and any learned ranking remain consumer-owned research.

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.queries import resolve_tool_keys
+from toolgraph.graph.queries import resolve_tool_refs
 from toolgraph.graph.schema import bump_generation, exception_key
 from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
@@ -67,13 +67,13 @@ def _normalize_bindings(items: list) -> list[GovernedByBinding]:
     return out
 
 
-def _resolve(tx: ManagedTransaction, ref: str) -> tuple[str | None, list[str]]:
+def _resolve(resolved: dict[str, list[str]], ref: str) -> tuple[str | None, list[str]]:
     """Return (unique_key, all_matches). unique_key is set only on exactly one match.
 
     Shares the exact resolution rule with check_access so write-side and
     read-side tool identity can never drift.
     """
-    keys = resolve_tool_keys(tx, ref)
+    keys = resolved[ref]
     return (keys[0] if len(keys) == 1 else None, keys)
 
 
@@ -119,9 +119,15 @@ def _ingest(
     known_agents = set(gov.agents) | {g.agent for g in gov.grants}
 
     # --- Phase 1: validate + resolve (read-only) -------------------------
+    # Resolve once on this transaction; validation still walks the original
+    # manifest order so diagnostics and last-entry-wins semantics do not move.
+    refs = [g.tool for g in gov.grants] + [d.tool for d in gov.data_access]
+    refs.extend(ref for ref in gov.governed_by if not is_resource_ref(ref))
+    refs.extend(e.tool for e in gov.expected_exceptions)
+    resolved_refs = resolve_tool_refs(tx, refs)
     resolved_grants: list[tuple] = []
     for grant in gov.grants:
-        key, matches = _resolve(tx, grant.tool)
+        key, matches = _resolve(resolved_refs, grant.tool)
         if key is None:
             warnings.append(
                 f"CAN_CALL: tool {grant.tool!r} {_resolve_problem(grant.tool, matches)} "
@@ -135,7 +141,7 @@ def _ingest(
     resolved_access: list[tuple] = []
     authored_access: set[tuple[str, str]] = set()  # (tool_key, resource_uri) for exception check
     for da in gov.data_access:
-        key, matches = _resolve(tx, da.tool)
+        key, matches = _resolve(resolved_refs, da.tool)
         if key is None:
             warnings.append(f"{da.mode}: tool {da.tool!r} {_resolve_problem(da.tool, matches)}")
         else:
@@ -166,7 +172,7 @@ def _ingest(
             for pid, _ in valid:
                 policy_resources.setdefault(pid, set()).add(uri)
         else:
-            key, matches = _resolve(tx, node_ref)
+            key, matches = _resolve(resolved_refs, node_ref)
             if key is None:
                 warnings.append(
                     f"GOVERNED_BY: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
@@ -212,7 +218,7 @@ def _ingest(
                 f"(agent {exc.agent!r}, tool {exc.tool!r})"
             )
             continue
-        key, matches = _resolve(tx, exc.tool)
+        key, matches = _resolve(resolved_refs, exc.tool)
         if key is None:
             warnings.append(
                 f"EXPECTED_EXCEPTION: tool {exc.tool!r} {_resolve_problem(exc.tool, matches)} "

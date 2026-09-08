@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -44,6 +45,12 @@ def run(
     timeout: int = 300,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
+    # Git routing inherited from a parent worktree must not redirect a clone,
+    # checkout, or disposable-target commit into the user's repository.
+    if argv and argv[0] == "git":
+        env = {k: v for k, v in (env or os.environ).items() if not k.startswith("GIT_")}
+        env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull})
+        argv = ["git", "-c", "core.hooksPath=" + os.devnull, *argv[1:]]
     proc = subprocess.run(
         argv,
         cwd=cwd,
@@ -72,23 +79,41 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def fetched_sha(root: Path, ref: str) -> str:
-    if not (root / ".git").exists():
-        raise SmokeError(f"not a Git checkout: {root}")
-    run(["git", "fetch", "origin"], cwd=root)
-    return run(["git", "rev-parse", f"{ref}^{{commit}}"], cwd=root).stdout.strip()
+def exact_sha(root: Path, ref: str) -> str:
+    """Require an existing full commit id, without fetching or moving refs."""
+    if not re.fullmatch(r"[0-9a-f]{40}", ref):
+        raise SmokeError("smoke refs must be full lowercase commit SHAs")
+    resolved = run(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=root).stdout.strip()
+    if resolved != ref:
+        raise SmokeError("requested SHA does not identify that commit")
+    return resolved
 
 
 def clone_at(source: Path, target: Path, sha: str) -> None:
-    # Clone from the configured remote, not the live checkout. A fetched remote
-    # ref can be newer than the checkout's local branch (deliberately so for a
-    # dirty worktree we must not switch/reset); cloning the checkout itself only
-    # advertises local heads and may omit that fetched commit entirely.
-    remote = run(["git", "remote", "get-url", "origin"], cwd=source).stdout.strip()
-    if not remote:
-        raise SmokeError(f"origin has no URL: {source}")
-    run(["git", "clone", "--quiet", remote, str(target)])
+    """Copy a local commit, including unpushed commits, never working files."""
+    exact_sha(source, sha)
+    run(["git", "clone", "--quiet", "--no-local", "--no-checkout", str(source), str(target)])
+    # A detached/unadvertised local commit may not be in clone's advertised refs.
+    run(["git", "fetch", "--quiet", str(source), sha], cwd=target)
     run(["git", "checkout", "--quiet", "--detach", sha], cwd=target)
+    require_clean_checkout(target, sha)
+
+
+def require_clean_checkout(root: Path, sha: str) -> None:
+    exact_sha(root, sha)
+    if run(["git", "rev-parse", "HEAD"], cwd=root).stdout.strip() != sha:
+        raise SmokeError("checkout HEAD differs from requested SHA")
+    if run(["git", "status", "--porcelain"], cwd=root).stdout.strip():
+        raise SmokeError("smoke requires a clean checkout")
+
+
+def dependency_evidence(root: Path) -> dict[str, Any]:
+    return {
+        "lock_digest": sha256(root / "uv.lock"),
+        "installed": run(
+            ["uv", "pip", "freeze", "--python", str(root / ".venv")], cwd=root
+        ).stdout.splitlines(),
+    }
 
 
 def wait_for_neo4j(env: dict[str, str]) -> None:
@@ -297,13 +322,14 @@ def main() -> int:
     parser.add_argument("--tracegraph-root", type=Path, required=True)
     parser.add_argument("--artifacts-dir", type=Path, required=True)
     parser.add_argument("--export-compete-trace", action="store_true")
+    for name in ("toolgraph", "syncmill", "tracegraph"):
+        parser.add_argument(f"--{name}-ref", required=True, help="Full local commit SHA")
     args = parser.parse_args()
     if run(["docker", "info"], check=False, timeout=20).returncode:
         raise SmokeError("Docker is required; start the daemon and rerun the smoke")
 
     roots = {"toolgraph": ROOT, "syncmill": args.syncmill_root.resolve(), "tracegraph": args.tracegraph_root.resolve()}
-    refs = {"toolgraph": "origin/main", "syncmill": "origin/main", "tracegraph": "origin/tracegraph-mvp"}
-    shas = {name: fetched_sha(root, refs[name]) for name, root in roots.items()}
+    shas = {name: exact_sha(root, getattr(args, f"{name}_ref")) for name, root in roots.items()}
     # Prefer the short, predictable macOS scratch root when present; fall back to
     # the platform temp dir (e.g. Linux CI) so the smoke stays portable.
     tmp_root = "/private/tmp" if Path("/private/tmp").is_dir() else None
@@ -314,9 +340,12 @@ def main() -> int:
         clones = {name: workspace / name for name in roots}
         for name, source in roots.items():
             clone_at(source, clones[name], shas[name])
-        # The harness under test may be newer than fetched origin/main. Overlay
-        # only its two smoke inputs; production packages still come from SHAs.
-        shutil.copy2(GOVERNANCE, clones["toolgraph"] / "examples" / GOVERNANCE.name)
+        for name, clone in clones.items():
+            sync = ["uv", "sync", "--frozen"]
+            if name == "toolgraph":
+                sync.extend(["--group", "dev", "--extra", "ladybug"])
+            run(sync, cwd=clone)
+        dependencies = {name: dependency_evidence(clone) for name, clone in clones.items()}
         port = free_port()
         run([
             "docker", "run", "-d", "--name", container,
@@ -324,7 +353,10 @@ def main() -> int:
             "-e", "NEO4J_AUTH=neo4j/" + PASSWORD,
             NEO4J_IMAGE,
         ], timeout=120)
-        base_env = dict(os.environ)
+        base_env = {
+            k: v for k, v in os.environ.items()
+            if not k.startswith(("TOOLGRAPH_", "NEO4J_", "SYNCMILL_", "GIT_"))
+        }
         base_env.update({
             "NEO4J_URI": f"bolt://127.0.0.1:{port}",
             "NEO4J_USER": "neo4j",
@@ -393,10 +425,20 @@ def main() -> int:
             compete=True,
         )
 
+        for name, clone in clones.items():
+            require_clean_checkout(clone, shas[name])
         args.artifacts_dir.mkdir(parents=True, exist_ok=True)
         summary = {
             "schema_version": 1,
             "refs": shas,
+            "status": "pass",
+            "harness_digest": sha256(Path(__file__)),
+            "governance_digest": sha256(clones["toolgraph"] / "examples" / GOVERNANCE.name),
+            "dependencies": dependencies,
+            "artifacts": {
+                "route_preflight": sha256(runs_dir / route_id / "preflight.json"),
+                "compete_preflight": sha256(runs_dir / compete_id / "preflight.json"),
+            },
             "route": {"run_id": route_id, "agent": "kimi", "decision": "advisory_allow"},
             "compete": {"run_id": compete_id, "agent": "codex", "decision": "advisory_warn", "winner": "codex", "rejected": ["syncmill::board_stats:DENY_VIOLATION"]},
         }

@@ -26,6 +26,15 @@ Initial public alpha release.
   `control-preflight` command that lints bounded DAG topology and evaluates all
   principal/tool surfaces under one collision-safe graph-state bracket.
 
+### Stabilization (2026-09-08)
+
+- Resolve ingest references in bounded batches shared with the selector,
+  preserving atomic application, diagnostic order and ambiguous identities.
+- Require explicit commit SHAs for ecosystem smokes and clean matching HEADs
+  for gateway smokes; record dependencies and artifact evidence.
+- Include Ladybug in `make install` and refresh the pip audit dependency lock.
+- Reconcile historical integration and selection roadmaps with shipped code.
+
 ### Implementation review fixes (2026-09-07)
 
 - Handle empty crawl and manifest collections on both backends while retaining
