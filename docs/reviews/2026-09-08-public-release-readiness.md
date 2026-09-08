@@ -1,5 +1,63 @@
 # Public release readiness — 2026-09-08
 
+## Follow-up exhaustive inventory audit
+
+The follow-up examined candidate `6c3e841` and all advertised PR head refs.
+The owner clarified that deletion authorization covers **only the four July 12
+PR #35 body revisions**, not the PR itself. No deletion has been performed.
+
+| Surface | Follow-up coverage |
+| --- | ---: |
+| Reachable Git commits / unique blobs | 222 / 679 |
+| Issue/PR records | 93, including 73 PRs |
+| Issue comments / PR reviews | 52 / 6 |
+| Inline review comments / commit comments | 0 / 0 |
+| Available body, comment and review revisions | 84 |
+| Actions runs / available artifact archives | 311 / 8 |
+| Archives downloaded and inspected | 319, none failed |
+| Archive entries / decompressed bytes | 1,375 / 19,823,044 |
+| Unique check runs / annotations | 1,482 / 1,139 |
+| Attachment URLs matching GitHub upload formats in inspected text | 0 |
+
+Expanded patterns covered macOS, Windows and Linux home paths; additional
+OpenAI-style, PyPI, Hugging Face, GitLab and npm tokens; and common private IPv4
+addresses, alongside the original credential, key-header and URL checks.
+The conversation/revision/check-output pass found only the same four PR #35
+revisions. No new personal-path or token-pattern finding was identified.
+The Git scan had 26 URI-userinfo findings representing the previously reviewed
+synthetic fixtures, including the preserved Korean review copy. The initial
+log scan's macOS paths were hosted-runner paths. All 34 additional Linux-path
+log findings were individually classified as `/home/dependabot/`.
+
+Current workflows were also reviewed for action pins, permissions, release
+artifact handling and CLA execution. The CLA workflow executes default-branch
+code with checkout credential persistence disabled. Release build and OIDC
+publication remain separate jobs. Repository-wide SHA pin enforcement is off,
+although current action references use commit pins. The `pypi` environment is
+still absent; repository visibility remains private. Discussions is enabled
+with zero entries, and Wiki/Pages are disabled.
+
+API authentication works. Live GraphQL introspection exposes `userContentEdits`
+for reading but no public mutation for deleting those revisions. The four
+target nodes still have `deletedAt: null`. GitHub's documented removal path is
+the authenticated web UI: edited, select revision, Options, Delete revision
+from history. No connected browser was available. See
+[GitHub's edit-history documentation](https://docs.github.com/en/communities/moderating-comments-and-conversations/tracking-changes-in-a-comment).
+Do not substitute PR deletion, closing, or rewriting the current body.
+
+Coverage limits: 25 expired artifacts remain unavailable. Three locally
+reachable commit SHAs returned 422 when querying remote check runs; they were
+still included in the Git content scan. Check-run output and annotations were
+inspected, but independently rendered job summaries were not accessible.
+Installed Apps requires different authentication (401), Packages requires
+`read:packages` (403), and secret/code scanning is not enabled. Private-plan
+ruleset/fork-approval restrictions remain. No pattern scan proves absence of
+all secrets; unrecognized upload URLs and image/OCR content are not covered.
+No Git history, PR content, repository visibility, or package publication was
+changed by this read-only audit. **Public release remains on hold pending the
+authorized revision deletion and resolution or explicit disposition of the
+remaining inaccessible surfaces.**
+
 Target: Toolgraph **0.0.1 / Alpha**, existing PR #87 (`release/v0.0.1-prep`),
 updated with main `c173ae7`. This report distinguishes readiness from publication.
 
