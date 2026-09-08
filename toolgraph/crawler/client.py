@@ -7,6 +7,17 @@ from toolgraph.models import CrawlResult, ResourceRecord, ServerSpec, ToolRecord
 from toolgraph.redaction import endpoint_label
 from toolgraph.uris import normalize_resource_uri
 
+# A crawled server controls its own cursors, so an unbounded drain loop lets a
+# buggy or malicious server that keeps returning a cursor pin the crawler and
+# grow memory without limit. The per-server wall-clock timeout only applies on
+# the CLI path (crawl_all), not to library callers of crawl_server. Real
+# catalogs are a handful of pages; hitting this cap means the server is broken.
+MAX_LIST_PAGES = 1000
+
+
+class PaginationLimitError(RuntimeError):
+    """A server kept returning continuation cursors past MAX_LIST_PAGES."""
+
 
 def _annotation_fields(tool) -> dict:
     """Tool annotations as ToolRecord fields (ADR-0006).
@@ -36,7 +47,7 @@ async def _list_all_tools(session) -> list[ToolRecord]:
     """
     out: list[ToolRecord] = []
     cursor: str | None = None
-    while True:
+    for _ in range(MAX_LIST_PAGES):
         listed = await session.list_tools(cursor=cursor)
         out.extend(
             ToolRecord(
@@ -54,13 +65,17 @@ async def _list_all_tools(session) -> list[ToolRecord]:
             # None when sending the next request. `if not cursor` would
             # silently truncate after page 1 against such a server.
             return out
+    raise PaginationLimitError(
+        f"list_tools returned a continuation cursor on {MAX_LIST_PAGES}"
+        " consecutive pages — refusing to drain further"
+    )
 
 
 async def _list_all_resources(session) -> list[ResourceRecord]:
     """Drain ``list_resources`` pages until ``nextCursor`` is exhausted."""
     out: list[ResourceRecord] = []
     cursor: str | None = None
-    while True:
+    for _ in range(MAX_LIST_PAGES):
         listed = await session.list_resources(cursor=cursor)
         out.extend(
             ResourceRecord(
@@ -78,6 +93,10 @@ async def _list_all_resources(session) -> list[ResourceRecord]:
             # None when sending the next request. `if not cursor` would
             # silently truncate after page 1 against such a server.
             return out
+    raise PaginationLimitError(
+        f"list_resources returned a continuation cursor on {MAX_LIST_PAGES}"
+        " consecutive pages — refusing to drain further"
+    )
 
 
 async def crawl_server(spec: ServerSpec) -> CrawlResult:

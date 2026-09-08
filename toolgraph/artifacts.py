@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import tempfile
+import warnings
+
+
+class ArtifactDurabilityWarning(RuntimeWarning):
+    """The artifact was replaced, but crash durability could not be confirmed."""
 
 
 def rfc3339_offset_error(created_at: datetime) -> str | None:
@@ -49,6 +55,35 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def fsync_parent_dir(path: Path) -> None:
+    """Make an atomic rename durable on filesystems that support dir fsync.
+
+    Filesystems that cannot fsync a directory (some network/container mounts)
+    report EINVAL/ENOTSUP/EROFS — those are tolerated silently because there
+    is nothing more the writer can do. Any other failure propagates so the
+    caller can decide whether it is fatal (the rename itself already
+    published the file).
+    """
+    if os.name == "nt":  # pragma: no cover - Windows has no directory fd
+        return
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path.parent, flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        unsupported = {
+            errno.EINVAL,
+            errno.ENOTSUP,
+            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+            errno.EROFS,
+        }
+        if exc.errno not in unsupported:
+            raise
+
+
 def atomic_write_private(path: Path, payload: bytes) -> str:
     """Write 0600 bytes via fsync + atomic replace; return exact digest."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,13 +103,19 @@ def atomic_write_private(path: Path, payload: bytes) -> str:
         os.replace(temporary, path)
         temporary = None
         os.chmod(path, 0o600)
-        # Persist the directory entry where the platform exposes O_DIRECTORY.
-        if hasattr(os, "O_DIRECTORY"):
-            fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
+        try:
+            fsync_parent_dir(path)
+        except OSError:
+            # The artifact is already atomically visible with the digest the
+            # caller reports. Failing the whole write here would report ERROR
+            # for a correct published file; surface only the narrower
+            # crash-durability uncertainty.
+            warnings.warn(
+                "artifact was replaced, but parent-directory fsync failed; the"
+                " file is published but crash durability is uncertain",
+                ArtifactDurabilityWarning,
+                stacklevel=2,
+            )
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)

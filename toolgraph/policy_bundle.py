@@ -131,11 +131,19 @@ def build_policy_bundle(
     for contract in compiled["contracts"]:
         key = contract["tool_key"]
         rejection = rejected.get(key)
+        feature = features.get(key)
+        if feature is None:
+            # Both passes ran inside one graph-state bracket, so every catalog
+            # key must have a feature row; a miss means the selector contract
+            # broke — fail as a typed compile error, not a KeyError traceback.
+            raise PolicyBundleError(
+                f"selector returned no feature row for catalog tool {key!r}"
+            )
         item: dict[str, Any] = {
             "tool_key": key,
             "tool_contract_digest": tool_contract_digest(contract),
             "decision": "rejected" if rejection else "eligible",
-            "risk_score": features[key]["risk_score"],
+            "risk_score": feature["risk_score"],
         }
         if rejection:
             item["reason"] = rejection["reason"]
