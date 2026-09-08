@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from toolgraph.graph import loader
+from toolgraph.graph import driver, loader
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.models import (
     AccessGrant,
@@ -72,3 +72,30 @@ def test_unresolved_tool_ref_warns(graph):
     )
     warnings = ingest_governance(gov).warnings
     assert any("does_not_exist" in w for w in warnings)
+
+
+def test_duplicate_grant_entries_keep_the_later_manifest_entry(graph):
+    """UNWIND batching must preserve the old per-row last-write-wins rule."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file")],
+        )
+    )
+    report = ingest_governance(
+        Governance(
+            agents=["planner"],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::read_file", granted_by="first"),
+                AccessGrant(agent="planner", tool="sample::read_file", granted_by="second"),
+            ],
+        )
+    )
+    assert report.warnings == []
+    with driver.session() as s:
+        row = s.run(
+            "MATCH (:Agent {id:'planner'})-[r:CAN_CALL]->(:Tool {key:'sample::read_file'}) "
+            "RETURN r.granted_by AS granted_by"
+        ).single()
+    assert row["granted_by"] == "second"

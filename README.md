@@ -309,6 +309,12 @@ to stderr) and exit 0 by default — gating is opt-in.
 A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
 clean run.
 
+Note for CI scripts: exit 2 is overloaded. Click uses 2 for usage errors (a
+bad flag or parameter), and `--fail-on-deny` uses 2 for not-found/ambiguous
+verdicts. The two are indistinguishable by exit code alone — a gate that must
+tell them apart should also check stderr (verdict trips print the JSON verdict
+on stdout first; usage errors print click's usage text).
+
 ### Distinguishing what the graph doesn't know
 
 - `check-access` verdicts include `AGENT_NOT_FOUND` (the agent string matches

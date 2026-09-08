@@ -58,3 +58,23 @@ def test_normalization_is_idempotent():
     for raw, _ in GOLDEN:
         once = normalize_resource_uri(raw)
         assert normalize_resource_uri(once) == once
+
+
+def test_url_shaped_unparseable_uri_warns_before_verbatim_fallback():
+    import pytest
+
+    from toolgraph.uris import ResourceUriNormalizationWarning, normalize_resource_uri
+
+    with pytest.warns(ResourceUriNormalizationWarning):
+        assert normalize_resource_uri("http://[not-a-host/x") == "http://[not-a-host/x"
+
+
+def test_custom_non_url_identifier_falls_through_silently():
+    import warnings as _warnings
+
+    from toolgraph.uris import normalize_resource_uri
+
+    with _warnings.catch_warnings():
+        _warnings.simplefilter("error")
+        # Not URL-shaped: stays verbatim with no warning, by design.
+        assert normalize_resource_uri("§custom-id§") == "§custom-id§"

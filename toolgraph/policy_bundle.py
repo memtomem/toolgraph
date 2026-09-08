@@ -19,7 +19,7 @@ from toolgraph.artifacts import (
 )
 from toolgraph.graph import queries, selector
 from toolgraph.graph.store import GraphReader, RuntimeGraphStore
-from toolgraph.preflight import redact
+from toolgraph.artifact_safety import safe_artifact, validate_identity
 
 SCHEMA_VERSION = 1
 KIND = "toolgraph.policy-bundle"
@@ -65,6 +65,7 @@ def build_policy_bundle(
     store: GraphReader | None = None,
 ) -> dict[str, Any]:
     """Compile every currently exposed qualified tool under one policy profile."""
+    validate_identity(agent)
     if not agent.strip():
         raise PolicyBundleError("agent must not be empty")
     if profile not in selector.PROFILES:
@@ -76,11 +77,13 @@ def build_policy_bundle(
         if problem:
             raise PolicyBundleError(problem)
 
-    reader = store or RuntimeGraphStore()
+    reader = store if store is not None else RuntimeGraphStore()
 
     def fetch() -> dict[str, Any]:
         state = reader.state()
-        contracts = reader.exposed_tool_contracts()
+        contracts = sorted(reader.exposed_tool_contracts(), key=lambda row: row["tool_key"])
+        for contract in contracts:
+            validate_identity(contract["tool_key"])
         # Consumers key decisions by tool_key and may reject the whole bundle
         # on a duplicate (the schema's tools description makes this normative),
         # so failing compilation here is strictly better than shipping one.
@@ -96,18 +99,59 @@ def build_policy_bundle(
                 " compiling"
             )
         candidates = [row["tool_key"] for row in contracts]
-        filtered = reader.eligible_tools(agent, candidates, profile)
-        if not filtered["agent_found"]:
-            raise PolicyBundleError(f"agent {agent!r} not found in the graph")
-        ranked = reader.rank_features(agent, candidates)
+        # One graph evaluation per bounded chunk when the adapter supports
+        # it: the hard filter is a pure function over the ranked features
+        # (ADR-0005), so compiling must not run the full selector pass twice
+        # per bracket attempt. Adapters without ``evaluate`` keep the original
+        # two-call contract — their rank rows never promised selector-internal
+        # fields, so we must not filter them ourselves.
+        evaluate = getattr(reader, "evaluate", None)
+        filtered = {"eligible": [], "rejected": []}
+        features = []
+        # The empty catalog still evaluates identity once. Every chunk is
+        # inside the same bracket; a state change retries the entire catalog.
+        chunks = [
+            candidates[i:i + selector.MAX_CANDIDATES]
+            for i in range(0, len(candidates), selector.MAX_CANDIDATES)
+        ] or [[]]
+        for chunk in chunks:
+            if evaluate is not None:
+                evaluated = evaluate(agent, chunk, profile)
+                if not evaluated["agent_found"]:
+                    raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+                decisions = evaluated["filtered"]
+                rows = evaluated["features"]
+            else:
+                decisions = reader.eligible_tools(agent, chunk, profile)
+                ranked = reader.rank_features(agent, chunk)
+                if not decisions["agent_found"] or not ranked["agent_found"]:
+                    raise PolicyBundleError(f"agent {agent!r} not found in the graph")
+                rows = ranked["features"]
+            expected = Counter(chunk)
+            feature_keys = Counter(row.get("tool_key") or row["candidate"] for row in rows)
+            if feature_keys != expected:
+                raise PolicyBundleError(
+                    "selector returned no feature row or duplicate/unexpected "
+                    "feature rows for catalog"
+                )
+            decision_keys = Counter(decisions["eligible"])
+            decision_keys.update(
+                row.get("tool_key") or row["candidate"]
+                for row in decisions["rejected"]
+            )
+            if decision_keys != expected:
+                raise PolicyBundleError("selector returned missing, duplicate, or conflicting decisions")
+            filtered["eligible"].extend(decisions["eligible"])
+            filtered["rejected"].extend(decisions["rejected"])
+            features.extend(rows)
         return {
             "governance_digest": state.governance_digest,
             "contracts": contracts,
             "filtered": filtered,
-            "features": ranked["features"],
+            "features": features,
         }
 
-    compiled = queries.with_graph_state(fetch, strict=True)
+    compiled = queries.with_graph_state(fetch, strict=True, state_reader=reader.state)
     graph_state = compiled["graph_state"]
     if not isinstance(graph_state.get("instance_id"), str) or not graph_state["instance_id"]:
         raise PolicyBundleError(
@@ -152,7 +196,7 @@ def build_policy_bundle(
         tools.append(item)
 
     timestamp = created_at or datetime.now(timezone.utc)
-    return redact(
+    return safe_artifact(
         {
             "schema_version": SCHEMA_VERSION,
             "kind": KIND,

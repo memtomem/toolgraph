@@ -253,3 +253,16 @@ def test_cli_failure_preserves_existing_output(monkeypatch, tmp_path):
     )
     assert result.exit_code == 1
     assert out.read_text(encoding="utf-8") == "keep"
+
+
+def test_deeply_nested_plan_fails_typed_not_recursion_error():
+    import json as _json
+
+    from toolgraph.control_plan import ControlPlanError, load_control_plan
+
+    nested: dict = {"x": 1}
+    for _ in range(150):
+        nested = {"n": nested}
+    raw = _json.dumps({"schema_version": 1, "deep": nested}).encode()
+    with pytest.raises(ControlPlanError, match="nesting exceeds"):
+        load_control_plan(raw)

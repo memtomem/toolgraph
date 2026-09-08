@@ -477,3 +477,116 @@ def test_audit_report_warns_on_advisory_findings_only(graph):
     assert report["status"] == "warn"
     assert report["summary"]["blocking_findings"] == []
     assert report["summary"]["counts"]["unbacked_edges"] == 1
+
+
+def _seed_multi_agent_deny_graph() -> None:
+    """Three agents over one resource-path DENY and one direct-tool DENY.
+
+    beta holds the only exceptions — one resource-specific, one wildcard — so
+    any cross-agent leak in the batched audit query shows up as a
+    misclassified row for alpha or gamma.
+    """
+    csv = "file:///data/customers.csv"
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="drop_table")],
+            resources=[ResourceRecord(uri=csv)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["alpha", "beta", "gamma"],
+            policies=[
+                Policy(id="pii", effect="DENY"),
+                Policy(id="schema-freeze", effect="DENY"),
+            ],
+            grants=[
+                AccessGrant(agent=agent, tool=tool)
+                for agent in ("alpha", "beta", "gamma")
+                for tool in ("sample::read_file", "sample::drop_table")
+            ],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource=csv, mode="READS")
+            ],
+            # csv reached transitively (via='resource'); drop_table bound
+            # directly (via='tool') so both branches of the batched query run.
+            governed_by={csv: ["pii"], "sample::drop_table": ["schema-freeze"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="beta",
+                    tool="sample::read_file",
+                    policy="pii",
+                    resource=csv,
+                    reason="resource-scoped break-glass",
+                ),
+                ExpectedException(
+                    agent="beta",
+                    tool="sample::drop_table",
+                    policy="schema-freeze",
+                    reason="wildcard migration window",
+                ),
+            ],
+        )
+    )
+
+
+def test_audit_report_matches_the_per_agent_composition_exactly(graph):
+    """The batched audit pass must equal looping unsafe_callable_tools().
+
+    audit_report stopped calling unsafe_callable_tools once per agent and now
+    runs one batched query regrouped agent-major. Row content AND order are
+    part of the output contract, so pin the equivalence rather than counts.
+    """
+    _seed_multi_agent_deny_graph()
+
+    report = queries.audit_report()
+    batched = (
+        report["findings"]["unsafe_violations"]
+        + report["findings"]["authorized_but_governed"]
+    )
+
+    per_agent = [
+        {"agent": agent, **row}
+        for agent in ("alpha", "beta", "gamma")
+        for row in queries.unsafe_callable_tools(agent)
+    ]
+
+    # Same rows, and the batched regrouping preserves agent-major order.
+    assert sorted(batched, key=lambda r: (r["agent"], r["path"])) == sorted(
+        per_agent, key=lambda r: (r["agent"], r["path"])
+    )
+    assert [r["agent"] for r in report["findings"]["unsafe_violations"]] == sorted(
+        r["agent"] for r in report["findings"]["unsafe_violations"]
+    )
+
+
+def test_batched_audit_never_leaks_one_agents_exception_to_another(graph):
+    """Only beta declared exceptions; alpha and gamma must stay violations.
+
+    The rewrite moved the agent predicate from an ExpectedException property
+    map into a WHERE clause over the batched match — the failure mode is an
+    exception matching every agent instead of its own.
+    """
+    _seed_multi_agent_deny_graph()
+
+    report = queries.audit_report()
+    classified = {
+        (row["agent"], row["path"]): row
+        for row in report["findings"]["unsafe_violations"]
+        + report["findings"]["authorized_but_governed"]
+    }
+
+    # Both deny branches, for all three agents.
+    assert len(classified) == 6
+    for agent in ("alpha", "gamma"):
+        rows = [r for (a, _), r in classified.items() if a == agent]
+        assert [r["classification"] for r in rows] == ["violation", "violation"]
+        assert all("exception_reason" not in r for r in rows)
+
+    beta = {r["via"]: r for (a, _), r in classified.items() if a == "beta"}
+    assert beta["resource"]["classification"] == "authorized_but_governed"
+    assert beta["resource"]["exception_reason"] == "resource-scoped break-glass"
+    assert beta["tool"]["classification"] == "authorized_but_governed"
+    assert beta["tool"]["exception_reason"] == "wildcard migration window"

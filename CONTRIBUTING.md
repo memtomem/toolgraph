@@ -32,9 +32,9 @@ configuration yet, and 0.16's changed defaults surface a large batch of
 unrelated findings. Pin removal is tracked separately — please do not bump it
 as a drive-by change.
 
-`make install` intentionally omits the `ladybug` extra, so the Ladybug-backed
-tests `importorskip` and are silently skipped. Use the `uv sync` command above
-if you are touching either backend.
+`make install` includes the `ladybug` extra, matching the command above and
+CI. The shared backend regression fixture requires Ladybug: a missing install
+is an error, not a skipped conformance check.
 
 ## Pull requests
 

@@ -8,17 +8,18 @@ under `docs/ecosystem/` in the private companion repositories. This document
 covers only the part toolgraph owns and is kept readable on its own, without
 following those links.
 
-> The canonical source distinguishes the order things actually landed from the
-> design labels. P0/P1 and the first milestone, P2 shared CLI/dashboard
-> rendering, and the real identity / qualified-tool advisory P3 and Gate D are
-> complete. Strict P3.1 consumer enforcement shipped as a SyncMill opt-in
-> preview, and Gate E operational-evidence approval is still open. The Tracegraph
-> T3 producer, the SyncMill board import slice and Toolgraph G3 artifact review
-> are also complete, but live qualified-tool telemetry and operational review
-> evaluation without automatic application remain in the wider P4 follow-up
-> scope. In the stage 0 and stage 1 checklists, the only open item is the
-> cross-repository one: having the SyncMill run report record the preflight
-> `artifact_digest`.
+> **Reconciled 2026-09-08.** Gate E and live P4 have dated completion
+> evidence in SyncMill's `docs/ecosystem/gate-e-p4-operating-evidence.md`
+> and `adr-0002-gate-e-opt-in-approval.md`. That evidence covers the recorded
+> July commits and explicit per-project opt-in; the default remains disabled.
+> SyncMill also persists preflight artifact paths and exact-byte digests in
+> `src/syncmill/preflight.py`. These are implemented, not remaining producer
+> work. Reading those records is not a new run against today's commits.
+>
+> Toolgraph remains the owner of this plan and its operational scripts. The
+> copy in memtomem-docs is a historical backup: the proposed move was retracted.
+> See [the stabilization review](reviews/2026-09-08-stabilization.md) for current
+> verification and the separate remaining work.
 
 ## Summary
 
@@ -145,10 +146,10 @@ fixtures are part of the contract tests.
 - [x] Add the provenance/path redaction pass and its fixtures — `redact()` in
   `toolgraph/preflight.py`, pinned by the planted-violation scanner in
   `tests/test_preflight_contract.py`.
-- [ ] Have the syncmill run report reference that artifact path or digest — the
-  producer side is done: with `--out`, `preflight` prints an `artifact_digest`
-  envelope over the file bytes to stdout. Having the SyncMill run report record
-  that digest remains a cross-repository task.
+- [x] Have the SyncMill run report reference the artifact path and digest —
+  `src/syncmill/preflight.py` records both. The producer's `artifact_digest`
+  uses `sha256:<hex>` over exact file bytes; the bundle's separate
+  `bundle_digest` is bare hex. Preserve each consumer's established contract.
 - [x] Add contract tests so a stale graph or an unknown agent is never mistaken
   for success — `tests/test_preflight.py`, `tests/test_preflight_graph.py` and
   `tests/test_preflight_contract.py` pin `unresolved_identity` and generation

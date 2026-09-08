@@ -22,7 +22,7 @@ consumer may never override a hard reject (NOT_GRANTED, violation, drifted).
 from __future__ import annotations
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.queries import _deny_evidence_batch, agent_exists
+from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
 
 # Hard-filter rule sets (ADR-0005). Reasons are checked in _REASON_PRECEDENCE
 # order; the first applicable reason that the profile rejects wins. These are
@@ -56,6 +56,11 @@ PROFILES: dict[str, frozenset[str]] = {
 }
 
 DEFAULT_PROFILE = "strict"
+
+# Batch bound, mirroring the control-plan limit: the selector is batch-first,
+# but an unbounded candidate list still UNWINDs as one query parameter. Lives
+# here so every surface — CLI, MCP server, library callers — is bounded.
+MAX_CANDIDATES = 4096
 
 # Drift rejects in EVERY profile (the report's regression criteria): a tool no
 # server currently exposes cannot be called, so passing it is never useful.
@@ -101,26 +106,8 @@ def _risk_score(feature: dict) -> float | None:
 
 
 def _resolve_all(s, refs: list[str]) -> dict[str, list[str]]:
-    """Resolve every candidate ref in ONE query: ref -> matching tool keys.
-
-    Same resolution rule as ``resolve_tool_keys`` (exact key, or bare name
-    across servers) so the selector can never disagree with ``check_access``
-    about tool identity.
-    """
-    rows = s.run(
-        """
-        UNWIND $refs AS ref
-        OPTIONAL MATCH (t:Tool)
-          WHERE t.key = ref OR (NOT ref CONTAINS '::' AND t.name = ref)
-        WITH ref, t.key AS key
-        RETURN ref, collect(key) AS keys
-        """,
-        refs=sorted(set(refs)),
-    )
-    return {
-        r["ref"]: sorted(key for key in (r["keys"] or []) if key is not None)
-        for r in rows
-    }
+    """Use the same bounded resolution as ingest and single-tool queries."""
+    return resolve_tool_refs(s, refs)
 
 
 def _tool_facts(s, keys: list[str], agent: str) -> dict[str, dict]:
@@ -176,6 +163,10 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     the four annotation self-claims (ADR-0006), and the rule-based
     ``risk_score`` (see ``_risk_score`` for the fixed table).
     """
+    if len(candidates) > MAX_CANDIDATES:
+        raise ValueError(
+            f"{len(candidates)} candidates exceed the {MAX_CANDIDATES} limit"
+        )
     if not agent_exists(agent):
         return {"agent": agent, "agent_found": False, "features": []}
 
@@ -274,22 +265,19 @@ def _applicable_reasons(feature: dict) -> list[str]:
     return reasons
 
 
-def eligible_tools(
-    agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE
-) -> dict:
-    """Hard filter with reject reasons and policy-evidence paths (ADR-0005).
+def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
+    """Pure hard filter over an already-computed ``rank_features`` result.
 
-    ``eligible`` holds resolved tool keys in candidate input order; every
-    rejected row keeps the input ref (``candidate``), the winning ``reason``
-    (first by precedence among the profile's reject set), and — for DENY
-    reasons — the graph paths that prove it. A learned consumer may rerank
-    ``eligible`` but may never resurrect a rejected row.
+    Runs no queries: producers that need both the filter verdict and the
+    feature rows (policy bundle, preflight ``--features``, explain) call
+    ``rank_features`` once and filter its output, instead of paying the full
+    graph evaluation twice inside the generation-retry bracket.
     """
     if profile not in PROFILES:
         raise ValueError(
             f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
         )
-    ranked = rank_features(agent, candidates)
+    agent = ranked["agent"]
     if not ranked["agent_found"]:
         return {
             "agent": agent,
@@ -336,6 +324,24 @@ def eligible_tools(
     }
 
 
+def eligible_tools(
+    agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE
+) -> dict:
+    """Hard filter with reject reasons and policy-evidence paths (ADR-0005).
+
+    ``eligible`` holds resolved tool keys in candidate input order; every
+    rejected row keeps the input ref (``candidate``), the winning ``reason``
+    (first by precedence among the profile's reject set), and — for DENY
+    reasons — the graph paths that prove it. A learned consumer may rerank
+    ``eligible`` but may never resurrect a rejected row.
+    """
+    if profile not in PROFILES:
+        raise ValueError(
+            f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
+        )
+    return filter_features(rank_features(agent, candidates), profile)
+
+
 def selection_explain(
     agent: str, tool: str, profile: str = DEFAULT_PROFILE
 ) -> dict:
@@ -358,7 +364,7 @@ def selection_explain(
         }
 
     feature = ranked["features"][0]
-    filtered = eligible_tools(agent, [tool], profile=profile)
+    filtered = filter_features(ranked, profile)
     decision = "eligible" if filtered["eligible"] else "rejected"
 
     reasons: list[str] = []

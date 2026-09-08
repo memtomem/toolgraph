@@ -12,7 +12,7 @@ help: ## List available targets
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install deps (incl. dev) via uv
-	uv sync --group dev
+	uv sync --group dev --extra ladybug
 
 up: ## Start Neo4j and wait until healthy
 	docker compose up -d --wait
@@ -49,7 +49,9 @@ demo-public: ## Cross-server demo (7 real public servers)
 
 smoke-policy-gateway: ## Run Toolgraph -> STM policy-bundle smoke
 	uv run --group dev --extra ladybug python scripts/policy_bundle_gateway_smoke.py \
-		--memtomem-stm-root "$(STM_ROOT)" --artifacts-dir "$(ARTIFACTS_DIR)"
+		--memtomem-stm-root "$(STM_ROOT)" --artifacts-dir "$(ARTIFACTS_DIR)" \
+		--toolgraph-ref "$$(git rev-parse HEAD)" \
+		--memtomem-stm-ref "$$(git -C "$(STM_ROOT)" rev-parse HEAD)"
 
 test: ## Run the test suite (real Neo4j via testcontainers)
 	uv run pytest -q

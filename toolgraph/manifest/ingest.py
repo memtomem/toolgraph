@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from neo4j import ManagedTransaction
 
 from toolgraph.graph.driver import session
-from toolgraph.graph.queries import resolve_tool_keys
+from toolgraph.graph.queries import resolve_tool_refs
 from toolgraph.graph.schema import bump_generation, exception_key
 from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
@@ -67,13 +67,13 @@ def _normalize_bindings(items: list) -> list[GovernedByBinding]:
     return out
 
 
-def _resolve(tx: ManagedTransaction, ref: str) -> tuple[str | None, list[str]]:
+def _resolve(resolved: dict[str, list[str]], ref: str) -> tuple[str | None, list[str]]:
     """Return (unique_key, all_matches). unique_key is set only on exactly one match.
 
     Shares the exact resolution rule with check_access so write-side and
     read-side tool identity can never drift.
     """
-    keys = resolve_tool_keys(tx, ref)
+    keys = resolved[ref]
     return (keys[0] if len(keys) == 1 else None, keys)
 
 
@@ -119,9 +119,15 @@ def _ingest(
     known_agents = set(gov.agents) | {g.agent for g in gov.grants}
 
     # --- Phase 1: validate + resolve (read-only) -------------------------
+    # Resolve once on this transaction; validation still walks the original
+    # manifest order so diagnostics and last-entry-wins semantics do not move.
+    refs = [g.tool for g in gov.grants] + [d.tool for d in gov.data_access]
+    refs.extend(ref for ref in gov.governed_by if not is_resource_ref(ref))
+    refs.extend(e.tool for e in gov.expected_exceptions)
+    resolved_refs = resolve_tool_refs(tx, refs)
     resolved_grants: list[tuple] = []
     for grant in gov.grants:
-        key, matches = _resolve(tx, grant.tool)
+        key, matches = _resolve(resolved_refs, grant.tool)
         if key is None:
             warnings.append(
                 f"CAN_CALL: tool {grant.tool!r} {_resolve_problem(grant.tool, matches)} "
@@ -135,7 +141,7 @@ def _ingest(
     resolved_access: list[tuple] = []
     authored_access: set[tuple[str, str]] = set()  # (tool_key, resource_uri) for exception check
     for da in gov.data_access:
-        key, matches = _resolve(tx, da.tool)
+        key, matches = _resolve(resolved_refs, da.tool)
         if key is None:
             warnings.append(f"{da.mode}: tool {da.tool!r} {_resolve_problem(da.tool, matches)}")
         else:
@@ -166,7 +172,7 @@ def _ingest(
             for pid, _ in valid:
                 policy_resources.setdefault(pid, set()).add(uri)
         else:
-            key, matches = _resolve(tx, node_ref)
+            key, matches = _resolve(resolved_refs, node_ref)
             if key is None:
                 warnings.append(
                     f"GOVERNED_BY: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
@@ -212,7 +218,7 @@ def _ingest(
                 f"(agent {exc.agent!r}, tool {exc.tool!r})"
             )
             continue
-        key, matches = _resolve(tx, exc.tool)
+        key, matches = _resolve(resolved_refs, exc.tool)
         if key is None:
             warnings.append(
                 f"EXPECTED_EXCEPTION: tool {exc.tool!r} {_resolve_problem(exc.tool, matches)} "
@@ -304,6 +310,9 @@ def _ingest(
         return warnings, notices
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
+    # Deliberate size tradeoff: this transaction scales with the total number
+    # of authored edges and cannot be batched — a partial apply could clear a
+    # DENY and leave a false ALLOW (see the module docstring / ADR-0002).
     tx.run("MATCH ()-[r:CAN_CALL|READS|WRITES|GOVERNED_BY]->() DELETE r")
     # ExpectedException nodes are pure authored bookkeeping — clear and re-apply
     # alongside the edges so a removed exception promotes the row back to violation.
@@ -314,15 +323,16 @@ def _ingest(
     # node — see GovernedByBinding. Policy nodes carry only declaration data.
     # Null assignments drop the legacy ``prov_*`` properties left over from the
     # pre-completion-round shape, so an upgrading graph cleans itself up.
-    tx.run(
-        """
-        UNWIND $policies AS p
-        MERGE (pol:Policy {id:p.id})
-        SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
-        SET pol.prov_source=null, pol.prov_confidence=null, pol.prov_evidence=null
-        """,
-        policies=[p.model_dump() for p in gov.policies],
-    )
+    if gov.policies:
+        tx.run(
+            """
+            UNWIND $policies AS p
+            MERGE (pol:Policy {id:p.id})
+            SET pol.effect=p.effect, pol.scope=p.scope, pol.description=p.description
+            SET pol.prov_source=null, pol.prov_confidence=null, pol.prov_evidence=null
+            """,
+            policies=[p.model_dump() for p in gov.policies],
+        )
     # Declarative manifest: prune Agent + Policy nodes the operator removed
     # from this manifest. The new ``found`` / ``agent_found`` API treats
     # node existence as a truth signal; leaking renamed-away nodes would
@@ -340,35 +350,55 @@ def _ingest(
         ids=policy_ids,
     )
 
-    for agent, key, granted_by, prov in resolved_grants:
+    # Deduplicate to last-entry-wins BEFORE batching: the old per-row loops
+    # deterministically left the later manifest entry's metadata on a
+    # duplicate logical edge, while UNWIND gives repeated SETs on one
+    # relationship an undefined winner. dict insertion order preserves the
+    # manifest order, and overwriting keeps the last occurrence.
+    resolved_grants = list({(row[0], row[1]): row for row in resolved_grants}.values())
+    resolved_access = list(
+        {(row[0], row[1], row[2]): row for row in resolved_access}.values()
+    )
+    if resolved_grants:
+        # One UNWIND batch instead of a round trip per grant (the same shape
+        # policies and exceptions already use).
         tx.run(
             """
-            MERGE (a:Agent {id:$agent})
-            WITH a MATCH (t:Tool {key:$key})
+            UNWIND $rows AS row
+            MERGE (a:Agent {id:row.agent})
+            WITH a, row MATCH (t:Tool {key:row.key})
             MERGE (a)-[r:CAN_CALL]->(t)
-            SET r.granted_by=$granted_by,
-                r.source=$source, r.confidence=$confidence, r.evidence=$evidence
+            SET r.granted_by=row.granted_by,
+                r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
             """,
-            agent=agent,
-            key=key,
-            granted_by=granted_by,
-            **prov,
+            rows=[
+                {"agent": agent, "key": key, "granted_by": granted_by, **prov}
+                for agent, key, granted_by, prov in resolved_grants
+            ],
         )
 
-    for key, mode, uri, prov in resolved_access:
-        # mode is a validated Literal -> safe to inline as the relationship type.
+    # mode is a validated Literal -> safe to inline as the relationship type;
+    # one UNWIND batch per relationship type instead of a round trip per edge.
+    for mode in ("READS", "WRITES"):
+        batch = [
+            {"key": key, "uri": uri, **prov}
+            for key, row_mode, uri, prov in resolved_access
+            if row_mode == mode
+        ]
+        if not batch:
+            continue
         tx.run(
             f"""
-            MATCH (t:Tool {{key:$key}})
-            MERGE (res:Resource {{uri:$uri}})
+            UNWIND $rows AS row
+            MATCH (t:Tool {{key:row.key}})
+            MERGE (res:Resource {{uri:row.uri}})
             MERGE (t)-[r:{mode}]->(res)
-            SET r.source=$source, r.confidence=$confidence, r.evidence=$evidence
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
             """,
-            key=key,
-            uri=uri,
-            **prov,
+            rows=batch,
         )
 
+    resolved_exceptions = list({row[:4]: row for row in resolved_exceptions}.values())
     if resolved_exceptions:
         tx.run(
             """
@@ -394,36 +424,47 @@ def _ingest(
     # this resource (or tool) is bound to this policy. Bare-string entries in
     # ``governed_by`` lift to bindings with no evidence (operator_asserted/high
     # by default), so unbacked_edges still surfaces them as needing a citation.
-    for kind, ref, bindings in resolved_governed:
-        if not bindings:
-            continue
-        payload = [
-            {"pid": pid, **prov} for pid, prov in bindings
-        ]
-        if kind == "resource":
-            tx.run(
-                """
-                MERGE (res:Resource {uri:$ref})
-                WITH res UNWIND $bindings AS b
-                MATCH (p:Policy {id:b.pid})
-                MERGE (res)-[r:GOVERNED_BY]->(p)
-                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
-                """,
-                ref=ref,
-                bindings=payload,
-            )
-        else:
-            tx.run(
-                """
-                MATCH (t:Tool {key:$ref})
-                UNWIND $bindings AS b
-                MATCH (p:Policy {id:b.pid})
-                MERGE (t)-[r:GOVERNED_BY]->(p)
-                SET r.source=b.source, r.confidence=b.confidence, r.evidence=b.evidence
-                """,
-                ref=ref,
-                bindings=payload,
-            )
+    resource_bindings = [
+        {"ref": ref, "pid": pid, **prov}
+        for kind, ref, bindings in resolved_governed
+        if kind == "resource"
+        for pid, prov in bindings
+    ]
+    tool_bindings = [
+        {"ref": ref, "pid": pid, **prov}
+        for kind, ref, bindings in resolved_governed
+        if kind != "resource"
+        for pid, prov in bindings
+    ]
+    # Same last-entry-wins rule for duplicate (node, policy) bindings.
+    resource_bindings = list(
+        {(row["ref"], row["pid"]): row for row in resource_bindings}.values()
+    )
+    tool_bindings = list(
+        {(row["ref"], row["pid"]): row for row in tool_bindings}.values()
+    )
+    if resource_bindings:
+        tx.run(
+            """
+            UNWIND $rows AS row
+            MERGE (res:Resource {uri:row.ref})
+            WITH res, row MATCH (p:Policy {id:row.pid})
+            MERGE (res)-[r:GOVERNED_BY]->(p)
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
+            """,
+            rows=resource_bindings,
+        )
+    if tool_bindings:
+        tx.run(
+            """
+            UNWIND $rows AS row
+            MATCH (t:Tool {key:row.ref})
+            MATCH (p:Policy {id:row.pid})
+            MERGE (t)-[r:GOVERNED_BY]->(p)
+            SET r.source=row.source, r.confidence=row.confidence, r.evidence=row.evidence
+            """,
+            rows=tool_bindings,
+        )
 
     # ADR-0001: node existence is a truth signal, for Resources too. A
     # resource the manifest stopped mentioning had its authored edges cleared
@@ -471,17 +512,31 @@ def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestRepo
 
 
 def governance_counts() -> dict[str, int]:
-    queries = {
-        "agent": "MATCH (n:Agent) RETURN count(n) AS count",
-        "policy": "MATCH (n:Policy) RETURN count(n) AS count",
-        "can_call": "MATCH ()-[r:CAN_CALL]->() RETURN count(r) AS count",
-        "reads": "MATCH ()-[r:READS]->() RETURN count(r) AS count",
-        "writes": "MATCH ()-[r:WRITES]->() RETURN count(r) AS count",
-        "governed_by": "MATCH ()-[r:GOVERNED_BY]->() RETURN count(r) AS count",
-        "expected_exception": "MATCH (n:ExpectedException) RETURN count(n) AS count",
-    }
+    """Authored-governance tallies in one UNION ALL statement."""
+    query = """
+        MATCH (n:Agent) RETURN 'agent' AS name, count(n) AS count
+        UNION ALL
+        MATCH (n:Policy) RETURN 'policy' AS name, count(n) AS count
+        UNION ALL
+        MATCH ()-[r:CAN_CALL]->() RETURN 'can_call' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:READS]->() RETURN 'reads' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:WRITES]->() RETURN 'writes' AS name, count(r) AS count
+        UNION ALL
+        MATCH ()-[r:GOVERNED_BY]->() RETURN 'governed_by' AS name, count(r) AS count
+        UNION ALL
+        MATCH (n:ExpectedException) RETURN 'expected_exception' AS name, count(n) AS count
+    """
+    names = (
+        "agent",
+        "policy",
+        "can_call",
+        "reads",
+        "writes",
+        "governed_by",
+        "expected_exception",
+    )
     with session() as s:
-        return {
-            name: (record["count"] if (record := s.run(query).single()) else 0)
-            for name, query in queries.items()
-        }
+        counts = {r["name"]: r["count"] for r in s.run(query)}
+    return {name: counts.get(name, 0) for name in names}

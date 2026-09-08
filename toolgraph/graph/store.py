@@ -22,6 +22,13 @@ class GraphReader(Protocol):
     def rank_features(self, agent: str, candidates: list[str]) -> dict: ...
 
 
+class EvaluatingGraphReader(GraphReader, Protocol):
+    # Optional: adapters that can evaluate once and filter in memory expose
+    # this combined form; build_policy_bundle prefers it and falls back to the
+    # eligible_tools + rank_features pair for adapters that do not.
+    def evaluate(self, agent: str, candidates: list[str], profile: str) -> dict: ...
+
+
 class RuntimeGraphStore:
     """Backend-neutral policy read service over the configured graph adapter."""
 
@@ -36,3 +43,15 @@ class RuntimeGraphStore:
 
     def rank_features(self, agent: str, candidates: list[str]) -> dict:
         return selector.rank_features(agent, candidates)
+
+    def evaluate(self, agent: str, candidates: list[str], profile: str) -> dict:
+        """One graph evaluation; the hard filter is pure over the ranked rows."""
+        ranked = selector.rank_features(agent, candidates)
+        if not ranked["agent_found"]:
+            return {"agent_found": False, "features": [], "filtered": None}
+        filtered = selector.filter_features(ranked, profile)
+        return {
+            "agent_found": True,
+            "features": ranked["features"],
+            "filtered": filtered,
+        }

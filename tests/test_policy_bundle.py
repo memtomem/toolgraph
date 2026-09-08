@@ -57,42 +57,50 @@ def _mock_graph(
     monkeypatch.setattr(queries, "graph_state", lambda: state)
     monkeypatch.setattr(queries, "exposed_tool_contracts", lambda: contracts)
 
-    def filtered(*args, **kwargs):
-        if not agent_found:
-            return {
-                "agent": "ghost",
-                "agent_found": False,
-                "profile": "strict",
-                "eligible": [],
-                "rejected": [],
-            }
+    # Full-shape feature rows: the compiler now runs the real (pure)
+    # filter_features over this mocked rank_features result, so the rows must
+    # carry everything _applicable_reasons reads — the same shape the real
+    # selector returns.
+    def _feature(key: str, *, deny_paths: list[dict], risk: float) -> dict:
         return {
-            "agent": "codex",
-            "agent_found": True,
-            "profile": "strict",
-            "eligible": ["alpha::read"],
-            "rejected": [
-                {
-                    "candidate": "alpha::write",
-                    "tool_key": "alpha::write",
-                    "reason": "DENY_VIOLATION",
-                    "paths": [
-                        "(alpha::write) -> (https://user:secret@example.test/data?q=token)"
-                    ],
-                }
-            ],
+            "candidate": key,
+            "tool_key": key,
+            "found": True,
+            "ambiguous": False,
+            "permitted": True,
+            "verdict": "DENY" if deny_paths else "ALLOW",
+            "classification": "violation" if deny_paths else None,
+            "deny_paths": deny_paths,
+            "is_drifted": False,
+            "is_unmapped": False,
+            "has_unbacked_edges": False,
+            "read_only_hint": None,
+            "destructive_hint": None,
+            "idempotent_hint": None,
+            "open_world_hint": None,
+            "risk_score": risk,
         }
 
-    monkeypatch.setattr("toolgraph.policy_bundle.selector.eligible_tools", filtered)
     monkeypatch.setattr(
         "toolgraph.policy_bundle.selector.rank_features",
         lambda *args, **kwargs: {
-            "agent": "codex",
+            "agent": "codex" if agent_found else "ghost",
             "agent_found": agent_found,
             "features": [
-                {"tool_key": "alpha::read", "candidate": "alpha::read", "risk_score": 0.0},
-                {"tool_key": "alpha::write", "candidate": "alpha::write", "risk_score": 1.0},
-            ] if agent_found else [],
+                _feature("alpha::read", deny_paths=[], risk=0.0),
+                _feature(
+                    "alpha::write",
+                    deny_paths=[
+                        {
+                            "classification": "violation",
+                            "path": "(alpha::write) -> (https://user:secret@example.test/data?q=token)",
+                        }
+                    ],
+                    risk=1.0,
+                ),
+            ]
+            if agent_found
+            else [],
         },
     )
 

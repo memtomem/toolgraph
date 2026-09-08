@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 from enum import Enum
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -16,7 +17,11 @@ import typer
 from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
-from toolgraph.control_plan import ControlPlanError, build_control_preflight
+from toolgraph.control_plan import (
+    MAX_PLAN_BYTES,
+    ControlPlanError,
+    build_control_preflight,
+)
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -88,6 +93,9 @@ def _reports_backend_outage(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
+        except config.RuntimeConfigurationError as exc:
+            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
         except driver.BackendUnavailableError as exc:
             typer.echo(f"ERROR: backend unavailable: {redact_text(exc)}", err=True)
             raise typer.Exit(code=1) from None
@@ -139,15 +147,24 @@ def example_init(
             f"destination already exists: {destination}", param_hint="DESTINATION"
         )
     source = files("toolgraph").joinpath("quickstart")
-    with as_file(source) as source_path:
-        shutil.copytree(source_path, destination)
-    servers_path = destination / "servers.yaml"
-    servers_path.write_text(
-        servers_path.read_text(encoding="utf-8").replace(
-            "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
-        ),
-        encoding="utf-8",
-    )
+    # Stage next to the destination and rename once complete: a failure
+    # mid-copy must not leave a half-populated quickstart that blocks the
+    # "destination already exists" guard on the next run.
+    staging = destination.parent / f".{destination.name}.tmp-{os.getpid()}"
+    try:
+        with as_file(source) as source_path:
+            shutil.copytree(source_path, staging)
+        servers_path = staging / "servers.yaml"
+        servers_path.write_text(
+            servers_path.read_text(encoding="utf-8").replace(
+                "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
+            ),
+            encoding="utf-8",
+        )
+        os.rename(staging, destination)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     typer.echo(f"Created Toolgraph quickstart at {destination}")
     typer.echo(f"Next: cd {destination} && toolgraph init")
 
@@ -181,6 +198,7 @@ def init_backend(
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
     previous = config.settings
+    db_existed = db_path.exists()
     config.settings = config.Settings(backend=normalized, db_path=db_path)
     driver.close_driver()
     try:
@@ -193,9 +211,19 @@ def init_backend(
             }
         )
         atomic_write_private(runtime_path, payload)
-    except Exception:
+    except Exception as exc:
         config.settings = previous
         driver.close_driver()
+        # Clean up only a database this invocation plausibly created.
+        # BACKEND_LOCKED means another process owns it — it may have created
+        # the file after our db_existed check, and deleting here would
+        # destroy the winner's database.
+        if not db_existed and not isinstance(exc, driver.BackendLockedError):
+            for leftover in (db_path, Path(f"{db_path}.wal")):
+                if leftover.is_dir():
+                    shutil.rmtree(leftover, ignore_errors=True)
+                else:
+                    leftover.unlink(missing_ok=True)
         raise
     typer.echo(f"Initialized backend={normalized} config={runtime_path}")
 
@@ -329,12 +357,27 @@ def ingest_manifest(
 @app.command()
 @_reports_backend_outage
 def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL graph data.")) -> None:
-    """Delete every node and relationship (keeps constraints). Destructive."""
+    """Delete every node and relationship (keeps constraints). Destructive.
+
+    Not atomic: deletion runs in batches, so run it inside a maintenance
+    window on a shared backend — a concurrent writer can interleave, and an
+    outage mid-way leaves a partially erased graph (re-run to finish).
+    """
     if not yes:
         typer.echo("Refusing to wipe the graph without --yes")
         raise typer.Exit(code=1)
+    # Enforce the schema-version gate BEFORE destroying GraphMeta: an older
+    # binary must not erase a newer database and then re-stamp it as its own.
+    schema.init_schema()
     with driver.session() as s:
-        s.run("MATCH (n) DETACH DELETE n")
+        # Batched: one unbounded DETACH DELETE builds a transaction holding
+        # every node and can OOM the server on a large graph.
+        while True:
+            record = s.run(
+                "MATCH (n) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted"
+            ).single()
+            if not record or not record["deleted"]:
+                break
     # Recreate GraphMeta at generation 0 with a fresh instance id. A reset may
     # reuse generation numbers but must never reuse an external graph-state key.
     schema.init_schema()
@@ -548,6 +591,20 @@ def _selector_profile(profile: str) -> str:
     return profile
 
 
+# The binding bound lives in the selector (every surface shares it); the CLI
+# pre-checks only to produce a usage error instead of a traceback.
+MAX_CLI_CANDIDATES = selector.MAX_CANDIDATES
+
+
+def _bounded_candidates(candidates: list[str]) -> list[str]:
+    if len(candidates) > MAX_CLI_CANDIDATES:
+        raise typer.BadParameter(
+            f"{len(candidates)} candidates exceed the {MAX_CLI_CANDIDATES} limit",
+            param_hint="CANDIDATES",
+        )
+    return candidates
+
+
 def _require_agent(agent: str) -> None:
     """Selection with an unknown agent is a context-construction error, not an
     empty result — mirror unsafe-tools: diagnostic to stderr, exit 1."""
@@ -565,6 +622,7 @@ def rank_features(agent: str, candidates: list[str]) -> None:
     mapping, evidence coverage, annotation self-claims — plus the rule-based
     risk_score from the published fixed table. No relevance, no learning.
     """
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(json.dumps(selector.rank_features(agent, candidates), indent=2))
 
@@ -585,6 +643,7 @@ def eligible_tools(
     a rejected row (ADR-0005).
     """
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(
         json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2)
@@ -624,6 +683,7 @@ def preflight(
 ) -> None:
     """Produce an advisory preflight artifact for a candidate tool batch."""
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     try:
         artifact = build_preflight(
             agent=agent,
@@ -684,7 +744,14 @@ def control_preflight(
     _selector_profile(profile)
     digest: str | None = None
     try:
-        raw_plan = plan.read_bytes()
+        # Bounded read: MAX_PLAN_BYTES must limit memory, not just validation
+        # cost, and a stat-then-read pair would be a TOCTOU.
+        with plan.open("rb") as handle:
+            raw_plan = handle.read(MAX_PLAN_BYTES + 1)
+        if len(raw_plan) > MAX_PLAN_BYTES:
+            raise ControlPlanError(
+                f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
+            )
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
