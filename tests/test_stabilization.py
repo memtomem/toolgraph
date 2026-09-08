@@ -129,3 +129,21 @@ def test_checkout_rejects_wrong_commit(source_repo, tmp_path):
         smoke.require_clean_checkout(root, sha)
     smoke.clone_at(root, tmp_path / "old", sha)
     assert (tmp_path / "old" / "README.md").read_text() == "disposable smoke target\n"
+
+
+def test_dependency_evidence_omits_install_paths(tmp_path, monkeypatch):
+    import subprocess
+    (tmp_path / "uv.lock").write_text("locked")
+    monkeypatch.setattr(smoke, "run", lambda *a, **kw: subprocess.CompletedProcess(
+        [], 0, stdout='[{"name":"example","version":"1.0","editable_project_location":"/private/user/repo"}]'
+    ))
+    assert smoke.dependency_evidence(tmp_path)["installed"] == [{"name": "example", "version": "1.0"}]
+
+
+def test_review_counter_requires_actual_health_evidence():
+    from policy_bundle_gateway_smoke import review_counter
+    assert review_counter("status\n  review would-block calls: 1\n", 1) == 1
+    for report in ["", "  review would-block calls: 0", "  review would-block calls: 10",
+                   "  review would-block calls: 1\n  review would-block calls: 1"]:
+        with pytest.raises(Exception, match="expected would-block count"):
+            review_counter(report, 1)

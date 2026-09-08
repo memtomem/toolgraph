@@ -110,9 +110,13 @@ def require_clean_checkout(root: Path, sha: str) -> None:
 def dependency_evidence(root: Path) -> dict[str, Any]:
     return {
         "lock_digest": sha256(root / "uv.lock"),
-        "installed": run(
-            ["uv", "pip", "freeze", "--python", str(root / ".venv")], cwd=root
-        ).stdout.splitlines(),
+        "installed": [
+            {"name": item["name"], "version": item["version"]}
+            for item in json.loads(run(
+                ["uv", "pip", "list", "--format", "json", "--python", str(root / ".venv")],
+                cwd=root,
+            ).stdout)
+        ],
     }
 
 

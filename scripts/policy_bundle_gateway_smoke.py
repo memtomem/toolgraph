@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -416,14 +417,17 @@ async def assert_list(
                     raise SmokeError("review health surface was not callable")
                 if expected_would_block is None:
                     return 0
-                payload = getattr(health, "structuredContent", None)
-                if payload is None:
-                    payload = json.loads(next(c.text for c in health.content if c.type == "text"))
-                from ecosystem_smoke import nested_values
-                counts = nested_values(payload, "would_block_calls")
-                if counts != [expected_would_block]:
-                    raise SmokeError("review health did not record the expected would-block count")
-                return counts[0]
+                health_text = "\n".join(c.text for c in health.content if c.type == "text")
+                return review_counter(health_text, expected_would_block)
+
+
+def review_counter(health_text: str, expected: int) -> int:
+    # stm_proxy_health's public contract is a human-readable text report.
+    counts = re.findall(r"^  review would-block calls: ([0-9]+)$", health_text, re.MULTILINE)
+    if counts != [str(expected)]:
+        raise SmokeError("review health did not record the expected would-block count")
+    return int(counts[0])
+
 
 
 async def expect_start_failure(
@@ -511,7 +515,8 @@ def main() -> int:
         )
         write_yaml(allow_manifest, governance(allow_read=True))
         write_yaml(deny_manifest, governance(allow_read=False))
-        tg_env = dict(os.environ)
+        tg_env = {key: value for key, value in os.environ.items()
+                  if not key.startswith(("TOOLGRAPH_", "NEO4J_", "GIT_"))}
         tg_env["TOOLGRAPH_CONFIG"] = str(state / "config.json")
         run([str(tg), "init", "--state-dir", str(state)], cwd=ROOT, env=tg_env)
         run([str(tg), "crawl", "--servers", str(servers)], cwd=ROOT, env=tg_env)
