@@ -37,14 +37,15 @@ formats are unchanged. The internal smoke CLI now requires explicit SHA flags.
 
 ## Local verification
 
-- Full pytest: **509 passed, 3 existing warnings**, 75.25 seconds, real isolated
-  Neo4j 5.26 and Ladybug. Includes 13 new parameterized cases for batch limits,
+- Full pytest: **511 passed, 3 existing warnings**, 54.49 seconds, real isolated
+  Neo4j 5.26 and Ladybug. Includes 15 new parameterized cases for batch limits,
   repeated refs, diagnostic order, rollback, dirty overlays, incorrect SHAs and
-  inherited Git routing.
+  inherited Git routing, health counter parsing and dependency-path exclusion.
 - Ruff check: passed. Dev dependency audit (all groups and extras): no known
   vulnerabilities. Wheel/sdist build and Twine checks: passed.
-- Current-change integration and final remote CI: pending the commit-bound runs
-  below; baseline CI or historical Gate E evidence is not substituted for them.
+- Both integration runners passed against code commit
+  `ef298d5b3c4a2129af3a3d4125d1f8a8541e091f`; see pinned evidence below.
+  Remote CI is checked separately on the final pushed documentation commit.
 
 ## Ingest benchmark
 
@@ -84,3 +85,41 @@ Issue #89's observation binding, role-specific consumer routing, MCP 2.x migrati
 and public publication are separate follow-ups. Observations must be bound to
 policy/graph/profile/time-window context before broadening grant proposals.
 Private-to-public visibility and PyPI publication are not implied by these fixes.
+
+## Pinned integration evidence
+
+Both summaries report `status: pass`. Real MCP/consumer processes ran in isolated
+state directories; provider execution used fixtures, with no paid model canary.
+Dependency evidence retains only package names/versions and lock digests.
+
+| Input | Commit |
+| --- | --- |
+| Toolgraph | `ef298d5b3c4a2129af3a3d4125d1f8a8541e091f` |
+| memtomem-stm | `b0dad89e9fb3799069a5b44330668504ce5afe0b` |
+| SyncMill | `96c36d98c1d2922640e3c144eb8cd9914bc6ad5a` |
+| Tracegraph | `d048f400fdd39bb37c9608e45ee5931cba058b46` |
+
+Gateway verified filtered discovery, warm-cache denial before upstream execution,
+restart filtering, contract drift, missing/corrupt strict startup failure, review
+visibility and call-through with actual health counter **1**, and disabled-mode
+call-through despite a missing bundle. STM did not import Toolgraph.
+
+Ecosystem route returned `advisory_allow`; compete returned `advisory_warn` with
+`syncmill::board_stats:DENY_VIOLATION` and the expected fixture winner. Retained
+preflight SHA-256 digests:
+
+- route: `5ba16d9e5411a495e9a571883b7aa4f225c4d85e8096c60aba2bd540e01f93ea`
+- compete: `21f5a66c4ffa6475ff20e2c2d28c205b3dfbcea686f215abac44cef157109433`
+- harness: `001b2c8269149c5868ea437dcebbc5bfe01247dd23bae889e4475ea210a50225`
+- governance: `d14c401ad3fc980f3723a40957c2ead6745d9fab9cc36c91b6ea49f2871a2d48`
+
+Full local summaries are in `/private/tmp/toolgraph-stabilization-gateway-final`
+and `/private/tmp/toolgraph-stabilization-ecosystem-final`. Later documentation
+commits do not change these tested source objects.
+
+## Delivery sequence
+
+PR #91 was merged after its required CI and CLA passed on the bound head. Its
+optional dev audit still reported the older pip; this PR's lock update resolves
+that finding. PR #92 is retargeted to main for final remote validation. Neither
+public visibility nor package publication is part of this delivery.
