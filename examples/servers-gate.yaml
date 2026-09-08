@@ -1,6 +1,6 @@
-# Gate exhibit: the user's own MCP servers (memtomem + memtomem-stm proxy).
-# Crawls both via stdio using the exact launch commands registered with the
-# Claude Code CLI, so the graph reflects what the user actually runs.
+# Illustrative companion integration configuration.
+# Install and configure these optional servers separately; this is not a
+# capture of the reader's workstation. The standalone quickstart needs neither.
 servers:
   - name: memtomem
     transport: stdio

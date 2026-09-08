@@ -38,19 +38,29 @@ executing inside the privileged job. Pass values through `env:`.
 2. Make `memtomem/toolgraph` public, then re-enable the push rulesets the
    visibility change disables. Confirm the README, license and security
    reporting link render. Branch protection and required checks come *after*
-   CI has run successfully at least once — a check cannot be marked required
-   until it has reported. `docs/public-release-checklist.md` step 3 has the
+   CI has reported successfully on the release candidate. Existing recent
+   success counts: a visibility flip does not require a dummy commit. `docs/public-release-checklist.md` step 3 has the
    ordered sequence.
-3. On TestPyPI, create a pending Trusted Publisher for repository
+3. Before any tag, create the `pypi` GitHub environment with the repository
+   owner as required reviewer, administrator bypass disabled, and selected
+   **tag** patterns `test-v*` and `v*` (no deployment branches). For a sole
+   maintainer, allow self-review so the owner can approve after comparing
+   evidence; this is a manual publication checkpoint, not two-person review.
+   Read the settings back. Do not rely on implicit environment creation.
+   Required reviewers may only be available after the repository is public.
+4. On TestPyPI, create a pending Trusted Publisher for repository
    `memtomem/toolgraph`, workflow `release.yml`, environment `pypi`, package
    `toolgraph`.
-4. Create the equivalent pending publisher on PyPI. PyPI and TestPyPI are
+5. Create the equivalent pending publisher on PyPI. PyPI and TestPyPI are
    separate services and both require configuration.
 
 ## Release candidate
 
-1. Set `toolgraph/__init__.py::__version__` and move the changelog entry from
-   `Unreleased` to the release date.
+1. Keep `toolgraph/__init__.py::__version__` at `0.0.1` for the first public
+   alpha (the package classifier and README mark Alpha; this is not `0.0.1a1`).
+   Finalize PR #87 against current main, including the README and both beginner
+   guides. Date the changelog when the release candidate is confirmed. Do not
+   merge the PyPI-first instructions while publication prerequisites are unmet.
 2. Run the full local release gate:
 
    ```bash
@@ -60,6 +70,7 @@ executing inside the privileged job. Pass values through `env:`.
    uv run pytest -q
    scripts/audit-dependencies.sh runtime
    scripts/audit-dependencies.sh extras
+   scripts/audit-dependencies.sh dev
    uv build
    uv run twine check dist/*
    scripts/verify-artifacts.sh dist <VERSION>
@@ -69,7 +80,7 @@ executing inside the privileged job. Pass values through `env:`.
    uploaded **under exactly the names they must have** — plus `dist/.gitignore`,
    which `uv build` writes and which is tolerated by name (it is not uploaded:
    the publisher takes the distributions, and hidden files are excluded from
-   the artifact) — — the release
+   the artifact) — the release
    passes the version from the tag, so an unexpected artifact name is rejected
    before it travels into a later step — that the sdist carries only what the
    allowlist in `pyproject.toml` intends and nothing but plain files, and that
@@ -88,16 +99,45 @@ executing inside the privileged job. Pass values through `env:`.
    to TestPyPI through OIDC. The rehearsal uses `skip-existing`, so it can be
    re-run; the production upload does not, and a version that already exists
    there fails the release instead of reporting success.
-5. Install the TestPyPI artifact into a clean Python 3.12 environment and run
-   the complete `toolgraph example init` quickstart. TestPyPI may need PyPI as
-   an additional dependency index because it does not mirror dependencies.
+5. Verify **published** TestPyPI files against the candidate, not a successful
+   workflow badge or a fresh `skip-existing` build:
+
+   ```bash
+   python scripts/verify_index_release.py --index testpypi --version 0.0.1 --dist dist
+   ```
+
+   In a new Python 3.12 environment outside the checkout, download only the
+   exact Toolgraph wheel from TestPyPI, then install it with dependencies from
+   PyPI. Do not use `--extra-index-url` to mix project selection across indexes:
+
+   ```bash
+   python -m pip download --no-deps --only-binary=:all: \
+     --index-url https://test.pypi.org/simple/ --dest downloaded toolgraph==0.0.1
+   # Compare the downloaded wheel SHA-256 with the verifier's output first.
+   python -m pip install --index-url https://pypi.org/simple/ \
+     'downloaded/toolgraph-0.0.1-py3-none-any.whl[ladybug]'
+   python -m pip check
+   toolgraph --version
+   toolgraph example init quickstart
+   cd quickstart
+   toolgraph init
+   toolgraph crawl --servers servers.yaml
+   toolgraph ingest-manifest --governance governance.yaml --strict-drift
+   toolgraph eligible-tools vibe-coder policy-gateway::read_note policy-gateway::publish_note --profile review
+   toolgraph selection-explain vibe-coder policy-gateway::publish_note
+   toolgraph policy compile --agent vibe-coder --profile review --output .toolgraph/policy-bundle.json
+   ```
+
+   Require `read_note` eligible and `publish_note` rejected, with graph-path
+   evidence and a valid generated bundle. No sibling checkout, Docker, Node.js,
+   provider credential or paid model call is required.
 6. Push the immutable production tag `v<VERSION>` from the same reviewed
    commit. Confirm the PyPI metadata, wheel contents, provenance, and install.
    Both runs print `sha256sum dist/*`. Compare them — and be clear-eyed about
    when you can: the production digest does not exist until the production run
    is already under way, so this comparison **cannot block that publication**
-   by itself. To make it a gate, add a required reviewer to the `pypi`
-   environment: the build job finishes and prints its digest, and the publish
+   by itself. The required reviewer configured above makes it a gate: the build
+   job finishes and prints its digest, and the publish
    job then waits for approval. Without that, the comparison is a post-hoc
    check and a mismatch means yanking, not preventing. Note also that a re-run of the rehearsal prints a digest
    for a freshly built file that `skip-existing` may not have uploaded, so
@@ -108,3 +148,23 @@ executing inside the privileged job. Pass values through `env:`.
 Do not reuse a tag after a failed release. Fix forward with a new prerelease or
 patch version. Repository visibility and package publication are external state
 changes and require an explicit release decision by a maintainer.
+
+## Promotion and completion record
+
+While the production publish job waits for environment approval, download its
+`dist` artifact into a new directory and run `verify_index_release.py --index
+testpypi --version 0.0.1 --dist <production-dist>`. A mismatch, missing file,
+yanked release or unavailable index blocks approval. Only the two expected
+filenames are accepted. Retain the source SHA, both tag targets, workflow run
+IDs and both published file digests in the release evidence.
+
+After production upload, run the verifier with `--index pypi`, repeat the clean
+installation and quickstart from PyPI, and check metadata and publishing
+attestations. Then create the GitHub Release titled `v0.0.1 — Alpha` with its
+prerelease flag enabled to communicate maturity; the Python package version
+remains `0.0.1`. The release notes must state the advisory boundary and link to
+the standalone quickstart. Do not call a successful local build publication.
+
+For a defective published release, yank it and fix forward with a new version;
+do not delete/recreate release tags or overwrite index files. A failed network
+lookup is unknown state: read back index files before deciding how to recover.
