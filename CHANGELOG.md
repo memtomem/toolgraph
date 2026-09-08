@@ -2,7 +2,7 @@
 
 All notable changes to Toolgraph are documented here.
 
-## 0.0.1 - 2026-09-08
+## 0.0.1 - 2026-09-09
 
 Initial public alpha release.
 
