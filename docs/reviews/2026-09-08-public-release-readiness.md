@@ -38,12 +38,22 @@ still absent; repository visibility remains private. Discussions is enabled
 with zero entries, and Wiki/Pages are disabled.
 
 API authentication works. Live GraphQL introspection exposes `userContentEdits`
-for reading but no public mutation for deleting those revisions. The four
-target nodes still have `deletedAt: null`. GitHub's documented removal path is
-the authenticated web UI: edited, select revision, Options, Delete revision
-from history. No connected browser was available. See
+for reading but no public mutation for deleting those revisions. GitHub's
+documented removal path is the authenticated web UI: edited, select revision,
+Options, Delete revision from history. See
 [GitHub's edit-history documentation](https://docs.github.com/en/communities/moderating-comments-and-conversations/tracking-changes-in-a-comment).
-Do not substitute PR deletion, closing, or rewriting the current body.
+PR deletion, closing, and rewriting the current body were rejected as
+substitutes.
+
+**RESOLVED 2026-09-08.** The owner deleted the four July 12 PR #35 body
+revisions through that web path, between `23:29:09Z` and `23:29:46Z`. API
+readback confirms all four carry a non-null `deletedAt` and return the literal
+string `deleted` in place of their content. The two August 23 revisions were
+left intact as authorized and carry no personal path. The current PR body is
+also clean. Editor identity and edit timestamps remain visible by design, which
+GitHub documents and which discloses nothing beyond the existing commit
+metadata. PR #35 itself was neither deleted nor closed, and no Git history was
+rewritten.
 
 Coverage limits: 25 expired artifacts remain unavailable. Three locally
 reachable commit SHAs returned 422 when querying remote check runs; they were
@@ -53,10 +63,21 @@ Installed Apps requires different authentication (401), Packages requires
 `read:packages` (403), and secret/code scanning is not enabled. Private-plan
 ruleset/fork-approval restrictions remain. No pattern scan proves absence of
 all secrets; unrecognized upload URLs and image/OCR content are not covered.
-No Git history, PR content, repository visibility, or package publication was
-changed by this read-only audit. **Public release remains on hold pending the
-authorized revision deletion and resolution or explicit disposition of the
-remaining inaccessible surfaces.**
+Repository visibility and package publication were not changed by the audit
+itself; the only mutation performed under it is the authorized revision
+deletion recorded above.
+
+**Disposition of the inaccessible surfaces, 2026-09-08.** The owner accepted
+the expired artifacts, independently rendered job summaries, installed
+Apps/Packages inventory and image/OCR content as residual risk rather than
+blocking on them. The expired artifacts are unrecoverable by anyone, including
+the public, and the remaining surfaces could not be reached with the available
+credentials. This is an explicit acceptance, not a clean result.
+
+**The public release hold is therefore lifted.** Remaining work is the
+visibility transition, repository settings, and the release sequence in
+[the release runbook](../releasing.md); those are tracked separately from this
+audit.
 
 Target: Toolgraph **0.0.1 / Alpha**, existing PR #87 (`release/v0.0.1-prep`),
 updated with main `c173ae7`. This report distinguishes readiness from publication.
@@ -123,12 +144,13 @@ Thirty-seven log files matched local path syntax; a follow-up scan confirmed
 only hosted-runner home paths. Do not interpret these scoped patterns as proof
 that every possible secret is absent.
 
-**HOLD: PR #35 has four historical body edits containing personal local paths.**
-The current body is clean, but the edits are readable after publication. The
-exact four edit IDs and timestamps are retained in the private audit workspace;
-no personal paths are copied here. Removing current text again would not fix
-this. Targeted historical edit removal requires a deliberate destructive action;
-no Git history rewrite, PR deletion or current-body deletion is proposed.
+**PR #35 had four historical body edits containing personal local paths.**
+The current body was clean, but those edits would have been readable after
+publication. The exact four edit IDs and timestamps are retained in the private
+audit workspace; no personal paths are copied here. Removing current text again
+would not have fixed this, so targeted historical edit removal was required.
+**This was carried out and verified on 2026-09-08** — see the follow-up section
+above. No Git history rewrite, PR deletion or current-body deletion was used.
 
 Repository metadata: 8 remote branches, no tags/releases, no deploy keys or
 webhooks, 3 collaborators (one admin, two writers), no teams. Actions enabled;
