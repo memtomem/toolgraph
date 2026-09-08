@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from toolgraph.artifacts import rfc3339_offset_error
+from toolgraph.artifact_safety import safe_artifact, validate_identity
 from toolgraph.graph import queries, selector
 from toolgraph.review_candidates import ReviewCandidateError, list_candidates
 
@@ -32,6 +34,9 @@ def build_policy_review_plan(
     created_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Bind accepted Tracegraph candidates to current Toolgraph decisions."""
+    validate_identity(agent)
+    if created_at is not None and (problem := rfc3339_offset_error(created_at)):
+        raise PolicyReviewPlanError(problem)
     if not agent.strip():
         raise PolicyReviewPlanError("agent must not be empty")
     if profile not in selector.PROFILES:
@@ -79,7 +84,7 @@ def build_policy_review_plan(
         )
 
     timestamp = created_at or datetime.now(timezone.utc)
-    return {
+    return safe_artifact({
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,
         "created_at": timestamp.isoformat(),
@@ -89,4 +94,4 @@ def build_policy_review_plan(
         "profile": profile,
         "decision_mode": "human_required",
         "candidates": candidates,
-    }
+    })

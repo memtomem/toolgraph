@@ -7,7 +7,7 @@
 >
 > Toolgraph is an advisory control-plane tool, not a runtime security boundary.
 
-A graph-native registry for MCP tools. It crawls MCP servers into a Neo4j graph,
+A graph-native registry for MCP tools. It crawls MCP servers into a local Ladybug or shared Neo4j graph,
 lets you author governance (who can call what, what touches which resource, which
 resources are under which policy), and answers **explainable reachability
 questions** over the result:
@@ -304,6 +304,12 @@ to stderr) and exit 0 by default — gating is opt-in.
 
 A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
 clean run.
+
+Note for CI scripts: exit 2 is overloaded. Click uses 2 for usage errors (a
+bad flag or parameter), and `--fail-on-deny` uses 2 for not-found/ambiguous
+verdicts. The two are indistinguishable by exit code alone — a gate that must
+tell them apart should also check stderr (verdict trips print the JSON verdict
+on stdout first; usage errors print click's usage text).
 
 ### Distinguishing what the graph doesn't know
 

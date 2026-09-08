@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import functools
 import json
+import os
 from enum import Enum
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -15,7 +17,11 @@ import typer
 from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
-from toolgraph.control_plan import ControlPlanError, build_control_preflight
+from toolgraph.control_plan import (
+    MAX_PLAN_BYTES,
+    ControlPlanError,
+    build_control_preflight,
+)
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -73,6 +79,30 @@ app.add_typer(policy_app, name="policy")
 app.add_typer(example_app, name="example")
 
 
+def _reports_backend_outage(fn):
+    """Convert a typed backend outage into the CLI's single-line ERROR contract.
+
+    Without this, an unreachable backend surfaces as a raw traceback whose
+    driver message can carry the connection URI. The MCP surface already
+    types and redacts this failure (server/app.py); the CLI must match.
+    Applied below ``@app.command`` so Typer registers the wrapped function
+    (``functools.wraps`` preserves the signature Typer introspects).
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except config.RuntimeConfigurationError as exc:
+            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
+        except driver.BackendUnavailableError as exc:
+            typer.echo(f"ERROR: backend unavailable: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
+
+    return wrapper
+
+
 def _version_callback(value: bool) -> None:
     if value:
         typer.echo(f"toolgraph {__version__}")
@@ -117,20 +147,30 @@ def example_init(
             f"destination already exists: {destination}", param_hint="DESTINATION"
         )
     source = files("toolgraph").joinpath("quickstart")
-    with as_file(source) as source_path:
-        shutil.copytree(source_path, destination)
-    servers_path = destination / "servers.yaml"
-    servers_path.write_text(
-        servers_path.read_text(encoding="utf-8").replace(
-            "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
-        ),
-        encoding="utf-8",
-    )
+    # Stage next to the destination and rename once complete: a failure
+    # mid-copy must not leave a half-populated quickstart that blocks the
+    # "destination already exists" guard on the next run.
+    staging = destination.parent / f".{destination.name}.tmp-{os.getpid()}"
+    try:
+        with as_file(source) as source_path:
+            shutil.copytree(source_path, staging)
+        servers_path = staging / "servers.yaml"
+        servers_path.write_text(
+            servers_path.read_text(encoding="utf-8").replace(
+                "__TOOLGRAPH_PYTHON__", json.dumps(sys.executable)
+            ),
+            encoding="utf-8",
+        )
+        os.rename(staging, destination)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     typer.echo(f"Created Toolgraph quickstart at {destination}")
     typer.echo(f"Next: cd {destination} && toolgraph init")
 
 
 @app.command()
+@_reports_backend_outage
 def check() -> None:
     """Verify the configured graph backend."""
     driver.verify_connectivity()
@@ -141,6 +181,7 @@ def check() -> None:
 
 
 @app.command("init")
+@_reports_backend_outage
 def init_backend(
     backend: str = typer.Option(
         "ladybug", "--backend", help="Local backend: ladybug (default) or neo4j."
@@ -157,6 +198,7 @@ def init_backend(
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
     previous = config.settings
+    db_existed = db_path.exists()
     config.settings = config.Settings(backend=normalized, db_path=db_path)
     driver.close_driver()
     try:
@@ -169,14 +211,25 @@ def init_backend(
             }
         )
         atomic_write_private(runtime_path, payload)
-    except Exception:
+    except Exception as exc:
         config.settings = previous
         driver.close_driver()
+        # Clean up only a database this invocation plausibly created.
+        # BACKEND_LOCKED means another process owns it — it may have created
+        # the file after our db_existed check, and deleting here would
+        # destroy the winner's database.
+        if not db_existed and not isinstance(exc, driver.BackendLockedError):
+            for leftover in (db_path, Path(f"{db_path}.wal")):
+                if leftover.is_dir():
+                    shutil.rmtree(leftover, ignore_errors=True)
+                else:
+                    leftover.unlink(missing_ok=True)
         raise
     typer.echo(f"Initialized backend={normalized} config={runtime_path}")
 
 
 @app.command("init-schema")
+@_reports_backend_outage
 def init_schema() -> None:
     """Create uniqueness constraints (idempotent)."""
     schema.init_schema()
@@ -185,6 +238,7 @@ def init_schema() -> None:
 
 
 @app.command()
+@_reports_backend_outage
 def crawl(
     servers: Path = typer.Option(None, help="Path to servers.yaml (defaults to config)."),
     timeout: float = typer.Option(DEFAULT_TIMEOUT, help="Per-server crawl timeout (seconds)."),
@@ -266,6 +320,7 @@ def crawl(
 
 
 @app.command("ingest-manifest")
+@_reports_backend_outage
 def ingest_manifest(
     governance: Path = typer.Option(None, help="Path to governance.yaml (defaults to config)."),
     strict_drift: bool = typer.Option(
@@ -300,13 +355,29 @@ def ingest_manifest(
 
 
 @app.command()
+@_reports_backend_outage
 def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL graph data.")) -> None:
-    """Delete every node and relationship (keeps constraints). Destructive."""
+    """Delete every node and relationship (keeps constraints). Destructive.
+
+    Not atomic: deletion runs in batches, so run it inside a maintenance
+    window on a shared backend — a concurrent writer can interleave, and an
+    outage mid-way leaves a partially erased graph (re-run to finish).
+    """
     if not yes:
         typer.echo("Refusing to wipe the graph without --yes")
         raise typer.Exit(code=1)
+    # Enforce the schema-version gate BEFORE destroying GraphMeta: an older
+    # binary must not erase a newer database and then re-stamp it as its own.
+    schema.init_schema()
     with driver.session() as s:
-        s.run("MATCH (n) DETACH DELETE n")
+        # Batched: one unbounded DETACH DELETE builds a transaction holding
+        # every node and can OOM the server on a large graph.
+        while True:
+            record = s.run(
+                "MATCH (n) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted"
+            ).single()
+            if not record or not record["deleted"]:
+                break
     # Recreate GraphMeta at generation 0 with a fresh instance id. A reset may
     # reuse generation numbers but must never reuse an external graph-state key.
     schema.init_schema()
@@ -324,6 +395,7 @@ def serve(
 
 
 @app.command("check-access")
+@_reports_backend_outage
 def check_access(
     agent: str,
     tool: str,
@@ -350,6 +422,7 @@ def check_access(
 
 
 @app.command("unsafe-tools")
+@_reports_backend_outage
 def unsafe_tools(
     agent: str,
     all: bool = typer.Option(
@@ -383,12 +456,14 @@ def unsafe_tools(
 
 
 @app.command("blast-radius")
+@_reports_backend_outage
 def blast_radius(node: str) -> None:
     """Agents/tools affected if NODE (a resource URI or policy id) changes."""
     typer.echo(json.dumps(queries.blast_radius(node), indent=2))
 
 
 @app.command("unmapped-tools")
+@_reports_backend_outage
 def unmapped_tools(
     all: bool = typer.Option(False, "--all", help="Include tools with no CAN_CALL grant."),
 ) -> None:
@@ -397,12 +472,14 @@ def unmapped_tools(
 
 
 @app.command("orphan-policies")
+@_reports_backend_outage
 def orphan_policies() -> None:
     """Policies no agent currently reaches — likely obsolete or over-narrow."""
     typer.echo(json.dumps(queries.orphan_policies(), indent=2))
 
 
 @app.command("unbacked-edges")
+@_reports_backend_outage
 def unbacked_edges(
     include_grants: bool = typer.Option(
         False, "--include-grants",
@@ -421,12 +498,14 @@ def unbacked_edges(
 
 
 @app.command("drift")
+@_reports_backend_outage
 def drift() -> None:
     """Tools with authored governance but no live EXPOSES edge (re-ingest needed)."""
     typer.echo(json.dumps(queries.drifted_tools(), indent=2))
 
 
 @app.command("destructive-unsafeguarded")
+@_reports_backend_outage
 def destructive_unsafeguarded() -> None:
     """Destructive-hinted tools with no GOVERNED_BY path (direct or via any resource).
 
@@ -437,6 +516,7 @@ def destructive_unsafeguarded() -> None:
 
 
 @app.command("annotation-contradictions")
+@_reports_backend_outage
 def annotation_contradictions() -> None:
     """Authored WRITES on tools hinting readOnlyHint: true — one side is wrong.
 
@@ -475,6 +555,7 @@ def _audit_report_markdown(report: dict) -> str:
 
 
 @app.command("audit-report")
+@_reports_backend_outage
 def audit_report(
     format: AuditReportFormat = typer.Option(
         AuditReportFormat.json,
@@ -510,6 +591,20 @@ def _selector_profile(profile: str) -> str:
     return profile
 
 
+# The binding bound lives in the selector (every surface shares it); the CLI
+# pre-checks only to produce a usage error instead of a traceback.
+MAX_CLI_CANDIDATES = selector.MAX_CANDIDATES
+
+
+def _bounded_candidates(candidates: list[str]) -> list[str]:
+    if len(candidates) > MAX_CLI_CANDIDATES:
+        raise typer.BadParameter(
+            f"{len(candidates)} candidates exceed the {MAX_CLI_CANDIDATES} limit",
+            param_hint="CANDIDATES",
+        )
+    return candidates
+
+
 def _require_agent(agent: str) -> None:
     """Selection with an unknown agent is a context-construction error, not an
     empty result — mirror unsafe-tools: diagnostic to stderr, exit 1."""
@@ -519,6 +614,7 @@ def _require_agent(agent: str) -> None:
 
 
 @app.command("rank-features")
+@_reports_backend_outage
 def rank_features(agent: str, candidates: list[str]) -> None:
     """Batch selection features for CANDIDATES (ADR-0005), in input order.
 
@@ -526,11 +622,13 @@ def rank_features(agent: str, candidates: list[str]) -> None:
     mapping, evidence coverage, annotation self-claims — plus the rule-based
     risk_score from the published fixed table. No relevance, no learning.
     """
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(json.dumps(selector.rank_features(agent, candidates), indent=2))
 
 
 @app.command("eligible-tools")
+@_reports_backend_outage
 def eligible_tools(
     agent: str,
     candidates: list[str],
@@ -545,6 +643,7 @@ def eligible_tools(
     a rejected row (ADR-0005).
     """
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     _require_agent(agent)
     typer.echo(
         json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2)
@@ -552,6 +651,7 @@ def eligible_tools(
 
 
 @app.command("selection-explain")
+@_reports_backend_outage
 def selection_explain(
     agent: str,
     tool: str,
@@ -569,6 +669,7 @@ def selection_explain(
 
 
 @app.command("preflight")
+@_reports_backend_outage
 def preflight(
     agent: str,
     candidates: list[str],
@@ -582,6 +683,7 @@ def preflight(
 ) -> None:
     """Produce an advisory preflight artifact for a candidate tool batch."""
     _selector_profile(profile)
+    _bounded_candidates(candidates)
     try:
         artifact = build_preflight(
             agent=agent,
@@ -599,7 +701,7 @@ def preflight(
             return
         digest = atomic_write_private(out, payload.encode("utf-8"))
     except (RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
+        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(
         json.dumps(
@@ -626,6 +728,7 @@ def preflight(
 
 
 @app.command("control-preflight")
+@_reports_backend_outage
 def control_preflight(
     plan: Path = typer.Argument(..., help="Body-free toolgraph.control-plan JSON file."),
     profile: str = typer.Option(
@@ -641,13 +744,20 @@ def control_preflight(
     _selector_profile(profile)
     digest: str | None = None
     try:
-        raw_plan = plan.read_bytes()
+        # Bounded read: MAX_PLAN_BYTES must limit memory, not just validation
+        # cost, and a stat-then-read pair would be a TOCTOU.
+        with plan.open("rb") as handle:
+            raw_plan = handle.read(MAX_PLAN_BYTES + 1)
+        if len(raw_plan) > MAX_PLAN_BYTES:
+            raise ControlPlanError(
+                f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
+            )
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
             digest = atomic_write_private(out, payload)
     except (ControlPlanError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
+        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     if out is None:
         typer.echo(payload.decode(), nl=False)
@@ -674,6 +784,7 @@ def control_preflight(
 
 
 @policy_app.command("compile")
+@_reports_backend_outage
 def policy_compile(
     agent: str = typer.Option(..., "--agent", help="Authored agent identity."),
     profile: str = typer.Option(
@@ -690,7 +801,7 @@ def policy_compile(
         payload = canonical_json_bytes(artifact)
         digest = atomic_write_private(output, payload)
     except (PolicyBundleError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
+        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(
         json.dumps(
@@ -710,6 +821,7 @@ def policy_compile(
 
 
 @policy_app.command("review-plan")
+@_reports_backend_outage
 def policy_review_plan(
     report: Path = typer.Argument(..., help="Tracegraph review-candidate report."),
     agent: str = typer.Option(..., "--agent", help="Authored agent identity."),
@@ -736,14 +848,17 @@ def policy_review_plan(
         )
         digest = atomic_write_private(output, canonical_json_bytes(artifact))
     except (PolicyReviewPlanError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {exc}", err=True)
+        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(
         json.dumps(
             {
                 "kind": artifact["kind"],
                 "output": str(output),
-                "artifact_digest": digest,
+                # Prefixed like preflight/control-preflight: artifact_digest
+                # follows SyncMill's ^sha256:[0-9a-f]{64}$ contract; bare hex
+                # is reserved for bundle_digest (memtomem-stm).
+                "artifact_digest": f"sha256:{digest}",
                 "graph_state": artifact["graph_state"],
                 "agent": artifact["agent"],
                 "profile": artifact["profile"],
@@ -756,7 +871,7 @@ def policy_review_plan(
 
 
 def _review_candidate_failure(exc: ReviewCandidateError) -> NoReturn:
-    typer.echo(f"ERROR: {exc}", err=True)
+    typer.echo(f"ERROR: {redact_text(exc)}", err=True)
     raise typer.Exit(code=1)
 
 

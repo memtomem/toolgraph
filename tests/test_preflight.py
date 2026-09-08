@@ -27,8 +27,18 @@ def _bracket(monkeypatch, payload, generation=42):
             "graph_state": {"instance_id": "test-instance", "generation": generation},
         },
     )
+    # The producer now evaluates once (rank_features) and filters purely
+    # (filter_features); the filter seam carries each test's payload.
     monkeypatch.setattr(
-        "toolgraph.preflight.selector.eligible_tools", lambda *a, **k: payload
+        "toolgraph.preflight.selector.rank_features",
+        lambda *a, **k: {
+            "agent": payload["agent"],
+            "agent_found": payload["agent_found"],
+            "features": [],
+        },
+    )
+    monkeypatch.setattr(
+        "toolgraph.preflight.selector.filter_features", lambda *a, **k: payload
     )
 
 

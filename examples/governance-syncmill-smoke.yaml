@@ -1,4 +1,4 @@
-# Gate-D smoke governance for SyncMill's real read-only MCP gateway.
+# Illustrative Gate-D policy fixture for SyncMill's read-only MCP gateway.
 #
 # This models the ambient tool surface available around a SyncMill run. It does
 # not claim that SyncMill's CLI agents call MCP tools themselves.

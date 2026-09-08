@@ -32,11 +32,18 @@ jobs:
         run: uv sync --project toolgraph --frozen --group dev --extra ladybug
       - name: Sync memtomem-stm
         run: uv sync --project memtomem-stm --frozen
+      - name: Resolve tested commits
+        shell: bash
+        run: |
+          echo "TOOLGRAPH_SMOKE_SHA=$(git -C toolgraph rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "STM_SMOKE_SHA=$(git -C memtomem-stm rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Run advisory cross-repository smoke
         run: >-
           uv run --project toolgraph --frozen --group dev --extra ladybug python
           toolgraph/scripts/policy_bundle_gateway_smoke.py
           --memtomem-stm-root memtomem-stm
+          --toolgraph-ref "$TOOLGRAPH_SMOKE_SHA"
+          --memtomem-stm-ref "$STM_SMOKE_SHA"
           --artifacts-dir "${{ runner.temp }}/policy-gateway-evidence"
       - name: Upload body-free evidence
         if: always()

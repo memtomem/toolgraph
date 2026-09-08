@@ -15,3 +15,7 @@ wheels/
 
 # Agent session logs
 .swarm/
+
+# macOS / local git worktrees
+.DS_Store
+.worktrees/

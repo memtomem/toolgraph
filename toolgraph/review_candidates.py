@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import errno
+import functools
 import hashlib
 import json
 import os
@@ -21,6 +21,8 @@ import uuid
 import warnings
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+
+from toolgraph.artifacts import fsync_parent_dir
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows CI/users
     import msvcrt
@@ -210,6 +212,27 @@ def _sha256(raw: bytes) -> str:
     return f"sha256:{hashlib.sha256(raw).hexdigest()}"
 
 
+# Reports and sidecars are operator-provided files; nothing else in this
+# module bounds them, so a runaway file would otherwise be read whole.
+MAX_REPORT_BYTES = 50_000_000
+
+
+def _read_capped(path: Path, kind: str) -> bytes:
+    # Bounded read from one open descriptor: a stat-then-read pair is a
+    # TOCTOU — the file can be replaced or grown between the two calls.
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_REPORT_BYTES + 1)
+    except OSError as exc:
+        detail = exc.strerror or type(exc).__name__
+        raise ReviewCandidateError(f"cannot read {kind}: {detail}") from exc
+    if len(raw) > MAX_REPORT_BYTES:
+        raise ReviewCandidateError(
+            f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit"
+        )
+    return raw
+
+
 def _candidate_tuple(candidate: ReviewCandidate) -> tuple[str, str, int, str, str]:
     return (
         candidate.run_id,
@@ -220,27 +243,28 @@ def _candidate_tuple(candidate: ReviewCandidate) -> tuple[str, str, int, str, st
     )
 
 
-def candidate_id(candidate: ReviewCandidate) -> str:
-    """Return the UUIDv5 used by the merged SyncMill board consumer."""
+@functools.lru_cache(maxsize=4096)
+def _candidate_id_for(identity_tuple: tuple[str, str, int, str, str]) -> str:
     identity = json.dumps(
-        [
-            TRACEGRAPH_SCHEMA_VERSION,
-            TRACEGRAPH_KIND,
-            *_candidate_tuple(candidate),
-        ],
+        [TRACEGRAPH_SCHEMA_VERSION, TRACEGRAPH_KIND, *identity_tuple],
         ensure_ascii=False,
         separators=(",", ":"),
     )
     return str(uuid.uuid5(_ITEM_NAMESPACE, identity))
 
 
+def candidate_id(candidate: ReviewCandidate) -> str:
+    """Return the UUIDv5 used by the merged SyncMill board consumer.
+
+    Cached on the identity tuple: one review pass recomputes the same ids
+    in load, event validation, and payload rendering.
+    """
+    return _candidate_id_for(_candidate_tuple(candidate))
+
+
 def load_report(path: str | Path) -> LoadedReviewReport:
     """Load, project, sort, and bind one complete Tracegraph report."""
-    try:
-        raw = Path(path).read_bytes()
-    except OSError as exc:
-        detail = exc.strerror or type(exc).__name__
-        raise ReviewCandidateError(f"cannot read review-candidate report: {detail}") from exc
+    raw = _read_capped(Path(path), "review-candidate report")
     try:
         report = TracegraphReviewReport.model_validate_json(raw)
     except ValidationError as exc:
@@ -285,11 +309,7 @@ def _new_annotations(report: LoadedReviewReport) -> AnnotationReport:
 def _load_annotations(path: Path, report: LoadedReviewReport) -> AnnotationReport:
     if not path.exists():
         return _new_annotations(report)
-    try:
-        raw = path.read_bytes()
-    except OSError as exc:
-        detail = exc.strerror or type(exc).__name__
-        raise ReviewCandidateError(f"cannot read review annotations: {detail}") from exc
+    raw = _read_capped(path, "review annotations")
     try:
         annotations = AnnotationReport.model_validate_json(raw)
     except ValidationError as exc:
@@ -306,19 +326,23 @@ def _validate_events(
     candidates = {candidate_id(candidate): candidate for candidate in report.candidates}
     states: dict[str, Disposition] = {item_id: "open" for item_id in candidates}
     histories: dict[str, list[AnnotationEvent]] = {item_id: [] for item_id in candidates}
+    # Dump each source candidate once, not once per referencing event.
+    source_dumps = {
+        item_id: candidate.model_dump() for item_id, candidate in candidates.items()
+    }
     for expected_sequence, event in enumerate(annotations.events, start=1):
         if event.sequence != expected_sequence:
-            raise ReviewCandidateError("review annotation event sequence is not contiguous")
+            raise ReviewCandidateError("review annotation event sequence is not contiguous — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
         source_candidate = candidates.get(event.candidate_id)
         if source_candidate is None:
             raise ReviewCandidateError("review annotation references an unknown candidate")
         if (
-            event.candidate.model_dump() != source_candidate.model_dump()
+            event.candidate.model_dump() != source_dumps[event.candidate_id]
             or candidate_id(event.candidate) != event.candidate_id
         ):
-            raise ReviewCandidateError("review annotation candidate snapshot does not match its id")
+            raise ReviewCandidateError("review annotation candidate snapshot does not match its id — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
         if event.from_disposition != states[event.candidate_id]:
-            raise ReviewCandidateError("review annotation disposition chain is invalid")
+            raise ReviewCandidateError("review annotation disposition chain is invalid — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
         states[event.candidate_id] = event.disposition
         histories[event.candidate_id].append(event)
     return states, histories
@@ -401,6 +425,9 @@ def normalize_note(value: str | None) -> str | None:
 @contextmanager
 def _writer_lock(path: Path) -> Iterator[None]:
     """Serialize local writers; the OS releases this lock after a crash."""
+    # The .lock file is deliberately never removed: unlinking a file another
+    # process is about to flock() reintroduces the race this lock exists to
+    # close. One empty file per sidecar is the accepted cost.
     # Resolve aliases before deriving the lock name.  Otherwise two processes
     # can address one sidecar through real/symlink paths and take distinct locks.
     lock_path = Path(f"{path.resolve()}.lock")
@@ -433,28 +460,6 @@ def _writer_lock(path: Path) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _fsync_parent(path: Path) -> None:
-    """Make the atomic rename durable on filesystems that support dir fsync."""
-    if os.name == "nt":  # pragma: no cover - Windows has no directory fd
-        return
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    try:
-        descriptor = os.open(path.parent, flags)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
-    except OSError as exc:
-        unsupported = {
-            errno.EINVAL,
-            errno.ENOTSUP,
-            getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
-            errno.EROFS,
-        }
-        if exc.errno not in unsupported:
-            raise
-
-
 def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
     payload = json.dumps(
         annotations.model_dump(mode="json"), indent=2, sort_keys=True
@@ -476,7 +481,7 @@ def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
             os.fsync(handle.fileno())
         os.replace(temporary, path)
         try:
-            _fsync_parent(path)
+            fsync_parent_dir(path)
         except OSError:
             # The event is already atomically visible.  Reporting total failure
             # would invite a retry that appends a duplicate event; surface the
@@ -559,8 +564,11 @@ def annotate_candidate(
         )
 
         # The source is immutable evidence.  Catch a concurrent rewrite before
-        # publishing a sidecar that claims to describe different bytes.
-        if load_report(report_file).source_report_digest != report.source_report_digest:
+        # publishing a sidecar that claims to describe different bytes.  A
+        # digest comparison over the raw bytes is sufficient — any content
+        # change alters the digest — and skips re-validating the whole report.
+        current_raw = _read_capped(report_file, "review-candidate report")
+        if _sha256(current_raw) != report.source_report_digest:
             raise ReviewCandidateError("source report changed while annotation was being written")
         try:
             _save_atomic(updated, annotation_file)

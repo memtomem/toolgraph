@@ -10,9 +10,19 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Transport = Literal["stdio", "streamable-http", "sse"]
+
+
+def _no_key_delimiter(kind: str, value: str) -> str:
+    # "::" is the Tool-key delimiter ("<server>::<tool>"). A component that
+    # contains it collapses distinct identities onto one key — e.g.
+    # (server="a", tool="b::c") and (server="a::b", tool="c") MERGE the same
+    # node — and the ecosystem bundle schema requires exactly one delimiter.
+    if "::" in value:
+        raise ValueError(f"{kind} must not contain '::' (the tool-key delimiter)")
+    return value
 
 
 class StrictInputModel(BaseModel):
@@ -29,6 +39,11 @@ class ServerSpec(StrictInputModel):
 
     name: str | None = None  # override; else taken from serverInfo.name
     transport: Transport = "stdio"
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_key_safe(cls, value: str | None) -> str | None:
+        return value if value is None else _no_key_delimiter("server name", value)
     # stdio
     command: str | None = None
     args: list[str] = Field(default_factory=list)
@@ -48,6 +63,11 @@ class ServersConfig(StrictInputModel):
 class ToolRecord(BaseModel):
     name: str
     description: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_is_key_safe(cls, value: str) -> str:
+        return _no_key_delimiter("tool name", value)
     input_schema: dict | None = None
     # MCP tool annotations (ADR-0006): the server's self-claims about its own
     # behavior. Crawlable, but unverified by anyone — they surface with
@@ -68,6 +88,11 @@ class ResourceRecord(BaseModel):
 class CrawlResult(BaseModel):
     server_name: str
     server_version: str | None = None
+
+    @field_validator("server_name")
+    @classmethod
+    def _server_name_is_key_safe(cls, value: str) -> str:
+        return _no_key_delimiter("server name", value)
     transport: Transport = "stdio"
     endpoint: str | None = None  # command line or url, for provenance
     tools: list[ToolRecord] = Field(default_factory=list)

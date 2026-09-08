@@ -49,7 +49,12 @@ async def test_crawl_then_load_creates_edges(graph, stdio_spec):
 
 @pytest.fixture
 def http_url():
-    port = 8077
+    # Pick an ephemeral free port instead of a hardcoded one: a busy CI
+    # runner with 8077 taken made this fixture flaky. The tiny window
+    # between closing the probe socket and the server binding is accepted.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
     proc = subprocess.Popen([sys.executable, FIXTURE, "http", str(port)])
     deadline = time.time() + 25
     try:
@@ -181,3 +186,38 @@ async def test_list_all_resources_drains_paginated_results():
         "file:///a", "file:///b", "file:///c",
     ]
     assert session.resource_calls == [None, "1"]
+
+class _RunawayCursorSession:
+    """Server that returns a fresh continuation cursor on every page."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+        self.calls += 1
+        return _FakePage([_FakeTool(f"t{self.calls}")], str(self.calls), "tools")
+
+    async def list_resources(self, cursor: str | None = None) -> _FakePage:
+        self.calls += 1
+        return _FakePage([_FakeResource(f"file:///{self.calls}")], str(self.calls), "resources")
+
+
+async def test_list_all_tools_refuses_runaway_cursor(monkeypatch):
+    """A server that never exhausts its cursor must fail, not loop forever."""
+    from toolgraph.crawler import client
+
+    monkeypatch.setattr(client, "MAX_LIST_PAGES", 5)
+    session = _RunawayCursorSession()
+    with pytest.raises(client.PaginationLimitError, match="continuation cursor"):
+        await client._list_all_tools(session)
+    assert session.calls == 5
+
+
+async def test_list_all_resources_refuses_runaway_cursor(monkeypatch):
+    from toolgraph.crawler import client
+
+    monkeypatch.setattr(client, "MAX_LIST_PAGES", 5)
+    session = _RunawayCursorSession()
+    with pytest.raises(client.PaginationLimitError, match="continuation cursor"):
+        await client._list_all_resources(session)
+    assert session.calls == 5

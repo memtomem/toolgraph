@@ -38,3 +38,64 @@ def test_input_schema_roundtrips_as_json(graph):
     with driver.session() as s:
         rec = s.run("MATCH (t:Tool {name:'read_file'}) RETURN t.input_schema AS s").single()
     assert json.loads(rec["s"]) == {"type": "object"}
+
+
+def test_init_schema_refuses_mismatched_backend_schema_version(graph):
+    import pytest
+
+    from toolgraph.graph import driver, schema
+    from toolgraph.graph.driver import BackendConfigurationError
+
+    schema.init_schema()  # the graph fixture wiped GraphMeta; recreate it
+    with driver.session() as s:
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 99"
+        )
+    with pytest.raises(BackendConfigurationError, match="backend schema version 99"):
+        schema.init_schema()
+    # Restore so the fixture teardown and later assertions stay clean.
+    with driver.session() as s:
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = $v",
+            v=schema.BACKEND_SCHEMA_VERSION,
+        )
+    schema.init_schema()
+
+
+def test_reset_refuses_mismatched_backend_schema_version(graph):
+    from typer.testing import CliRunner
+
+    from toolgraph import cli
+    from toolgraph.graph import driver, schema
+
+    schema.init_schema()
+    with driver.session() as s:
+        s.run("CREATE (:Agent {id:'survivor'})")
+        s.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 99")
+
+    result = CliRunner().invoke(cli.app, ["reset", "--yes"])
+
+    assert result.exit_code != 0
+    # The gate must fire BEFORE anything is deleted.
+    with driver.session() as s:
+        assert s.run("MATCH (a:Agent) RETURN count(a) AS c").single()["c"] == 1
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = $v",
+            v=schema.BACKEND_SCHEMA_VERSION,
+        )
+
+
+def test_tool_key_components_must_not_contain_delimiter():
+    import pytest
+
+    from toolgraph.graph import schema
+    from toolgraph.models import CrawlResult, ToolRecord
+
+    with pytest.raises(ValueError, match="delimiter"):
+        schema.tool_key("a::b", "c")
+    with pytest.raises(ValueError, match="delimiter"):
+        schema.tool_key("a", "b::c")
+    with pytest.raises(ValueError, match="delimiter"):
+        ToolRecord(name="b::c")
+    with pytest.raises(ValueError, match="delimiter"):
+        CrawlResult(server_name="a::b")
