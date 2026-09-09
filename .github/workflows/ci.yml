@@ -84,6 +84,20 @@ jobs:
         run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
       - run: uv pip install --python .minimum-venv "${{ env.WHEEL }}[ladybug]" "mcp==2.1.1"
       - run: uv run --python .minimum-venv --no-project toolgraph --version
+      # `--version` alone proves the package imports, not that the declared
+      # floor speaks the protocol. The steps below spawn the bundled MCP server
+      # over stdio and drive it, so the server, client-session, transport and
+      # pagination APIs are all exercised at 2.1.1 rather than at whatever the
+      # lockfile resolves for every other job.
+      - run: uv run --python .minimum-venv --no-project toolgraph example init smoke
+      - run: uv run --python ../.minimum-venv --no-project toolgraph init
+        working-directory: smoke
+      - run: uv run --python ../.minimum-venv --no-project toolgraph crawl --servers servers.yaml
+        working-directory: smoke
+      - run: uv run --python ../.minimum-venv --no-project toolgraph ingest-manifest --governance governance.yaml --strict-drift
+        working-directory: smoke
+      - run: uv run --python ../.minimum-venv --no-project toolgraph eligible-tools vibe-coder "policy-gateway::read_note" "policy-gateway::publish_note"
+        working-directory: smoke
 
   audit-runtime:
     runs-on: ubuntu-latest

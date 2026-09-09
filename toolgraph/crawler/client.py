@@ -22,9 +22,12 @@ class PaginationLimitError(RuntimeError):
 def _page(cursor: str | None):
     """Pagination params for a list call, or None for the first page.
 
-    mcp 2.x replaced the ``cursor=`` keyword with a params object. Passing
-    ``None`` on the first page matters: the SDK treats "no params" and "params
-    with a null cursor" differently when deciding a listing is complete.
+    mcp 2.x replaced the ``cursor=`` keyword with a params object. The SDK
+    treats "no params" and "params with a null cursor" as equivalent when
+    deciding a listing is complete, so returning None here is a matter of
+    sending the smaller request, not of correctness. The distinction that DOES
+    decide the loop is null versus ``""`` in the RESPONSE cursor, which the
+    caller below handles.
     """
     if cursor is None:
         return None

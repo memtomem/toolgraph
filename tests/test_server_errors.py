@@ -15,6 +15,7 @@ from neo4j.exceptions import (
 )
 import pytest
 
+from toolgraph.errors import ContractError
 from toolgraph.graph import driver
 from toolgraph.graph.driver import (
     BackendConfigurationError,
@@ -400,8 +401,9 @@ def test_read_only_tool_rejects_conflicting_annotations():
 
 
 async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
+    """A ContractError says what the caller passed, so it is worth forwarding."""
     def invalid(_fetch):
-        raise ValueError("unknown profile 'production'")
+        raise ContractError("unknown profile 'production'")
 
     monkeypatch.setattr(app, "_with_generation", invalid)
     result = await _wire_call(
@@ -412,6 +414,41 @@ async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
     assert result.is_error is True
     assert result.structured_content is None
     assert "unknown profile" in result.content[0].text
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        PermissionError(13, "Permission denied", "/srv/private/customer-x/db.lbug"),
+        RuntimeError("MATCH (t:Tool) RETURN t.internal_note AS SENTINEL_LEAK"),
+        RuntimeError("auth=('alice', 'SENTINEL_LEAK')"),
+        RuntimeError("credential='SENTINEL_LEAK'"),
+        RuntimeError("password='harmless SENTINEL_LEAK'"),
+    ],
+    ids=["fs-path", "cypher", "auth-tuple", "credential-label", "spaced-password"],
+)
+async def test_unexpected_exception_text_never_reaches_the_caller(monkeypatch, exc):
+    """Everything that is not a ContractError keeps mcp 2.x's mask.
+
+    `redact_text` models URLs and a few credential labels; it does not model
+    filesystem paths, query bodies, an `auth=(user, secret)` tuple, the label
+    `credential`, or a quoted secret containing a space. Forwarding arbitrary
+    exception text after scrubbing therefore leaks, which is why only errors
+    this repo raises on purpose are forwarded.
+    """
+    def boom(_fetch):
+        raise exc
+
+    monkeypatch.setattr(app, "_with_generation", boom)
+    result = await _wire_call(
+        "eligible_tools", {"agent": "agent", "candidates": []}
+    )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "SENTINEL_LEAK" not in text
+    assert "/srv/private" not in text
+    assert "internal_note" not in text
 
 
 async def test_success_wire_shape_is_unchanged(monkeypatch):

@@ -21,6 +21,7 @@ consumer may never override a hard reject (NOT_GRANTED, violation, drifted).
 
 from __future__ import annotations
 
+from toolgraph.errors import ContractError
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
 
@@ -164,7 +165,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     ``risk_score`` (see ``_risk_score`` for the fixed table).
     """
     if len(candidates) > MAX_CANDIDATES:
-        raise ValueError(
+        raise ContractError(
             f"{len(candidates)} candidates exceed the {MAX_CANDIDATES} limit"
         )
     if not agent_exists(agent):
@@ -274,7 +275,7 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
     graph evaluation twice inside the generation-retry bracket.
     """
     if profile not in PROFILES:
-        raise ValueError(
+        raise ContractError(
             f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
         )
     agent = ranked["agent"]
@@ -336,7 +337,7 @@ def eligible_tools(
     ``eligible`` but may never resurrect a rejected row.
     """
     if profile not in PROFILES:
-        raise ValueError(
+        raise ContractError(
             f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
         )
     return filter_features(rank_features(agent, candidates), profile)
@@ -348,7 +349,7 @@ def selection_explain(
     """Compact human-readable reasons for one (agent, tool) — a view over the
     same facts ``rank_features`` returns, for operators and end users."""
     if profile not in PROFILES:
-        raise ValueError(
+        raise ContractError(
             f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
         )
     ranked = rank_features(agent, [tool])

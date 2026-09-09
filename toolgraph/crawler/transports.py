@@ -1,8 +1,9 @@
 """Open an MCP ClientSession over the right transport for a ServerSpec.
 
-Normalizes the transport differences the SDK exposes: stdio yields a 2-tuple
-``(read, write)`` while streamable-http yields a 3-tuple
-``(read, write, get_session_id)``. SSE is supported only as a deprecated fallback.
+Normalizes the transport differences the SDK exposes. Under mcp 2.x every
+transport yields the same 2-tuple ``(read, write)``; the session-id getter
+streamable-http used to return as a third element is gone. SSE is supported
+only as a deprecated fallback.
 
 Uses the preferred ``streamable_http_client``; since it takes headers via a
 custom httpx client rather than a ``headers=`` kwarg, we build one with the

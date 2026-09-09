@@ -15,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from toolgraph.errors import ContractError
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
 from toolgraph.redaction import redact_text
@@ -88,18 +89,21 @@ class _ToolgraphMCP(MCPServer):
         except ToolError as exc:
             if not is_backend_unavailable(exc):
                 # The seam types every outage it covers, so reaching here means
-                # either a contract error or a driver exception that never
-                # passed the seam.
+                # either a contract error or an exception that never passed the
+                # seam.
                 #
-                # mcp 2.x masks an unexpected exception: a ValueError raised
-                # inside a tool reaches here wrapped as "Error executing tool
-                # <name>" with the real message only on __cause__. That default
-                # is right for leaks and wrong for contract errors — "unknown
-                # profile 'production'" is the answer the caller needs. So the
-                # cause's message is what goes on the wire, scrubbed first
-                # because driver text can carry a connection URI. Raising
-                # ToolError is also what makes the SDK forward it at all.
-                raise ToolError(redact_text(exc.__cause__ or exc)) from exc
+                # mcp 2.x masks unexpected exception text, and that default is
+                # kept. Only ContractError is forwarded: its message is built
+                # from caller-supplied values and fixed constants, so "unknown
+                # profile 'production'" reaches the caller who can act on it.
+                # Everything else re-raises untouched, which keeps the mask and
+                # preserves the SDK's crash-path logging for an
+                # UnexpectedToolError. redact_text models URLs and a few
+                # credential labels, not arbitrary confidential text, so it is
+                # a second line of defence here, not the reason this is safe.
+                if isinstance(exc.__cause__, ContractError):
+                    raise ToolError(redact_text(exc.__cause__)) from exc
+                raise
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
                 "retryable": await self._is_retryable(name),
