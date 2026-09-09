@@ -372,7 +372,7 @@ def test_explicit_tool_name_keeps_retry_safety():
 
 
 def test_duplicate_name_cannot_confer_retry_safety_on_a_write_tool():
-    """FastMCP keeps the FIRST tool on a duplicate name.
+    """MCPServer keeps the FIRST tool on a duplicate name.
 
     A later read-only registration under the same name is discarded, so the
     retained write tool must not inherit the discarded tool's retry claim.
