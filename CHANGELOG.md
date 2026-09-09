@@ -2,7 +2,10 @@
 
 All notable changes to Toolgraph are documented here.
 
-## Unreleased
+## 0.1.0 - 2026-09-10
+
+Second alpha. Upgrading from `0.0.1` needs the MCP SDK 2.x and, for anything
+caching MCP responses, one new field — see the two breaking notes below.
 
 ### Changed
 
