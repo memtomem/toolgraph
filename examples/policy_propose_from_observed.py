@@ -85,6 +85,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import re
 import sys
@@ -158,14 +159,35 @@ class ProvenanceError(ValueError):
     """The window cannot be shown to describe the manifest it was handed."""
 
 
+def _instant(value: str, where: str) -> datetime:
+    """Parse an ISO-8601 timestamp into a comparable instant.
+
+    A window bound is a moment, so it is parsed rather than compared as text.
+    A naive timestamp is read as UTC: refusing it would reject the commonest
+    honest export, and assuming a local zone would make the same file mean
+    different things on different machines.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ProvenanceError(
+            f"{where} must be an ISO-8601 timestamp, got {value!r}"
+        ) from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
 def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
     """Bind an observation window to the governance and graph it was recorded against.
 
-    The digest is the load-bearing field. `governance_digest()` is a stable
-    semantic hash of the validated model, so an equal digest means the gateway
-    was enforcing the very manifest being proposed against; an unequal one means
-    the window predates an edit and every NOT_GRANTED in it may already have
-    been answered, retired, or overruled by a DENY.
+    What this establishes, and what it does not. `governance_digest()` is a
+    stable semantic hash of the validated model, so an unequal digest proves the
+    window belongs to some other governance and every NOT_GRANTED in it may
+    already have been answered, retired, or overruled by a DENY. An equal digest
+    proves only that the exporter declared this manifest's digest. It does not
+    show the gateway enforced it, that these rows came from that gateway, or
+    that the stated generation and window ever happened -- the generation and
+    bounds are validated for shape and compared against nothing. A digest can
+    also stay equal across crawls that changed which tools exist.
 
     The profile is not decoration either. The same rejection means different
     things under `review` (UNMAPPED passes) and `strict` (it does not), so a
@@ -195,17 +217,25 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
             f"graph_generation must be a non-negative integer, got {generation!r}"
         )
     profile = envelope["profile"]
-    if profile not in known_profiles:
+    # Membership alone raises TypeError on an unhashable JSON value such as a
+    # list, which escapes the clean refusal this function promises.
+    if not isinstance(profile, str) or profile not in known_profiles:
         raise ProvenanceError(
             f"unknown selector profile {profile!r} - expected one of {sorted(known_profiles)}"
         )
+    bounds = {}
     for bound in ("window_start", "window_end"):
         value = envelope[bound]
         if not isinstance(value, str) or not value.strip():
             raise ProvenanceError(f"{bound} must be a non-empty string, got {value!r}")
         if UNSAFE_IN_NAME.search(value):
             raise ProvenanceError(f"{bound} contains a control character")
-    if envelope["window_start"] > envelope["window_end"]:
+        bounds[bound] = _instant(value, bound)
+    # Compare instants, not strings. Lexical ordering accepts a reversed window
+    # written across two offsets and rejects a correctly ordered one, because
+    # "2026-08-01T01:00:00+02:00" sorts after "2026-08-01T00:00:00Z" while
+    # naming an earlier moment.
+    if bounds["window_start"] > bounds["window_end"]:
         raise ProvenanceError(
             f'window_start ({envelope["window_start"]}) is after '
             f'window_end ({envelope["window_end"]})'
@@ -522,14 +552,20 @@ def render(proposal: dict, window_label: str, min_would_block: int,
         for line in textwrap.wrap(UNVERIFIED_PROVENANCE, width=76):
             a("> " + line)
     else:
-        a("> BOUND PROVENANCE — this window was recorded against the governance")
-        a("> supplied here; the digests match, so its rejections describe this")
-        a("> manifest rather than an older one.")
+        a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
+        a("> the digest of the manifest supplied, so the window is not a replay")
+        a("> against some other governance. That is all it establishes. The")
+        a("> graph state, and whether these rows were really observed in the")
+        a("> stated window, are asserted by the exporter and unverified here:")
+        a("> the generation and window below are what the file claims, not what")
+        a("> was checked. A digest can also stay equal across crawls that")
+        a("> changed which tools exist.")
         a(">")
-        a(f'> governance_digest: `{envelope["governance_digest"]}`')
+        a(f'> governance_digest: `{envelope["governance_digest"]}` (verified)')
         a(f'> graph_generation: {envelope["graph_generation"]} · '
-          f'profile: `{envelope["profile"]}`')
-        a(f'> window: {envelope["window_start"]} .. {envelope["window_end"]}')
+          f'profile: `{envelope["profile"]}` (declared)')
+        a(f'> window: {envelope["window_start"]} .. {envelope["window_end"]} '
+          "(declared)")
         if envelope["profile"] != "strict":
             a(">")
             a(f'> Recorded under the `{envelope["profile"]}` profile, which rejects '

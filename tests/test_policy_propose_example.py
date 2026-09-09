@@ -348,6 +348,54 @@ def test_a_backwards_window_is_refused(example):
         example.verify_envelope(envelope, ENVELOPE["governance_digest"], PROFILES)
 
 
+def _win(start, end):
+    return {**ENVELOPE, "window_start": start, "window_end": end}
+
+
+def test_window_bounds_are_compared_as_instants_not_strings(example):
+    """Lexical ordering gets both directions wrong once offsets are involved.
+
+    "2026-08-01T01:00:00+02:00" sorts AFTER "2026-08-01T00:00:00Z" while naming
+    an earlier moment, so a string compare rejected a correct window and
+    accepted a reversed one.
+    """
+    ok = _win("2026-08-01T01:00:00+02:00", "2026-08-01T00:00:00Z")
+    assert example.verify_envelope(
+        ok, ENVELOPE["governance_digest"], PROFILES
+    )["window_start"] == "2026-08-01T01:00:00+02:00"
+
+    reversed_window = _win("2026-08-01T00:00:00-02:00", "2026-08-01T01:00:00Z")
+    with pytest.raises(example.ProvenanceError, match="is after"):
+        example.verify_envelope(
+            reversed_window, ENVELOPE["governance_digest"], PROFILES
+        )
+
+
+def test_a_window_bound_that_is_not_a_timestamp_is_refused(example):
+    with pytest.raises(example.ProvenanceError, match="ISO-8601"):
+        example.verify_envelope(
+            _win("last tuesday", "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+def test_a_naive_timestamp_is_read_as_utc(example):
+    bound = example.verify_envelope(
+        _win("2026-08-01T00:00:00", "2026-08-01T00:00:00Z"),
+        ENVELOPE["governance_digest"], PROFILES,
+    )
+    assert bound["window_start"] == "2026-08-01T00:00:00"
+
+
+@pytest.mark.parametrize("bad", [[], {}, 3], ids=["list", "dict", "int"])
+def test_a_non_string_profile_is_refused_cleanly(example, bad):
+    """Bare membership raises TypeError on an unhashable value."""
+    with pytest.raises(example.ProvenanceError, match="unknown selector profile"):
+        example.verify_envelope(
+            {**ENVELOPE, "profile": bad}, ENVELOPE["governance_digest"], PROFILES
+        )
+
+
 def test_the_envelope_is_split_off_and_rows_keep_their_line_numbers(example, tmp_path):
     """An envelope must not be parsed as an observation, nor shift error lines."""
     good = {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file",
@@ -389,12 +437,15 @@ def test_a_bound_report_states_what_it_is_bound_to(example):
         GOV, [_row("bot", "alpha::write_file", ["NOT_GRANTED"])], 3
     )
     bound = example.render(proposal, "2026-08", 3, ENVELOPE)
-    assert "BOUND PROVENANCE" in bound
+    assert "DECLARED DIGEST MATCHES" in bound
     assert "UNVERIFIED PROVENANCE" not in bound
     assert ENVELOPE["governance_digest"] in bound
     # A non-strict window must say so: absence from these rows is not permission.
     assert "review" in bound
+    # The report must not claim more than the digest comparison establishes.
+    assert "(declared)" in bound
+    assert "unverified" in bound
 
     unbound = example.render(proposal, "2026-08", 3, None)
     assert "UNVERIFIED PROVENANCE" in unbound
-    assert "BOUND PROVENANCE" not in unbound
+    assert "DECLARED DIGEST MATCHES" not in unbound
