@@ -85,7 +85,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 import re
 import sys
@@ -159,31 +159,51 @@ class ProvenanceError(ValueError):
     """The window cannot be shown to describe the manifest it was handed."""
 
 
-def _instant(value: str, where: str) -> datetime:
-    """Parse an ISO-8601 timestamp into a comparable instant.
+# A window bound is a moment, and this file is evidence for a governance
+# change, so the grammar is stated rather than delegated. `fromisoformat` is
+# more permissive than ISO-8601: it accepts a bare date, any single character
+# as the date/time separator, and an out-of-range offset like "+00:60" which it
+# silently repairs to "+01:00". Each of those would let an ambiguous or
+# malformed bound through looking exact.
+_TIMESTAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?"
+    r"(?:Z|[+-](?P<oh>\d{2}):(?P<om>\d{2}))$"
+)
 
-    A window bound is a moment, so it is parsed rather than compared as text.
-    A naive timestamp is read as UTC: refusing it would reject the commonest
-    honest export, and assuming a local zone would make the same file mean
-    different things on different machines.
+
+def _instant(value: str, where: str) -> datetime:
+    """Parse a fully qualified ISO-8601 timestamp into a comparable instant.
+
+    An explicit offset is required. Reading a naive bound as UTC would invent a
+    zone the exporter never stated, and reading it as local time would make the
+    same file mean different things on different machines. Neither is a good
+    foundation for widening an agent's authority, so it is refused instead.
     """
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
+    match = _TIMESTAMP.match(value)
+    if not match:
         raise ProvenanceError(
-            f"{where} must be an ISO-8601 timestamp, got {value!r}"
-        ) from exc
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            f"{where} must be an ISO-8601 timestamp with an explicit offset, "
+            f'e.g. "2026-08-01T00:00:00Z" or "2026-08-01T02:00:00+02:00", '
+            f"got {value!r}"
+        )
+    hours, minutes = match.group("oh"), match.group("om")
+    if hours is not None and (int(hours) > 23 or int(minutes) > 59):
+        raise ProvenanceError(
+            f"{where} has an out-of-range UTC offset {value!r}; "
+            "fromisoformat would silently repair it"
+        )
+    return datetime.fromisoformat(value)
 
 
 def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
     """Bind an observation window to the governance and graph it was recorded against.
 
     What this establishes, and what it does not. `governance_digest()` is a
-    stable semantic hash of the validated model, so an unequal digest proves the
-    window belongs to some other governance and every NOT_GRANTED in it may
-    already have been answered, retired, or overruled by a DENY. An equal digest
-    proves only that the exporter declared this manifest's digest. It does not
+    stable semantic hash of the validated model. An unequal digest proves the
+    export DECLARED a different manifest, which is reason enough to refuse: its
+    NOT_GRANTED rows may already have been answered, retired, or overruled by a
+    DENY. An equal digest proves only that the exporter declared this
+    manifest's digest -- copying it onto rows from any window passes. It does not
     show the gateway enforced it, that these rows came from that gateway, or
     that the stated generation and window ever happened -- the generation and
     bounds are validated for shape and compared against nothing. A digest can
@@ -553,13 +573,13 @@ def render(proposal: dict, window_label: str, min_would_block: int,
             a("> " + line)
     else:
         a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
-        a("> the digest of the manifest supplied, so the window is not a replay")
-        a("> against some other governance. That is all it establishes. The")
-        a("> graph state, and whether these rows were really observed in the")
-        a("> stated window, are asserted by the exporter and unverified here:")
-        a("> the generation and window below are what the file claims, not what")
-        a("> was checked. A digest can also stay equal across crawls that")
-        a("> changed which tools exist.")
+        a("> the digest of the manifest supplied. That is the whole of it.")
+        a(">")
+        a("> It does NOT show these rows came from a gateway enforcing that")
+        a("> manifest, nor that the stated generation or window ever happened:")
+        a("> copying today's digest onto old rows passes this check too. The")
+        a("> generation and window below are what the file claims. A digest can")
+        a("> also stay equal across crawls that changed which tools exist.")
         a(">")
         a(f'> governance_digest: `{envelope["governance_digest"]}` (verified)')
         a(f'> graph_generation: {envelope["graph_generation"]} · '

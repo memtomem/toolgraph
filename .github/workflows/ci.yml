@@ -98,6 +98,11 @@ jobs:
         working-directory: smoke
       - run: uv run --python ../.minimum-venv --no-project toolgraph eligible-tools vibe-coder "policy-gateway::read_note" "policy-gateway::publish_note"
         working-directory: smoke
+      # The crawl above is stdio discovery and the query above is a local CLI
+      # call, so neither reaches what the 2.x migration changed most: the
+      # server's call_tool override and its error envelope, a continuation
+      # cursor, and the streamable-http transport.
+      - run: uv run --python .minimum-venv --no-project python scripts/verify_mcp_floor.py
 
   audit-runtime:
     runs-on: ubuntu-latest

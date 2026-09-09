@@ -343,7 +343,7 @@ def test_an_incomplete_envelope_binds_nothing(example):
 
 
 def test_a_backwards_window_is_refused(example):
-    envelope = {**ENVELOPE, "window_start": "2026-09-01", "window_end": "2026-08-01"}
+    envelope = _win("2026-09-01T00:00:00Z", "2026-08-01T00:00:00Z")
     with pytest.raises(example.ProvenanceError, match="is after"):
         example.verify_envelope(envelope, ENVELOPE["governance_digest"], PROFILES)
 
@@ -379,12 +379,38 @@ def test_a_window_bound_that_is_not_a_timestamp_is_refused(example):
         )
 
 
-def test_a_naive_timestamp_is_read_as_utc(example):
-    bound = example.verify_envelope(
-        _win("2026-08-01T00:00:00", "2026-08-01T00:00:00Z"),
-        ENVELOPE["governance_digest"], PROFILES,
-    )
-    assert bound["window_start"] == "2026-08-01T00:00:00"
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-09-09",
+        "2026-09-09X00:00:00+00:00",
+        "2026-08-01T00:00:00",
+        "2026-08-01T00:00:00+00:60",
+    ],
+    ids=["date-only", "wrong-separator", "no-offset", "out-of-range-offset"],
+)
+def test_ambiguous_or_repaired_timestamps_are_refused(example, bound):
+    """`fromisoformat` is looser than ISO-8601 and repairs rather than refuses.
+
+    It takes a bare date, any single character as the separator, and turns the
+    invalid offset "+00:60" into "+01:00" without a word. Each would let a
+    malformed bound through looking exact, on a file that is evidence for
+    widening an agent's authority.
+    """
+    with pytest.raises(example.ProvenanceError, match="offset|ISO-8601"):
+        example.verify_envelope(
+            _win(bound, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+def test_fully_qualified_timestamps_are_accepted(example):
+    for start in ("2026-08-01T00:00:00Z", "2026-08-01T00:00:00.123456Z",
+                  "2026-08-01T02:00:00+02:00"):
+        assert example.verify_envelope(
+            _win(start, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )["window_start"] == start
 
 
 @pytest.mark.parametrize("bad", [[], {}, 3], ids=["list", "dict", "int"])
@@ -444,7 +470,7 @@ def test_a_bound_report_states_what_it_is_bound_to(example):
     assert "review" in bound
     # The report must not claim more than the digest comparison establishes.
     assert "(declared)" in bound
-    assert "unverified" in bound
+    assert "does NOT show" in bound
 
     unbound = example.render(proposal, "2026-08", 3, None)
     assert "UNVERIFIED PROVENANCE" in unbound
