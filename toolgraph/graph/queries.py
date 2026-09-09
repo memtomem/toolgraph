@@ -68,7 +68,13 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     labelled the result with a state it was never read at, and the MCP tools
     tell callers to cache per generation -- so a verdict from before a
     permission change could be cached under the very generation that changed
-    it. A null generation cannot be used as a cache key, which is the point.
+    it.
+
+    Null does not enforce anything by itself: ``None`` is a usable dict key and
+    two unverified responses compare equal on it. What changes is that the
+    response no longer ASSERTS a state it never had, and says so in a field a
+    consumer can act on. The obligation to skip the cache is the consumer's;
+    ADR-0004 states it.
     """
     for attempt in range(_GENERATION_RETRIES):
         before = graph_generation()

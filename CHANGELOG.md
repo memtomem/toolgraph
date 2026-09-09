@@ -22,10 +22,13 @@ All notable changes to Toolgraph are documented here.
   `graph_state_verified: false` instead of the generation read afterwards.
   Labelling such a result with a generation it was never read at let a verdict
   from before a permission change be cached under the generation that changed
-  it, while the tool documentation tells callers to cache per generation. A
-  null generation cannot serve as a cache key. Successful reads gain
-  `graph_state_verified: true`, so the absence of a guarantee is never
-  inferred from a missing field.
+  it, while the tool documentation tells callers to cache per generation.
+  Successful reads gain `graph_state_verified: true`, so the absence of a
+  guarantee is never inferred from a missing field. Null is not self-enforcing
+  — `None` is a usable cache key — so the obligation to skip the cache and to
+  attribute nothing to a graph state is the consumer's; ADR-0004 and the README
+  state it, and a consumer that turns eligibility into an authorization
+  decision should reject or retry such a response.
 
 ## 0.0.1 - 2026-09-09
 
