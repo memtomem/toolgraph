@@ -85,7 +85,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import datetime
 import json
 import re
 import sys
@@ -159,31 +159,84 @@ class ProvenanceError(ValueError):
     """The window cannot be shown to describe the manifest it was handed."""
 
 
-def _instant(value: str, where: str) -> datetime:
-    """Parse an ISO-8601 timestamp into a comparable instant.
+# A window bound is a moment, and this file is evidence for widening an agent's
+# authority, so the accepted grammar is stated here rather than delegated.
+#
+# The subset is deliberately narrow: `YYYY-MM-DDThh:mm:ss`, an optional
+# fractional part of one to six ASCII digits, and either `Z` or `+hh:mm` /
+# `-hh:mm`. Uppercase `T` and `Z` only, colonised offsets only. That is not all
+# of ISO-8601; it is the shape an exporter can emit unambiguously.
+#
+# `fromisoformat` alone is both looser and version-dependent. It accepts a bare
+# date, any single character as the separator, and the invalid offset "+00:60",
+# which it silently repairs to "+01:00". Worse, "24:00:00" raises on Python
+# 3.13 and normalises to the next day on 3.14, so the same export would mean
+# two different windows depending on the interpreter. Every clock component is
+# therefore range-checked here, before the parser sees it.
+_TIMESTAMP = re.compile(
+    r"(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"
+    r"T(?P<hh>[0-9]{2}):(?P<mm>[0-9]{2}):(?P<ss>[0-9]{2})"
+    r"(?:\.[0-9]{1,6})?"
+    r"(?:Z|(?P<sign>[+-])(?P<oh>[0-9]{2}):(?P<om>[0-9]{2}))"
+)
 
-    A window bound is a moment, so it is parsed rather than compared as text.
-    A naive timestamp is read as UTC: refusing it would reject the commonest
-    honest export, and assuming a local zone would make the same file mean
-    different things on different machines.
+
+def _instant(value: str, where: str) -> datetime:
+    """Parse a fully qualified timestamp into a comparable instant.
+
+    An explicit offset is required. Reading a naive bound as UTC would invent a
+    zone the exporter never stated, and reading it as local time would make the
+    same file mean different things on different machines. Neither is a good
+    foundation for a governance change, so a missing zone is refused.
+
+    ``-00:00`` is refused too: RFC 3339 gives it the meaning "offset unknown",
+    which is the very thing requiring an offset was meant to exclude. Write
+    ``Z`` for UTC.
     """
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
+    match = _TIMESTAMP.fullmatch(value)
+    if not match:
         raise ProvenanceError(
-            f"{where} must be an ISO-8601 timestamp, got {value!r}"
-        ) from exc
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+            f"{where} must be a timestamp of the form "
+            '"2026-08-01T00:00:00Z" or "2026-08-01T02:00:00+02:00" '
+            f"(seconds required, explicit offset required), got {value!r}"
+        )
+    for part, ceiling in (("hh", 23), ("mm", 59), ("ss", 59)):
+        if int(match.group(part)) > ceiling:
+            raise ProvenanceError(
+                f"{where} has an out-of-range {part} in {value!r}; note that "
+                '"24:00:00" is an error on some Python versions and the next '
+                "day on others, so it is refused rather than interpreted"
+            )
+    if match.group("oh") is not None:
+        if int(match.group("oh")) > 23 or int(match.group("om")) > 59:
+            raise ProvenanceError(
+                f"{where} has an out-of-range UTC offset in {value!r}; "
+                "the parser would silently repair it"
+            )
+        if match.group("sign") == "-" and match.group("oh") == "00" \
+                and match.group("om") == "00":
+            raise ProvenanceError(
+                f'{where} uses "-00:00", which RFC 3339 reads as "offset '
+                f'unknown"; write "Z" if the bound is UTC, got {value!r}'
+            )
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as exc:
+        # Shape and ranges are already checked, so this is a calendar error
+        # such as February 30. It must still leave as a clean refusal: every
+        # other failure in this module does.
+        raise ProvenanceError(f"{where} is not a real date: {value!r} ({exc})") from exc
 
 
 def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
-    """Bind an observation window to the governance and graph it was recorded against.
+    """Compare the governance digest an export declares against the manifest given.
 
     What this establishes, and what it does not. `governance_digest()` is a
-    stable semantic hash of the validated model, so an unequal digest proves the
-    window belongs to some other governance and every NOT_GRANTED in it may
-    already have been answered, retired, or overruled by a DENY. An equal digest
-    proves only that the exporter declared this manifest's digest. It does not
+    stable semantic hash of the validated model. An unequal digest proves the
+    export DECLARED a different manifest, which is reason enough to refuse: its
+    NOT_GRANTED rows may already have been answered, retired, or overruled by a
+    DENY. An equal digest proves only that the exporter declared this
+    manifest's digest -- copying it onto rows from any window passes. It does not
     show the gateway enforced it, that these rows came from that gateway, or
     that the stated generation and window ever happened -- the generation and
     bounds are validated for shape and compared against nothing. A digest can
@@ -206,7 +259,7 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
         )
     if digest != expected_digest:
         raise ProvenanceError(
-            "this window was recorded against a different governance "
+            "this export declares a different governance digest "
             f"({digest[:12]}...) than the manifest supplied ({expected_digest[:12]}...). "
             "Re-export against the current manifest; a stale window's NOT_GRANTED rows "
             "may already be answered, retired, or overruled by a DENY"
@@ -553,13 +606,13 @@ def render(proposal: dict, window_label: str, min_would_block: int,
             a("> " + line)
     else:
         a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
-        a("> the digest of the manifest supplied, so the window is not a replay")
-        a("> against some other governance. That is all it establishes. The")
-        a("> graph state, and whether these rows were really observed in the")
-        a("> stated window, are asserted by the exporter and unverified here:")
-        a("> the generation and window below are what the file claims, not what")
-        a("> was checked. A digest can also stay equal across crawls that")
-        a("> changed which tools exist.")
+        a("> the digest of the manifest supplied. That is the whole of it.")
+        a(">")
+        a("> It does NOT show these rows came from a gateway enforcing that")
+        a("> manifest, nor that the stated generation or window ever happened:")
+        a("> copying today's digest onto old rows passes this check too. The")
+        a("> generation and window below are what the file claims. A digest can")
+        a("> also stay equal across crawls that changed which tools exist.")
         a(">")
         a(f'> governance_digest: `{envelope["governance_digest"]}` (verified)')
         a(f'> graph_generation: {envelope["graph_generation"]} · '
@@ -568,7 +621,7 @@ def render(proposal: dict, window_label: str, min_would_block: int,
           "(declared)")
         if envelope["profile"] != "strict":
             a(">")
-            a(f'> Recorded under the `{envelope["profile"]}` profile, which rejects '
+            a(f'> Declared as the `{envelope["profile"]}` profile, which rejects '
               "fewer")
             a("> reasons than `strict`. A tool absent from these rows was not")
             a("> necessarily allowed under strict.")
@@ -577,7 +630,7 @@ def render(proposal: dict, window_label: str, min_would_block: int,
       f"window: {window_label} · evidence floor: would_block >= {min_would_block}")
     a("")
     if proposal["additions"]:
-        a("## Proposed grant additions (evidence: strict would have blocked real usage)")
+        a("## Proposed grant additions (the export reports blocked calls)")
         a("")
         a("Append these entries to the EXISTING `grants:` list. This is a fragment,")
         a("not a section: ingest is declarative, so pasting it as a second `grants:`")
@@ -773,8 +826,9 @@ def main() -> int:
         epilog=textwrap.fill(UNVERIFIED_PROVENANCE, width=76) + "\n\n"
         + textwrap.fill(
             "An export carrying an envelope line (governance_digest, "
-            "graph_generation, profile, window_start, window_end) is bound to the "
-            "manifest supplied and reported as such; a digest mismatch is refused. "
+            "graph_generation, profile, window_start, window_end) has its digest "
+            "compared against the manifest supplied and the result reported; a "
+            "mismatch is refused. The other fields are recorded, not checked. "
             "Without an envelope this script refuses unless "
             "--unverified-provenance is given.", width=76,
         ),
@@ -835,13 +889,14 @@ def main() -> int:
         # must not read the same as "we checked and it was fine".
         raise SystemExit(
             "this export carries no envelope, so nothing can tell it from a replay "
-            "of a window recorded against an older manifest.\n"
+            "of a window whose rows were recorded against an older manifest.\n"
             "Re-export with an envelope line:\n"
             '  {"envelope": {"governance_digest": "<64 hex>", "graph_generation": 0, '
             '"profile": "strict", "window_start": "...", "window_end": "..."}}\n'
             f"The digest for {args.governance} right now is "
             f"{governance_digest(gov_model)}.\n"
-            "Or pass --unverified-provenance to proceed without that guarantee."
+            "Or pass --unverified-provenance to proceed without even that "
+            "digest comparison."
         )
 
     proposal = propose(gov, observed, args.min_would_block)

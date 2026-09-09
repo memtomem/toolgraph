@@ -343,7 +343,7 @@ def test_an_incomplete_envelope_binds_nothing(example):
 
 
 def test_a_backwards_window_is_refused(example):
-    envelope = {**ENVELOPE, "window_start": "2026-09-01", "window_end": "2026-08-01"}
+    envelope = _win("2026-09-01T00:00:00Z", "2026-08-01T00:00:00Z")
     with pytest.raises(example.ProvenanceError, match="is after"):
         example.verify_envelope(envelope, ENVELOPE["governance_digest"], PROFILES)
 
@@ -372,19 +372,78 @@ def test_window_bounds_are_compared_as_instants_not_strings(example):
 
 
 def test_a_window_bound_that_is_not_a_timestamp_is_refused(example):
-    with pytest.raises(example.ProvenanceError, match="ISO-8601"):
+    with pytest.raises(example.ProvenanceError, match="must be a timestamp"):
         example.verify_envelope(
             _win("last tuesday", "2026-08-31T00:00:00Z"),
             ENVELOPE["governance_digest"], PROFILES,
         )
 
 
-def test_a_naive_timestamp_is_read_as_utc(example):
-    bound = example.verify_envelope(
-        _win("2026-08-01T00:00:00", "2026-08-01T00:00:00Z"),
-        ENVELOPE["governance_digest"], PROFILES,
-    )
-    assert bound["window_start"] == "2026-08-01T00:00:00"
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-09-09",
+        "2026-09-09X00:00:00+00:00",
+        "2026-08-01T00:00:00",
+        "2026-08-01T00:00:00+00:60",
+    ],
+    ids=["date-only", "wrong-separator", "no-offset", "out-of-range-offset"],
+)
+def test_ambiguous_or_repaired_timestamps_are_refused(example, bound):
+    """`fromisoformat` is looser than ISO-8601 and repairs rather than refuses.
+
+    It takes a bare date, any single character as the separator, and turns the
+    invalid offset "+00:60" into "+01:00" without a word. Each would let a
+    malformed bound through looking exact, on a file that is evidence for
+    widening an agent's authority.
+    """
+    with pytest.raises(example.ProvenanceError, match="offset|must be a timestamp"):
+        example.verify_envelope(
+            _win(bound, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-02-30T00:00:00Z",
+        "2026-08-01T24:00:00Z",
+        "2026-08-01T00:60:00Z",
+        "2026-08-01T00:00:60Z",
+        "2026-08-01T00:00:00-00:00",
+        "2026-08-01t00:00:00z",
+        "2026-08-01T00:00:00.1234567Z",
+    ],
+    ids=["impossible-date", "hour-24", "minute-60", "second-60",
+         "minus-zero-offset", "lowercase", "too-many-fractions"],
+)
+def test_every_rejected_bound_leaves_as_a_clean_refusal(example, bound):
+    """Never a traceback: this module answers every bad input the same way.
+
+    Two of these are version traps rather than typos. "24:00:00" raises on
+    Python 3.13 and becomes the next day on 3.14, so the same export would mean
+    two different windows depending on the interpreter. "-00:00" is RFC 3339
+    for "offset unknown", which is what requiring an offset was meant to
+    exclude. Both are refused rather than interpreted.
+
+    February 30 is the one that used to escape: shape and ranges pass, and the
+    calendar error came out of the parser as a bare ValueError.
+    """
+    with pytest.raises(example.ProvenanceError):
+        example.verify_envelope(
+            _win(bound, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+def test_fully_qualified_timestamps_are_accepted(example):
+    for start in ("2026-08-01T00:00:00Z", "2026-08-01T00:00:00.123456Z",
+                  "2026-08-01T02:00:00+02:00"):
+        assert example.verify_envelope(
+            _win(start, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )["window_start"] == start
 
 
 @pytest.mark.parametrize("bad", [[], {}, 3], ids=["list", "dict", "int"])
@@ -444,7 +503,7 @@ def test_a_bound_report_states_what_it_is_bound_to(example):
     assert "review" in bound
     # The report must not claim more than the digest comparison establishes.
     assert "(declared)" in bound
-    assert "unverified" in bound
+    assert "does NOT show" in bound
 
     unbound = example.render(proposal, "2026-08", 3, None)
     assert "UNVERIFIED PROVENANCE" in unbound
