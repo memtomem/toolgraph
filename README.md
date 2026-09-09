@@ -583,7 +583,7 @@ toolgraph/
   crawler/   connect to MCP servers (stdio + streamable-http), enumerate tools/resources
   graph/     Neo4j driver, schema/constraints, idempotent loader, governance/audit queries
   manifest/  parse + ingest authored governance (idempotent)
-  server/    FastMCP server exposing the queries as MCP tools
+  server/    MCP server exposing the queries as MCP tools
   cli.py     crawl / ingest-manifest / check-access / unsafe-tools / blast-radius /
              unmapped-tools / orphan-policies / unbacked-edges / drift /
              destructive-unsafeguarded / annotation-contradictions /

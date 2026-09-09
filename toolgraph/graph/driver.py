@@ -73,7 +73,7 @@ def _translating_backend_errors() -> Iterator[None]:
 def is_backend_unavailable(exc: BaseException) -> bool:
     """Whether *exc* was caused by a backend outage typed at the driver seam.
 
-    FastMCP wraps tool exceptions, so walk the chain. ``__context__`` is
+    MCPServer wraps tool exceptions, so walk the chain. ``__context__`` is
     followed only when Python did not suppress it: a deliberate
     ``raise ... from None`` while handling an outage is the author saying the
     outer error is the real one, and must not be reclassified as retryable.

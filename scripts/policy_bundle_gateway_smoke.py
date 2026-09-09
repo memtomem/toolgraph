@@ -352,7 +352,7 @@ async def strict_live_reload(
                 if "demo__read_note" not in names or "demo__publish_note" in names:
                     raise SmokeError("strict startup advertised the wrong policy-gated tools")
                 first = await session.call_tool("demo__read_note", {"note_id": "first"})
-                if first.isError:
+                if first.is_error:
                     raise SmokeError("eligible strict call failed")
                 if spool_count(spool, "read_note") != 1:
                     raise SmokeError("eligible call did not reach the upstream exactly once")
@@ -377,7 +377,7 @@ async def strict_live_reload(
                 ):
                     raise SmokeError("gateway explain did not expose the fresh denial")
                 denied = await session.call_tool("demo__read_note", {"note_id": "first"})
-                if not denied.isError:
+                if not denied.is_error:
                     raise SmokeError("fresh strict denial did not beat the warm cache")
                 if spool_count(spool, "read_note") != 1:
                     raise SmokeError("strict denial reached the upstream")
@@ -408,12 +408,12 @@ async def assert_list(
                     raise SmokeError("review call requires an invocation sentinel")
                 before = spool_count(spool, "read_note")
                 called = await session.call_tool("demo__read_note", {"note_id": "review" if expected_would_block else "disabled"})
-                if called.isError:
+                if called.is_error:
                     raise SmokeError("review mode blocked a would-block call")
                 if spool_count(spool, "read_note") != before + 1:
                     raise SmokeError("review call did not reach the upstream exactly once")
                 health = await session.call_tool("stm_proxy_health", {})
-                if health.isError:
+                if health.is_error:
                     raise SmokeError("review health surface was not callable")
                 if expected_would_block is None:
                     return 0

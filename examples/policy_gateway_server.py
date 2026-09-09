@@ -13,7 +13,7 @@ import json
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 
@@ -28,14 +28,14 @@ def _record(tool: str) -> None:
     os.chmod(path, 0o600)
 
 
-def build() -> FastMCP:
-    server = FastMCP("policy-gateway")
+def build() -> MCPServer:
+    server = MCPServer("policy-gateway")
     schema_version = os.environ.get("POLICY_GATEWAY_SCHEMA_VERSION", "1")
 
     if schema_version == "2":
 
         @server.tool(
-            annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True)
+            annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True)
         )
         def read_note(note_id: str, format: str = "text") -> str:  # noqa: A002
             """Read a deterministic demo note using the v2 contract."""
@@ -45,14 +45,14 @@ def build() -> FastMCP:
     else:
 
         @server.tool(
-            annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True)
+            annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True)
         )
         def read_note(note_id: str) -> str:
             """Read a deterministic demo note."""
             _record("read_note")
             return f"note:{note_id}"
 
-    @server.tool(annotations=ToolAnnotations(destructiveHint=True))
+    @server.tool(annotations=ToolAnnotations(destructive_hint=True))
     def publish_note(note_id: str, content: str) -> str:
         """Publish a demo note to the governed draft area."""
         _record("publish_note")

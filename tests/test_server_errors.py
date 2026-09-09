@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from mcp.types import CallToolRequest, CallToolRequestParams, CallToolResult
+from mcp.types import CallToolRequestParams, CallToolResult
 from neo4j.exceptions import (
     ClientError,
     ConnectionAcquisitionTimeoutError,
@@ -15,6 +15,7 @@ from neo4j.exceptions import (
 )
 import pytest
 
+from toolgraph.errors import ContractError
 from toolgraph.graph import driver
 from toolgraph.graph.driver import (
     BackendConfigurationError,
@@ -49,15 +50,22 @@ _TOOLS = [
 
 
 async def _wire_call(name: str, arguments: dict) -> CallToolResult:
-    handler = app.mcp._mcp_server.request_handlers[CallToolRequest]
-    response = await handler(
-        CallToolRequest(
-            method="tools/call",
-            params=CallToolRequestParams(name=name, arguments=arguments),
-        )
+    """Drive the tool through the same handler the transport would call.
+
+    Going through the handler rather than ``call_tool`` is the point: the
+    ToolError-to-``is_error`` conversion lives in the handler, so a test that
+    called the tool directly would never see the envelope this file exists to
+    pin. In mcp 2.x handlers are keyed by method name and take the request
+    context first; toolgraph's ``call_tool`` ignores that context, so a
+    placeholder is enough to reach the envelope.
+    """
+    entry = app.mcp._lowlevel_server.get_request_handler("tools/call")
+    assert entry is not None, "the server registered no tools/call handler"
+    result = await entry.handler(
+        None, CallToolRequestParams(name=name, arguments=arguments)
     )
-    assert isinstance(response.root, CallToolResult)
-    return response.root
+    assert isinstance(result, CallToolResult)
+    return result
 
 
 def test_tool_fixtures_cover_every_registered_tool():
@@ -211,8 +219,8 @@ async def test_every_mcp_tool_returns_typed_backend_unavailable(
     monkeypatch.setattr(app, "_with_generation", unavailable)
     result = await _wire_call(name, arguments)
 
-    assert result.isError is True
-    assert result.structuredContent == _BACKEND_PAYLOAD
+    assert result.is_error is True
+    assert result.structured_content == _BACKEND_PAYLOAD
     assert result.content[0].text == _BACKEND_PAYLOAD["message"]
     encoded = result.model_dump_json()
     assert "alice" not in encoded
@@ -238,7 +246,7 @@ async def test_untyped_native_outage_still_carries_no_credentials(monkeypatch):
     monkeypatch.setattr(app, "_with_generation", unavailable)
     result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
 
-    assert result.isError is True
+    assert result.is_error is True
     encoded = result.model_dump_json()
     assert "alice" not in encoded
     assert "secret" not in encoded
@@ -253,7 +261,7 @@ def test_retryable_tracks_the_advertised_annotations():
     """
     tools = asyncio.run(app.mcp.list_tools())
     for tool in tools:
-        declared = bool(tool.annotations and tool.annotations.readOnlyHint)
+        declared = bool(tool.annotations and tool.annotations.read_only_hint)
         assert asyncio.run(app.mcp._is_retryable(tool.name)) is declared
 
 
@@ -279,8 +287,8 @@ async def test_outage_envelope_survives_a_failing_tool_listing(monkeypatch):
     monkeypatch.setattr(app.mcp, "list_tools", broken_list_tools)
     result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
 
-    assert result.isError is True
-    assert result.structuredContent == {**_BACKEND_PAYLOAD, "retryable": False}
+    assert result.is_error is True
+    assert result.structured_content == {**_BACKEND_PAYLOAD, "retryable": False}
     encoded = result.model_dump_json()
     assert "schema failure sentinel" not in encoded
     assert "hunter2" not in encoded
@@ -305,7 +313,7 @@ async def test_outage_envelope_survives_a_faulty_listed_tool(monkeypatch):
     monkeypatch.setattr(app.mcp, "list_tools", faulty_list_tools)
     result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
 
-    assert result.structuredContent == {**_BACKEND_PAYLOAD, "retryable": False}
+    assert result.structured_content == {**_BACKEND_PAYLOAD, "retryable": False}
     assert "attribute sentinel" not in result.model_dump_json()
 
 
@@ -324,8 +332,8 @@ def test_current_tools_are_all_read_only_graph_reads():
     """Today every shipped tool is a pure read; flag any future change here."""
     for tool in asyncio.run(app.mcp.list_tools()):
         assert tool.annotations is not None
-        assert tool.annotations.readOnlyHint is True
-        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.read_only_hint is True
+        assert tool.annotations.idempotent_hint is True
 
 
 def test_each_tool_owns_its_annotations_object():
@@ -365,7 +373,7 @@ def test_explicit_tool_name_keeps_retry_safety():
 
 
 def test_duplicate_name_cannot_confer_retry_safety_on_a_write_tool():
-    """FastMCP keeps the FIRST tool on a duplicate name.
+    """MCPServer keeps the FIRST tool on a duplicate name.
 
     A later read-only registration under the same name is discarded, so the
     retained write tool must not inherit the discarded tool's retry claim.
@@ -381,7 +389,7 @@ def test_duplicate_name_cannot_confer_retry_safety_on_a_write_tool():
         return {}
 
     (retained,) = asyncio.run(server.list_tools())
-    assert not (retained.annotations and retained.annotations.readOnlyHint)
+    assert not (retained.annotations and retained.annotations.read_only_hint)
     assert asyncio.run(server._is_retryable("same")) is False
 
 
@@ -393,8 +401,9 @@ def test_read_only_tool_rejects_conflicting_annotations():
 
 
 async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
+    """A ContractError says what the caller passed, so it is worth forwarding."""
     def invalid(_fetch):
-        raise ValueError("unknown profile 'production'")
+        raise ContractError("unknown profile 'production'")
 
     monkeypatch.setattr(app, "_with_generation", invalid)
     result = await _wire_call(
@@ -402,9 +411,44 @@ async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
         {"agent": "agent", "candidates": [], "profile": "production"},
     )
 
-    assert result.isError is True
-    assert result.structuredContent is None
+    assert result.is_error is True
+    assert result.structured_content is None
     assert "unknown profile" in result.content[0].text
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        PermissionError(13, "Permission denied", "/srv/private/customer-x/db.lbug"),
+        RuntimeError("MATCH (t:Tool) RETURN t.internal_note AS SENTINEL_LEAK"),
+        RuntimeError("auth=('alice', 'SENTINEL_LEAK')"),
+        RuntimeError("credential='SENTINEL_LEAK'"),
+        RuntimeError("password='harmless SENTINEL_LEAK'"),
+    ],
+    ids=["fs-path", "cypher", "auth-tuple", "credential-label", "spaced-password"],
+)
+async def test_unexpected_exception_text_never_reaches_the_caller(monkeypatch, exc):
+    """Everything that is not a ContractError keeps mcp 2.x's mask.
+
+    `redact_text` models URLs and a few credential labels; it does not model
+    filesystem paths, query bodies, an `auth=(user, secret)` tuple, the label
+    `credential`, or a quoted secret containing a space. Forwarding arbitrary
+    exception text after scrubbing therefore leaks, which is why only errors
+    this repo raises on purpose are forwarded.
+    """
+    def boom(_fetch):
+        raise exc
+
+    monkeypatch.setattr(app, "_with_generation", boom)
+    result = await _wire_call(
+        "eligible_tools", {"agent": "agent", "candidates": []}
+    )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "SENTINEL_LEAK" not in text
+    assert "/srv/private" not in text
+    assert "internal_note" not in text
 
 
 async def test_success_wire_shape_is_unchanged(monkeypatch):
@@ -413,6 +457,6 @@ async def test_success_wire_shape_is_unchanged(monkeypatch):
         "check_access", {"agent": "agent", "tool": "server::tool"}
     )
 
-    assert result.isError is False
-    assert result.structuredContent is None
+    assert result.is_error is False
+    assert result.structured_content is None
     assert json.loads(result.content[0].text) == {"ok": True}

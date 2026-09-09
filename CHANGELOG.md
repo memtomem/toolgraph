@@ -2,6 +2,21 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** requires the MCP SDK 2.x (`mcp>=2.1.1,<3`). Environments pinned
+  to `mcp` 1.x can no longer install this package, because 2.x removed
+  `mcp.server.fastmcp` and renamed every model field from camelCase to
+  snake_case. The MCP wire format is unchanged, so existing clients need no
+  change.
+- Unexpected exceptions raised inside an MCP tool no longer put their message
+  on the wire. Only errors toolgraph raises deliberately as `ContractError`
+  (for example an unknown selector profile) are forwarded; everything else
+  keeps the SDK's generic text, so an internal failure cannot disclose
+  filesystem paths, query bodies or credential-shaped values to a caller.
+
 ## 0.0.1 - 2026-09-09
 
 Initial public alpha release.
