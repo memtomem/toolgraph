@@ -71,7 +71,14 @@ async def server_boundary() -> None:
 
 
 async def pagination() -> None:
-    """An empty-string cursor is a continuation token, not an end marker."""
+    """Our loop treats an empty-string cursor as a continuation, not an end.
+
+    Scope, stated plainly: the stub below stands in for a ClientSession, so
+    this exercises the params object the SDK exposes and OUR loop over it. It
+    does not prove the SDK carries an empty cursor over the wire -- that needs
+    a real paginating server, which the fixture cannot yet be. Treat this as a
+    guard on the caller, not on the transport.
+    """
     from toolgraph.crawler import client
 
     class Page:
@@ -96,8 +103,10 @@ async def pagination() -> None:
 
     session = Session()
     records = await client._list_all_tools(session)
-    check('an "" cursor continues the listing', [r.name for r in records]
-          == ["first", "second"], f"cursors={session.cursors}")
+    check('an "" cursor continues the listing',
+          [r.name for r in records] == ["first", "second"])
+    check("the empty cursor is sent back verbatim, not dropped",
+          session.cursors == [None, ""], f"cursors={session.cursors!r}")
 
 
 def _free_port() -> int:
@@ -118,20 +127,33 @@ async def streamable_http() -> None:
         spec = ServerSpec(name="floor", transport="streamable-http", url=url)
         deadline = time.monotonic() + 30
         while True:
+            if proc.poll() is not None:
+                raise SystemExit(
+                    f"fixture server exited early with code {proc.returncode}; "
+                    "retrying against a dead process would just burn the deadline"
+                )
             try:
-                async with open_session(spec) as session:
-                    await session.initialize()
-                    listed = await session.list_tools()
-                    check("streamable-http lists tools",
-                          {t.name for t in listed.tools} == {"read_file", "write_file"})
-                    return
+                # The deadline must bound the attempt, not only the gap between
+                # attempts: a hung initialize() would otherwise wait forever.
+                async with asyncio.timeout(10):
+                    async with open_session(spec) as session:
+                        await session.initialize()
+                        listed = await session.list_tools()
+                        check("streamable-http lists tools",
+                              {t.name for t in listed.tools}
+                              == {"read_file", "write_file"})
+                        return
             except Exception:
                 if time.monotonic() > deadline:
                     raise
                 await asyncio.sleep(0.5)
     finally:
         proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
 
 
 async def main() -> int:

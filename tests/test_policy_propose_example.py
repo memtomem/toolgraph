@@ -372,7 +372,7 @@ def test_window_bounds_are_compared_as_instants_not_strings(example):
 
 
 def test_a_window_bound_that_is_not_a_timestamp_is_refused(example):
-    with pytest.raises(example.ProvenanceError, match="ISO-8601"):
+    with pytest.raises(example.ProvenanceError, match="must be a timestamp"):
         example.verify_envelope(
             _win("last tuesday", "2026-08-31T00:00:00Z"),
             ENVELOPE["governance_digest"], PROFILES,
@@ -397,7 +397,40 @@ def test_ambiguous_or_repaired_timestamps_are_refused(example, bound):
     malformed bound through looking exact, on a file that is evidence for
     widening an agent's authority.
     """
-    with pytest.raises(example.ProvenanceError, match="offset|ISO-8601"):
+    with pytest.raises(example.ProvenanceError, match="offset|must be a timestamp"):
+        example.verify_envelope(
+            _win(bound, "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-02-30T00:00:00Z",
+        "2026-08-01T24:00:00Z",
+        "2026-08-01T00:60:00Z",
+        "2026-08-01T00:00:60Z",
+        "2026-08-01T00:00:00-00:00",
+        "2026-08-01t00:00:00z",
+        "2026-08-01T00:00:00.1234567Z",
+    ],
+    ids=["impossible-date", "hour-24", "minute-60", "second-60",
+         "minus-zero-offset", "lowercase", "too-many-fractions"],
+)
+def test_every_rejected_bound_leaves_as_a_clean_refusal(example, bound):
+    """Never a traceback: this module answers every bad input the same way.
+
+    Two of these are version traps rather than typos. "24:00:00" raises on
+    Python 3.13 and becomes the next day on 3.14, so the same export would mean
+    two different windows depending on the interpreter. "-00:00" is RFC 3339
+    for "offset unknown", which is what requiring an offset was meant to
+    exclude. Both are refused rather than interpreted.
+
+    February 30 is the one that used to escape: shape and ranges pass, and the
+    calendar error came out of the parser as a bare ValueError.
+    """
+    with pytest.raises(example.ProvenanceError):
         example.verify_envelope(
             _win(bound, "2026-08-31T00:00:00Z"),
             ENVELOPE["governance_digest"], PROFILES,
