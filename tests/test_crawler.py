@@ -88,21 +88,21 @@ class _FakeTool:
     def __init__(self, name: str) -> None:
         self.name = name
         self.description = None
-        self.inputSchema = {}
+        self.input_schema = {}
 
 
 class _FakeResource:
     def __init__(self, uri: str) -> None:
         self.uri = uri
         self.name = None
-        self.mimeType = None
+        self.mime_type = None
         self.description = None
 
 
 class _FakePage:
     def __init__(self, items: list, next_cursor: str | None, attr: str) -> None:
         setattr(self, attr, items)
-        self.nextCursor = next_cursor
+        self.next_cursor = next_cursor
 
 
 class _PagedSession:
@@ -114,13 +114,15 @@ class _PagedSession:
         self.tool_calls: list[str | None] = []
         self.resource_calls: list[str | None] = []
 
-    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+    async def list_tools(self, *, params=None) -> _FakePage:
+        cursor = None if params is None else params.cursor
         self.tool_calls.append(cursor)
         idx = 0 if cursor is None else int(cursor)
         items, next_cursor = self.tool_pages[idx]
         return _FakePage(items, next_cursor, "tools")
 
-    async def list_resources(self, cursor: str | None = None) -> _FakePage:
+    async def list_resources(self, *, params=None) -> _FakePage:
+        cursor = None if params is None else params.cursor
         self.resource_calls.append(cursor)
         idx = 0 if cursor is None else int(cursor)
         items, next_cursor = self.resource_pages[idx]
@@ -133,7 +135,7 @@ async def test_list_all_tools_drains_paginated_results():
 
     session = _PagedSession(
         tool_pages=[
-            ([_FakeTool("a"), _FakeTool("b")], "1"),  # page 0 -> nextCursor=1
+            ([_FakeTool("a"), _FakeTool("b")], "1"),  # page 0 -> next_cursor=1
             ([_FakeTool("c")], None),                  # page 1 -> done
         ],
         resource_pages=[],
@@ -144,7 +146,7 @@ async def test_list_all_tools_drains_paginated_results():
 
 
 class _EmptyCursorSession:
-    """Server that returns ``nextCursor: ""`` as an opaque continuation token.
+    """Server that returns ``next_cursor: ""`` as an opaque continuation token.
 
     Codex PR #1 re-review: the SDK distinguishes None from empty string when
     requesting the next page, so the stop predicate must be ``cursor is None``,
@@ -155,10 +157,11 @@ class _EmptyCursorSession:
     def __init__(self) -> None:
         self.tool_calls: list[str | None] = []
 
-    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+    async def list_tools(self, *, params=None) -> _FakePage:
+        cursor = None if params is None else params.cursor
         self.tool_calls.append(cursor)
         if cursor is None:
-            return _FakePage([_FakeTool("a")], "", "tools")  # nextCursor="" (not None)
+            return _FakePage([_FakeTool("a")], "", "tools")  # next_cursor="" (not None)
         return _FakePage([_FakeTool("b")], None, "tools")
 
 
@@ -193,11 +196,11 @@ class _RunawayCursorSession:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def list_tools(self, cursor: str | None = None) -> _FakePage:
+    async def list_tools(self, *, params=None) -> _FakePage:
         self.calls += 1
         return _FakePage([_FakeTool(f"t{self.calls}")], str(self.calls), "tools")
 
-    async def list_resources(self, cursor: str | None = None) -> _FakePage:
+    async def list_resources(self, *, params=None) -> _FakePage:
         self.calls += 1
         return _FakePage([_FakeResource(f"file:///{self.calls}")], str(self.calls), "resources")
 

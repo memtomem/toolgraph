@@ -8,13 +8,12 @@ stamp lives HERE, not in the query layer — CLI output stays unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import logging
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, ContentBlock, TextContent, ToolAnnotations
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
@@ -28,8 +27,8 @@ _BACKEND_UNAVAILABLE_MESSAGE = (
 )
 
 
-class _ToolgraphMCP(FastMCP):
-    """FastMCP server with a typed envelope for backend availability only."""
+class _ToolgraphMCP(MCPServer):
+    """MCPServer with a typed envelope for backend availability only."""
 
     def read_only_tool(self, name: str | None = None, **kwargs: Any):
         """Register a pure-read graph tool: safe to retry, no added side effect.
@@ -43,7 +42,7 @@ class _ToolgraphMCP(FastMCP):
         def decorator(fn):
             return self.tool(
                 name=name,
-                annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True),
+                annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True),
                 **kwargs,
             )(fn)
 
@@ -54,7 +53,7 @@ class _ToolgraphMCP(FastMCP):
 
         Read from the annotations the server actually advertises, so there is
         exactly one source of truth. A parallel registry could disagree with
-        the live registration — FastMCP keeps the *first* tool on a duplicate
+        the live registration — MCPServer keeps the *first* tool on a duplicate
         name, so a write tool could otherwise inherit a later read-only claim.
 
         Every failure path answers "no": an unknown tool, an unannotated tool,
@@ -70,7 +69,7 @@ class _ToolgraphMCP(FastMCP):
         try:
             for tool in await self.list_tools():
                 if tool.name == name:
-                    return bool(tool.annotations and tool.annotations.readOnlyHint)
+                    return bool(tool.annotations and tool.annotations.read_only_hint)
         except Exception:
             logger.warning(
                 "could not read retry safety for tool %r; reporting not retryable",
@@ -80,19 +79,27 @@ class _ToolgraphMCP(FastMCP):
         return False
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
-    ) -> Sequence[ContentBlock] | dict[str, Any] | CallToolResult:
+        self, name: str, arguments: dict[str, Any], context: Any = None
+    ) -> CallToolResult | Any:
+        # mcp 2.x threads a Context through and narrows the return to a typed
+        # result; 1.x returned a loose union the low-level server converted.
         try:
-            return await super().call_tool(name, arguments)
+            return await super().call_tool(name, arguments, context)
         except ToolError as exc:
             if not is_backend_unavailable(exc):
                 # The seam types every outage it covers, so reaching here means
                 # either a contract error or a driver exception that never
-                # passed the seam. FastMCP puts this message on the wire
-                # verbatim, and driver text can carry a connection URI, so it
-                # is scrubbed before it leaves. Ordinary contract text is
-                # unaffected; the cause is kept for server-side logs.
-                raise ToolError(redact_text(exc)) from exc
+                # passed the seam.
+                #
+                # mcp 2.x masks an unexpected exception: a ValueError raised
+                # inside a tool reaches here wrapped as "Error executing tool
+                # <name>" with the real message only on __cause__. That default
+                # is right for leaks and wrong for contract errors — "unknown
+                # profile 'production'" is the answer the caller needs. So the
+                # cause's message is what goes on the wire, scrubbed first
+                # because driver text can carry a connection URI. Raising
+                # ToolError is also what makes the SDK forward it at all.
+                raise ToolError(redact_text(exc.__cause__ or exc)) from exc
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
                 "retryable": await self._is_retryable(name),
@@ -100,8 +107,8 @@ class _ToolgraphMCP(FastMCP):
             }
             return CallToolResult(
                 content=[TextContent(type="text", text=_BACKEND_UNAVAILABLE_MESSAGE)],
-                structuredContent=payload,
-                isError=True,
+                structured_content=payload,
+                is_error=True,
             )
 
 

@@ -42,7 +42,8 @@ async def open_session(spec: ServerSpec) -> AsyncIterator[ClientSession]:
                 http_client = await stack.enter_async_context(
                     create_mcp_http_client(headers=spec.headers)
                 )
-            read, write, _get_session_id = await stack.enter_async_context(
+            # mcp 2.x drops the session-id getter from the returned streams.
+            read, write = await stack.enter_async_context(
                 streamable_http_client(spec.url, http_client=http_client)
             )
 

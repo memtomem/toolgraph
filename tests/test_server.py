@@ -66,7 +66,7 @@ def _spec(neo4j_container) -> ServerSpec:
 
 
 def _structured(result) -> dict:
-    got = result.structuredContent
+    got = result.structured_content
     if got is None:  # fall back to text content
         got = json.loads(result.content[0].text)
     return got

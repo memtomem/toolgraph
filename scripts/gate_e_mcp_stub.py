@@ -7,10 +7,10 @@ import json
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
-mcp = FastMCP("gate_e")
+mcp = MCPServer("gate_e")
 
 
 def _record(tool: str, outcome: str) -> None:

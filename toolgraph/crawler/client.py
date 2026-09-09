@@ -19,6 +19,20 @@ class PaginationLimitError(RuntimeError):
     """A server kept returning continuation cursors past MAX_LIST_PAGES."""
 
 
+def _page(cursor: str | None):
+    """Pagination params for a list call, or None for the first page.
+
+    mcp 2.x replaced the ``cursor=`` keyword with a params object. Passing
+    ``None`` on the first page matters: the SDK treats "no params" and "params
+    with a null cursor" differently when deciding a listing is complete.
+    """
+    if cursor is None:
+        return None
+    from mcp.types import PaginatedRequestParams
+
+    return PaginatedRequestParams(cursor=cursor)
+
+
 def _annotation_fields(tool) -> dict:
     """Tool annotations as ToolRecord fields (ADR-0006).
 
@@ -30,15 +44,15 @@ def _annotation_fields(tool) -> dict:
     if ann is None:
         return {}
     return {
-        "read_only_hint": ann.readOnlyHint,
-        "destructive_hint": ann.destructiveHint,
-        "idempotent_hint": ann.idempotentHint,
-        "open_world_hint": ann.openWorldHint,
+        "read_only_hint": ann.read_only_hint,
+        "destructive_hint": ann.destructive_hint,
+        "idempotent_hint": ann.idempotent_hint,
+        "open_world_hint": ann.open_world_hint,
     }
 
 
 async def _list_all_tools(session) -> list[ToolRecord]:
-    """Drain ``list_tools`` pages until ``nextCursor`` is exhausted.
+    """Drain ``list_tools`` pages until ``next_cursor`` is exhausted.
 
     Without pagination, a server with more than one page silently drops
     tools on later pages — governance refs to them would then reject at
@@ -48,17 +62,17 @@ async def _list_all_tools(session) -> list[ToolRecord]:
     out: list[ToolRecord] = []
     cursor: str | None = None
     for _ in range(MAX_LIST_PAGES):
-        listed = await session.list_tools(cursor=cursor)
+        listed = await session.list_tools(params=_page(cursor))
         out.extend(
             ToolRecord(
                 name=t.name,
                 description=t.description,
-                input_schema=t.inputSchema,
+                input_schema=t.input_schema,
                 **_annotation_fields(t),
             )
             for t in listed.tools
         )
-        cursor = getattr(listed, "nextCursor", None)
+        cursor = getattr(listed, "next_cursor", None)
         if cursor is None:
             # Stop ONLY on None: an empty-string cursor is a valid opaque
             # continuation token in MCP and the SDK distinguishes "" from
@@ -72,21 +86,21 @@ async def _list_all_tools(session) -> list[ToolRecord]:
 
 
 async def _list_all_resources(session) -> list[ResourceRecord]:
-    """Drain ``list_resources`` pages until ``nextCursor`` is exhausted."""
+    """Drain ``list_resources`` pages until ``next_cursor`` is exhausted."""
     out: list[ResourceRecord] = []
     cursor: str | None = None
     for _ in range(MAX_LIST_PAGES):
-        listed = await session.list_resources(cursor=cursor)
+        listed = await session.list_resources(params=_page(cursor))
         out.extend(
             ResourceRecord(
                 uri=normalize_resource_uri(str(r.uri)),
                 name=r.name,
-                mime_type=r.mimeType,
+                mime_type=r.mime_type,
                 description=r.description,
             )
             for r in listed.resources
         )
-        cursor = getattr(listed, "nextCursor", None)
+        cursor = getattr(listed, "next_cursor", None)
         if cursor is None:
             # Stop ONLY on None: an empty-string cursor is a valid opaque
             # continuation token in MCP and the SDK distinguishes "" from
@@ -111,8 +125,8 @@ async def crawl_server(spec: ServerSpec) -> CrawlResult:
         )
 
         return CrawlResult(
-            server_name=spec.name or init.serverInfo.name,
-            server_version=init.serverInfo.version,
+            server_name=spec.name or init.server_info.name,
+            server_version=init.server_info.version,
             transport=spec.transport,
             endpoint=endpoint_label(spec),
             tools=tools,
