@@ -52,8 +52,10 @@ potentially mislabelled replay artifact is worse than no artifact.
 
 ## Consequences
 
-- Cache invalidation is one integer comparison; telemetry rows pin
-  `graph_generation` for replay.
+- Cache invalidation is a comparison of the pair (`graph_instance_id`,
+  `graph_generation`), and only after checking `graph_state_verified: true` —
+  an integer alone collides across a replaced graph, and an unverified response
+  belongs to no state at all. Telemetry rows pin the pair for replay.
 - Crawl of N servers = N increments (each server load is its own
   transaction) — acceptable: generation is an invalidation token, not a
   semantic version.
