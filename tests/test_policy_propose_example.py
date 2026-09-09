@@ -275,3 +275,177 @@ def test_help_carries_the_provenance_limitation():
         capture_output=True, text=True, check=True,
     )
     assert "UNVERIFIED PROVENANCE" in out.stdout
+
+
+ENVELOPE = {
+    "governance_digest": "a" * 64,
+    "graph_generation": 7,
+    "profile": "review",
+    "window_start": "2026-08-01T00:00:00Z",
+    "window_end": "2026-08-31T23:59:59Z",
+}
+PROFILES = {"strict", "review", "explore"}
+
+
+def _export(tmp_path, envelope, *rows):
+    path = tmp_path / "observed.jsonl"
+    lines = []
+    if envelope is not None:
+        lines.append(json.dumps({"envelope": envelope}))
+    lines += [json.dumps(r) for r in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_window_recorded_against_other_governance_is_refused(example):
+    """#89: the digest is what separates evidence from a replay.
+
+    A window captured before a DENY policy existed still parses cleanly and
+    still reads as NOT_GRANTED, so without this comparison a stale export
+    produces a confidently worded proposal against today's manifest.
+    """
+    with pytest.raises(example.ProvenanceError, match="different governance"):
+        example.verify_envelope(ENVELOPE, "b" * 64, PROFILES)
+
+    bound = example.verify_envelope(ENVELOPE, "a" * 64, PROFILES)
+    assert bound["graph_generation"] == 7
+    assert bound["profile"] == "review"
+
+
+@pytest.mark.parametrize(
+    "field, value, match",
+    [
+        ("governance_digest", "not-hex", "64 lowercase hex"),
+        ("graph_generation", -1, "non-negative integer"),
+        ("graph_generation", True, "non-negative integer"),
+        ("profile", "paranoid", "unknown selector profile"),
+        ("window_start", "", "non-empty string"),
+    ],
+    ids=["bad-digest", "negative-generation", "bool-generation",
+         "unknown-profile", "empty-bound"],
+)
+def test_malformed_envelopes_are_refused(example, field, value, match):
+    envelope = {**ENVELOPE, field: value}
+    if field == "governance_digest":
+        expected = "a" * 64
+    else:
+        expected = ENVELOPE["governance_digest"]
+    with pytest.raises(example.ProvenanceError, match=match):
+        example.verify_envelope(envelope, expected, PROFILES)
+
+
+def test_an_incomplete_envelope_binds_nothing(example):
+    """Half an envelope is refused rather than half-trusted."""
+    for field in example.ENVELOPE_FIELDS:
+        partial = {k: v for k, v in ENVELOPE.items() if k != field}
+        with pytest.raises(example.ProvenanceError, match="missing"):
+            example.verify_envelope(partial, ENVELOPE["governance_digest"], PROFILES)
+
+
+def test_a_backwards_window_is_refused(example):
+    envelope = {**ENVELOPE, "window_start": "2026-09-01", "window_end": "2026-08-01"}
+    with pytest.raises(example.ProvenanceError, match="is after"):
+        example.verify_envelope(envelope, ENVELOPE["governance_digest"], PROFILES)
+
+
+def _win(start, end):
+    return {**ENVELOPE, "window_start": start, "window_end": end}
+
+
+def test_window_bounds_are_compared_as_instants_not_strings(example):
+    """Lexical ordering gets both directions wrong once offsets are involved.
+
+    "2026-08-01T01:00:00+02:00" sorts AFTER "2026-08-01T00:00:00Z" while naming
+    an earlier moment, so a string compare rejected a correct window and
+    accepted a reversed one.
+    """
+    ok = _win("2026-08-01T01:00:00+02:00", "2026-08-01T00:00:00Z")
+    assert example.verify_envelope(
+        ok, ENVELOPE["governance_digest"], PROFILES
+    )["window_start"] == "2026-08-01T01:00:00+02:00"
+
+    reversed_window = _win("2026-08-01T00:00:00-02:00", "2026-08-01T01:00:00Z")
+    with pytest.raises(example.ProvenanceError, match="is after"):
+        example.verify_envelope(
+            reversed_window, ENVELOPE["governance_digest"], PROFILES
+        )
+
+
+def test_a_window_bound_that_is_not_a_timestamp_is_refused(example):
+    with pytest.raises(example.ProvenanceError, match="ISO-8601"):
+        example.verify_envelope(
+            _win("last tuesday", "2026-08-31T00:00:00Z"),
+            ENVELOPE["governance_digest"], PROFILES,
+        )
+
+
+def test_a_naive_timestamp_is_read_as_utc(example):
+    bound = example.verify_envelope(
+        _win("2026-08-01T00:00:00", "2026-08-01T00:00:00Z"),
+        ENVELOPE["governance_digest"], PROFILES,
+    )
+    assert bound["window_start"] == "2026-08-01T00:00:00"
+
+
+@pytest.mark.parametrize("bad", [[], {}, 3], ids=["list", "dict", "int"])
+def test_a_non_string_profile_is_refused_cleanly(example, bad):
+    """Bare membership raises TypeError on an unhashable value."""
+    with pytest.raises(example.ProvenanceError, match="unknown selector profile"):
+        example.verify_envelope(
+            {**ENVELOPE, "profile": bad}, ENVELOPE["governance_digest"], PROFILES
+        )
+
+
+def test_the_envelope_is_split_off_and_rows_keep_their_line_numbers(example, tmp_path):
+    """An envelope must not be parsed as an observation, nor shift error lines."""
+    good = {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file",
+            "calls": 3}
+    path = _export(tmp_path, ENVELOPE, good)
+    envelope, rows = example.load_export(path)
+    assert envelope == ENVELOPE
+    assert [r["agent"] for r in rows] == ["bot"]
+
+    # The bad row is on file line 3; the message must say 3, not 2.
+    bad = {"agent": "bot", "decision": "nonsense", "tool_key": "alpha::write_file"}
+    path = _export(tmp_path, ENVELOPE, good, bad)
+    with pytest.raises(ValueError, match=r":3: decision must be"):
+        example.load_export(path)
+
+
+def test_an_envelope_line_may_not_smuggle_observation_fields(example, tmp_path):
+    path = tmp_path / "observed.jsonl"
+    path.write_text(
+        json.dumps({"envelope": ENVELOPE, "agent": "bot", "decision": "eligible"})
+        + "\n", encoding="utf-8",
+    )
+    with pytest.raises(example.ProvenanceError, match="own rows"):
+        example.load_export(path)
+
+
+def test_an_export_without_an_envelope_still_parses(example, tmp_path):
+    """The loader stays usable; refusing is main()'s decision, not the parser's."""
+    path = _export(tmp_path, None,
+                   {"agent": "bot", "decision": "eligible",
+                    "tool_key": "alpha::read_file", "calls": 3})
+    envelope, rows = example.load_export(path)
+    assert envelope is None
+    assert len(rows) == 1
+
+
+def test_a_bound_report_states_what_it_is_bound_to(example):
+    proposal = example.propose(
+        GOV, [_row("bot", "alpha::write_file", ["NOT_GRANTED"])], 3
+    )
+    bound = example.render(proposal, "2026-08", 3, ENVELOPE)
+    assert "DECLARED DIGEST MATCHES" in bound
+    assert "UNVERIFIED PROVENANCE" not in bound
+    assert ENVELOPE["governance_digest"] in bound
+    # A non-strict window must say so: absence from these rows is not permission.
+    assert "review" in bound
+    # The report must not claim more than the digest comparison establishes.
+    assert "(declared)" in bound
+    assert "unverified" in bound
+
+    unbound = example.render(proposal, "2026-08", 3, None)
+    assert "UNVERIFIED PROVENANCE" in unbound
+    assert "DECLARED DIGEST MATCHES" not in unbound

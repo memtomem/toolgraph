@@ -59,21 +59,33 @@ Proposal rules, in order:
 5. Unknown agents are refused loudly, mirroring the compiler's fail-closed
    ``agent not found`` stance.
 
-Not modelled here, and deliberately: the export carries no graph generation,
-governance digest, or profile, so this script cannot tell evidence gathered
-against THIS manifest from a replay of an older one. ``governance_digest()``
-exists (``toolgraph/manifest/parser.py``) and a real productization should bind
-the window to it. Until then the maintainer reading the proposal is the check.
+Provenance: the export SHOULD open with one envelope line binding the window to
+the state it was recorded against::
+
+    {"envelope": {"governance_digest": "<64 hex>", "graph_generation": 12,
+                  "profile": "strict", "window_start": "2026-08-01T00:00:00Z",
+                  "window_end": "2026-08-31T23:59:59Z"}}
+
+The digest is compared against ``governance_digest()`` of the manifest supplied,
+and a mismatch is a refusal: a window recorded before a DENY policy existed
+still parses cleanly and still reads as ``NOT_GRANTED``, so without that
+comparison a replay is indistinguishable from evidence. The profile is recorded
+because the same rejection means different things under ``review`` (UNMAPPED
+passes) and ``strict`` (it does not).
+
+An export with no envelope is refused unless ``--unverified-provenance`` says
+otherwise, so "we could not check" never reads the same as "we checked".
 
 Usage:
     uv run python examples/policy_propose_from_observed.py GOVERNANCE_YAML OBSERVED_JSONL
-        [--min-would-block 3] [--window-label 2026-08]
+        [--min-would-block 3] [--window-label 2026-08] [--unverified-provenance]
     uv run python examples/policy_propose_from_observed.py --self-test
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import re
 import sys
@@ -134,6 +146,103 @@ UNVERIFIED_PROVENANCE = (
 )
 
 
+# The export may open with one envelope line binding the window to the state it
+# was recorded against. Everything below exists because a window is otherwise
+# indistinguishable from a replay: see #89.
+ENVELOPE_KEY = "envelope"
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+ENVELOPE_FIELDS = ("governance_digest", "graph_generation", "profile",
+                   "window_start", "window_end")
+
+
+class ProvenanceError(ValueError):
+    """The window cannot be shown to describe the manifest it was handed."""
+
+
+def _instant(value: str, where: str) -> datetime:
+    """Parse an ISO-8601 timestamp into a comparable instant.
+
+    A window bound is a moment, so it is parsed rather than compared as text.
+    A naive timestamp is read as UTC: refusing it would reject the commonest
+    honest export, and assuming a local zone would make the same file mean
+    different things on different machines.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ProvenanceError(
+            f"{where} must be an ISO-8601 timestamp, got {value!r}"
+        ) from exc
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
+    """Bind an observation window to the governance and graph it was recorded against.
+
+    What this establishes, and what it does not. `governance_digest()` is a
+    stable semantic hash of the validated model, so an unequal digest proves the
+    window belongs to some other governance and every NOT_GRANTED in it may
+    already have been answered, retired, or overruled by a DENY. An equal digest
+    proves only that the exporter declared this manifest's digest. It does not
+    show the gateway enforced it, that these rows came from that gateway, or
+    that the stated generation and window ever happened -- the generation and
+    bounds are validated for shape and compared against nothing. A digest can
+    also stay equal across crawls that changed which tools exist.
+
+    The profile is not decoration either. The same rejection means different
+    things under `review` (UNMAPPED passes) and `strict` (it does not), so a
+    proposal that cannot name the profile cannot say what its evidence proves.
+    """
+    missing = [f for f in ENVELOPE_FIELDS if f not in envelope]
+    if missing:
+        raise ProvenanceError(
+            f"envelope is missing {missing} - an incomplete envelope binds nothing, "
+            "so it is refused rather than half-trusted"
+        )
+    digest = envelope["governance_digest"]
+    if not isinstance(digest, str) or not DIGEST_RE.match(digest):
+        raise ProvenanceError(
+            f"governance_digest must be 64 lowercase hex characters, got {digest!r}"
+        )
+    if digest != expected_digest:
+        raise ProvenanceError(
+            "this window was recorded against a different governance "
+            f"({digest[:12]}...) than the manifest supplied ({expected_digest[:12]}...). "
+            "Re-export against the current manifest; a stale window's NOT_GRANTED rows "
+            "may already be answered, retired, or overruled by a DENY"
+        )
+    generation = envelope["graph_generation"]
+    if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+        raise ProvenanceError(
+            f"graph_generation must be a non-negative integer, got {generation!r}"
+        )
+    profile = envelope["profile"]
+    # Membership alone raises TypeError on an unhashable JSON value such as a
+    # list, which escapes the clean refusal this function promises.
+    if not isinstance(profile, str) or profile not in known_profiles:
+        raise ProvenanceError(
+            f"unknown selector profile {profile!r} - expected one of {sorted(known_profiles)}"
+        )
+    bounds = {}
+    for bound in ("window_start", "window_end"):
+        value = envelope[bound]
+        if not isinstance(value, str) or not value.strip():
+            raise ProvenanceError(f"{bound} must be a non-empty string, got {value!r}")
+        if UNSAFE_IN_NAME.search(value):
+            raise ProvenanceError(f"{bound} contains a control character")
+        bounds[bound] = _instant(value, bound)
+    # Compare instants, not strings. Lexical ordering accepts a reversed window
+    # written across two offsets and rejects a correctly ordered one, because
+    # "2026-08-01T01:00:00+02:00" sorts after "2026-08-01T00:00:00Z" while
+    # naming an earlier moment.
+    if bounds["window_start"] > bounds["window_end"]:
+        raise ProvenanceError(
+            f'window_start ({envelope["window_start"]}) is after '
+            f'window_end ({envelope["window_end"]})'
+        )
+    return {f: envelope[f] for f in ENVELOPE_FIELDS}
+
+
 def _count(row: dict, key: str, where: str, *, missing: int | None = 0) -> int | None:
     """Validate a count, keeping "absent" distinguishable from "explicitly zero".
 
@@ -153,8 +262,46 @@ def _count(row: dict, key: str, where: str, *, missing: int | None = 0) -> int |
     return value
 
 
+def load_export(path: Path) -> tuple[dict | None, list[dict]]:
+    """Split the optional envelope line off the observation rows.
+
+    The envelope, when present, is the FIRST line and carries only the
+    ``envelope`` key. Putting it inline keeps the export one file that a gateway
+    can append to, and making it first means a truncated export loses rows
+    rather than its provenance.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()
+    envelope: dict | None = None
+    body: list[str] = []
+    for lineno, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        if envelope is None and not body:
+            try:
+                first = json.loads(line)
+            except json.JSONDecodeError:
+                first = None
+            if isinstance(first, dict) and ENVELOPE_KEY in first:
+                if not isinstance(first[ENVELOPE_KEY], dict):
+                    raise ProvenanceError(f"{path}:{lineno}: envelope must be a JSON object")
+                if set(first) != {ENVELOPE_KEY}:
+                    raise ProvenanceError(
+                        f"{path}:{lineno}: the envelope line carries only "
+                        f"{ENVELOPE_KEY!r}; observation fields belong on their own rows"
+                    )
+                envelope = first[ENVELOPE_KEY]
+                continue
+        body.append((lineno, line))
+    return envelope, _load_rows(path, body)
+
+
 def load_observations(path: Path) -> list[dict]:
-    """Parse and validate the export, refusing anything it cannot reason about.
+    """Row-only view of the export, for callers that handle provenance themselves."""
+    return load_export(path)[1]
+
+
+def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
+    """Parse and validate the observation rows, refusing anything unreasonable.
 
     Coercion is the enemy here: a silently ``int()``-ed count, a decision string
     nobody recognizes treated as "eligible", or a negative call count cancelling
@@ -163,10 +310,8 @@ def load_observations(path: Path) -> list[dict]:
     """
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = line.strip()
-        if not line:
-            continue
+    for lineno, raw in lines:
+        line = raw.strip()
         where = f"{path}:{lineno}"
         try:
             row = json.loads(line)
@@ -397,13 +542,36 @@ def yaml_entry(mapping: dict, comment: str) -> str:
     return f"  - {body}  # {' '.join(comment.split())}"
 
 
-def render(proposal: dict, window_label: str, min_would_block: int) -> str:
+def render(proposal: dict, window_label: str, min_would_block: int,
+           envelope: dict | None = None) -> str:
     out: list[str] = []
     a = out.append
     a("# Governance change proposal (generated — NOT applied)")
     a("")
-    for line in textwrap.wrap(UNVERIFIED_PROVENANCE, width=76):
-        a("> " + line)
+    if envelope is None:
+        for line in textwrap.wrap(UNVERIFIED_PROVENANCE, width=76):
+            a("> " + line)
+    else:
+        a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
+        a("> the digest of the manifest supplied, so the window is not a replay")
+        a("> against some other governance. That is all it establishes. The")
+        a("> graph state, and whether these rows were really observed in the")
+        a("> stated window, are asserted by the exporter and unverified here:")
+        a("> the generation and window below are what the file claims, not what")
+        a("> was checked. A digest can also stay equal across crawls that")
+        a("> changed which tools exist.")
+        a(">")
+        a(f'> governance_digest: `{envelope["governance_digest"]}` (verified)')
+        a(f'> graph_generation: {envelope["graph_generation"]} · '
+          f'profile: `{envelope["profile"]}` (declared)')
+        a(f'> window: {envelope["window_start"]} .. {envelope["window_end"]} '
+          "(declared)")
+        if envelope["profile"] != "strict":
+            a(">")
+            a(f'> Recorded under the `{envelope["profile"]}` profile, which rejects '
+              "fewer")
+            a("> reasons than `strict`. A tool absent from these rows was not")
+            a("> necessarily allowed under strict.")
     a("")
     a(f"decision_mode: human_required · automatic_change: false · "
       f"window: {window_label} · evidence floor: would_block >= {min_would_block}")
@@ -602,7 +770,14 @@ def positive_int(value: str) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__.splitlines()[0],
-        epilog=textwrap.fill(UNVERIFIED_PROVENANCE, width=76),
+        epilog=textwrap.fill(UNVERIFIED_PROVENANCE, width=76) + "\n\n"
+        + textwrap.fill(
+            "An export carrying an envelope line (governance_digest, "
+            "graph_generation, profile, window_start, window_end) is bound to the "
+            "manifest supplied and reported as such; a digest mismatch is refused. "
+            "Without an envelope this script refuses unless "
+            "--unverified-provenance is given.", width=76,
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("governance", nargs="?", type=Path)
@@ -610,6 +785,11 @@ def main() -> int:
     ap.add_argument("--min-would-block", type=positive_int, default=3)
     ap.add_argument("--window-label", default="unspecified")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument(
+        "--unverified-provenance", action="store_true",
+        help="proceed on an export that carries no envelope, accepting that "
+             "nothing can tell this window from a replay of an older one",
+    )
     args = ap.parse_args()
 
     if args.self_test:
@@ -630,11 +810,44 @@ def main() -> int:
             "run this as `uv run python examples/policy_propose_from_observed.py ...` "
             "from the repo root"
         ) from exc
-    gov = load_governance(args.governance).model_dump(mode="json")
+    from toolgraph.graph.selector import PROFILES
+    from toolgraph.manifest.parser import governance_digest
 
-    observed = load_observations(args.observed)
+    gov_model = load_governance(args.governance)
+    gov = gov_model.model_dump(mode="json")
+
+    try:
+        raw_envelope, observed = load_export(args.observed)
+    except ProvenanceError as exc:
+        raise SystemExit(f"refusing this export: {exc}") from exc
+    envelope = None
+    if raw_envelope is not None:
+        # A mismatch is a refusal, not a warning: the whole point of the digest
+        # is that "recorded elsewhere" and "recorded here" stop looking alike.
+        try:
+            envelope = verify_envelope(
+                raw_envelope, governance_digest(gov_model), set(PROFILES)
+            )
+        except ProvenanceError as exc:
+            raise SystemExit(f"refusing this window: {exc}") from exc
+    elif not args.unverified_provenance:
+        # Fail closed. The proposal widens authority, so "we could not check"
+        # must not read the same as "we checked and it was fine".
+        raise SystemExit(
+            "this export carries no envelope, so nothing can tell it from a replay "
+            "of a window recorded against an older manifest.\n"
+            "Re-export with an envelope line:\n"
+            '  {"envelope": {"governance_digest": "<64 hex>", "graph_generation": 0, '
+            '"profile": "strict", "window_start": "...", "window_end": "..."}}\n'
+            f"The digest for {args.governance} right now is "
+            f"{governance_digest(gov_model)}.\n"
+            "Or pass --unverified-provenance to proceed without that guarantee."
+        )
+
     proposal = propose(gov, observed, args.min_would_block)
-    sys.stdout.write(render(proposal, args.window_label, args.min_would_block))
+    sys.stdout.write(
+        render(proposal, args.window_label, args.min_would_block, envelope)
+    )
     return 0
 
 
