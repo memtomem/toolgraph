@@ -28,7 +28,10 @@ import jsonschema
 
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE = ROOT / "examples" / "governance-syncmill-smoke.yaml"
-NEO4J_IMAGE = "neo4j:5.26"
+# Pinned to the Community edition explicitly. The bare `neo4j:5.26` tag resolves
+# to Community today, but the edition decides the licence (GPLv3) the smoke run
+# pulls, so it is named rather than inherited from a registry default.
+NEO4J_IMAGE = "neo4j:5.26-community"
 PASSWORD = "toolgraph-smoke-password"
 FORBIDDEN = ("prompt", "patch", "output", "completion", "stdout", "stderr")
 

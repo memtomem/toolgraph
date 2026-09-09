@@ -20,7 +20,7 @@ import time
 import tracemalloc
 import types
 
-from ecosystem_smoke import exact_sha, run
+from ecosystem_smoke import NEO4J_IMAGE, exact_sha, run
 from toolgraph import config
 from toolgraph.graph import driver, loader, schema
 from toolgraph.manifest import ingest
@@ -98,7 +98,7 @@ def main():
                 else:
                     from testcontainers.neo4j import Neo4jContainer
                     db = stack.enter_context(Neo4jContainer(
-                        "neo4j:5.26-community", username="neo4j", password="testpass"
+                        NEO4J_IMAGE, username="neo4j", password="testpass"
                     ))
                     settings = config.Settings(backend="neo4j", neo4j_uri=db.get_connection_url(),
                                                neo4j_user="neo4j", neo4j_password="testpass")
