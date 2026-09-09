@@ -203,3 +203,75 @@ def test_min_would_block_must_be_positive(example):
 
 def test_embedded_self_test_still_passes(example):
     assert example.self_test() == 0
+
+
+def test_absent_calls_is_not_an_explicit_zero(example, tmp_path):
+    """Silence about a count must not read as an observed zero.
+
+    ``_count`` defaulted a missing ``calls`` field to 0 and the removal rule
+    keys on ``calls == 0``, so an export that never mentioned a count produced
+    the same revocation proposal as one that explicitly observed zero calls.
+    That is precisely the "an omitted grant is unobserved, not unused" rule the
+    module claims to enforce, so the guarantee was decorative. The earlier
+    removal test only ever omitted whole rows, and drove ``propose`` directly,
+    which is why it never reached the defaulting in ``load_observations``.
+    """
+    granted = {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file"}
+
+    silent = tmp_path / "silent.jsonl"
+    silent.write_text(json.dumps(granted) + "\n", encoding="utf-8")
+    assert example.propose(GOV, example.load_observations(silent), 3)["removals"] == []
+
+    stated = tmp_path / "stated.jsonl"
+    stated.write_text(json.dumps({**granted, "calls": 0}) + "\n", encoding="utf-8")
+    assert example.propose(GOV, example.load_observations(stated), 3)["removals"] == [
+        {"agent": "bot", "tool": "alpha::read_file"}
+    ]
+
+
+def test_would_block_without_a_calls_count_is_refused(example, tmp_path):
+    """Blocked calls with no total is an incomplete window, not weak evidence."""
+    path = tmp_path / "observed.jsonl"
+    path.write_text(json.dumps({
+        "agent": "bot", "decision": "rejected", "tool_key": "alpha::write_file",
+        "would_block_calls": 7, "reject_reasons": ["NOT_GRANTED"],
+    }) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="without a 'calls' count"):
+        example.load_observations(path)
+
+
+def test_unstated_calls_never_count_as_usage(example, tmp_path):
+    """An unstated count is not a zero to be summed into usage evidence."""
+    path = tmp_path / "observed.jsonl"
+    path.write_text(json.dumps({
+        "agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file",
+    }) + "\n", encoding="utf-8")
+    rows = example.load_observations(path)
+    assert rows[0]["calls"] is None
+
+
+def test_every_report_carries_the_provenance_limitation(example):
+    """#89: the export cannot prove which manifest it was recorded against.
+
+    The docstring said so at length, but argparse renders only its first line
+    and the report opened straight into pasteable grants, so the reader
+    deciding whether to apply the change never met the limitation.
+    """
+    report = example.render(
+        example.propose(GOV, [_row("bot", "alpha::write_file", ["NOT_GRANTED"])], 3),
+        "2026-08", 3,
+    )
+    assert "UNVERIFIED PROVENANCE" in report
+    assert "#89" in report
+    assert report.index("UNVERIFIED PROVENANCE") < report.index("```yaml")
+
+
+def test_help_carries_the_provenance_limitation():
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, str(_EXAMPLE), "--help"],
+        capture_output=True, text=True, check=True,
+    )
+    assert "UNVERIFIED PROVENANCE" in out.stdout

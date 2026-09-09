@@ -19,6 +19,11 @@ an (agent, tool) pair::
      "would_block_calls": 41,
      "reject_reasons": ["NOT_GRANTED", "UNMAPPED"]}
 
+``calls`` is optional but never defaulted: an absent count means UNSTATED, not
+observed-zero. Only an explicit ``"calls": 0`` can support a removal, and a row
+carrying ``would_block_calls`` without a total is refused as an incomplete
+window rather than read as weak evidence.
+
 ``reject_reasons`` is the FULL list the selector computed for the row, not the
 single winning one. That distinction is the whole safety story: reasons
 accumulate in ``_applicable_reasons`` and only the first by precedence is
@@ -72,6 +77,7 @@ import argparse
 import json
 import re
 import sys
+import textwrap
 from collections import defaultdict
 from pathlib import Path
 
@@ -112,8 +118,34 @@ UNSAFE_IN_NAME = re.compile(r"[\x00-\x1f\x7f]")
 QUALIFIED_KEY = re.compile(r"^[^:\s]+::[^:\s]+$")
 
 
-def _count(row: dict, key: str, where: str) -> int:
-    value = row.get(key, 0)
+# Shown at the top of every report and in --help. The docstring explains this at
+# length, but argparse renders only the first line of __doc__ and the report
+# opened straight into pasteable grants — so the one limitation that decides
+# whether a proposal is safe to apply was the one thing a reader never saw.
+UNVERIFIED_PROVENANCE = (
+    "UNVERIFIED PROVENANCE - the export carries no governance digest, graph "
+    "generation, or selector profile, so nothing here can distinguish evidence "
+    "recorded against THIS manifest from a replay of an older one. A window "
+    "captured before a DENY policy existed, or before a tool was retired, still "
+    "parses cleanly and still reads as NOT_GRANTED. Confirm the window was "
+    "recorded against the current manifest and profile before applying anything "
+    "below; reading the proposal carefully cannot establish provenance the "
+    "export never carried. Tracked in issue #89."
+)
+
+
+def _count(row: dict, key: str, where: str, *, missing: int | None = 0) -> int | None:
+    """Validate a count, keeping "absent" distinguishable from "explicitly zero".
+
+    ``missing=None`` is the load-bearing case. A removal claims a grant went
+    unused, and the only thing that can support that is a row which SAYS zero.
+    Defaulting an absent ``calls`` field to 0 made silence indistinguishable
+    from an explicit zero-call observation, so an export that never mentioned a
+    count still proposed revoking the grant.
+    """
+    if key not in row:
+        return missing
+    value = row[key]
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"{where}: {key} must be an integer, got {value!r}")
     if value < 0:
@@ -167,9 +199,16 @@ def load_observations(path: Path) -> list[dict]:
                 raise ValueError(f"{where}: {field} must be a non-empty string")
             if UNSAFE_IN_NAME.search(value):
                 raise ValueError(f"{where}: {field} contains a control character")
-        calls = _count(row, "calls", where)
+        calls = _count(row, "calls", where, missing=None)
         would_block = _count(row, "would_block_calls", where)
-        if would_block > calls:
+        if calls is None:
+            if would_block > 0:
+                raise ValueError(
+                    f"{where}: would_block_calls ({would_block}) without a 'calls' "
+                    "count - state the total explicitly, because an unstated count "
+                    "is not evidence"
+                )
+        elif would_block > calls:
             raise ValueError(
                 f"{where}: would_block_calls ({would_block}) exceeds calls ({calls})"
             )
@@ -275,7 +314,10 @@ def propose(gov: dict, observed: list[dict], min_would_block: int) -> dict:
         agent, ref = o["agent"], o["ref"]
         key = (agent, ref)
         if o["has_tool_key"]:
-            used[key] += o["calls"]
+            # `calls` is None when the export never stated one. Only an explicit
+            # zero is evidence of disuse, and `None == 0` is False — that is the
+            # whole mechanism keeping silence out of the removal list.
+            used[key] += o["calls"] or 0
             if o["calls"] == 0:
                 zero_call.add(key)
         if o["decision"] != "rejected":
@@ -359,6 +401,9 @@ def render(proposal: dict, window_label: str, min_would_block: int) -> str:
     out: list[str] = []
     a = out.append
     a("# Governance change proposal (generated — NOT applied)")
+    a("")
+    for line in textwrap.wrap(UNVERIFIED_PROVENANCE, width=76):
+        a("> " + line)
     a("")
     a(f"decision_mode: human_required · automatic_change: false · "
       f"window: {window_label} · evidence floor: would_block >= {min_would_block}")
@@ -555,7 +600,11 @@ def positive_int(value: str) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=textwrap.fill(UNVERIFIED_PROVENANCE, width=76),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     ap.add_argument("governance", nargs="?", type=Path)
     ap.add_argument("observed", nargs="?", type=Path)
     ap.add_argument("--min-would-block", type=positive_int, default=3)
