@@ -58,19 +58,37 @@ def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
     Neo4j is read-committed rather than snapshot-isolated.  Reading the
     generation before and after the query and retrying on a change prevents a
     result from being labelled with a generation that committed midway
-    through it. MCP live queries keep their historical self-healing fallback
-    after retry exhaustion; persisted artifact producers pass ``strict=True``
-    so they fail instead of writing a potentially mislabelled artifact.
+    through it.
+
+    Persisted artifact producers pass ``strict=True`` and fail rather than
+    write a mislabelled artifact. A live query still returns its data after
+    retry exhaustion, because an answer under churn beats an error, but it
+    comes back with ``graph_generation: None`` and
+    ``graph_state_verified: False``. Stamping the generation read AFTERWARDS
+    labelled the result with a state it was never read at, and the MCP tools
+    tell callers to cache per generation -- so a verdict from before a
+    permission change could be cached under the very generation that changed
+    it.
+
+    Null does not enforce anything by itself: ``None`` is a usable dict key and
+    two unverified responses compare equal on it. What changes is that the
+    response no longer ASSERTS a state it never had, and says so in a field a
+    consumer can act on. The obligation to skip the cache is the consumer's;
+    ADR-0004 states it.
     """
     for attempt in range(_GENERATION_RETRIES):
         before = graph_generation()
         result = fetch()
         if graph_generation() == before:
-            return {**result, "graph_generation": before}
+            return {
+                **result,
+                "graph_generation": before,
+                "graph_state_verified": True,
+            }
         _bracket_backoff(attempt)
     if strict:
         raise RuntimeError("graph generation changed during every read attempt")
-    return {**result, "graph_generation": graph_generation()}
+    return {**result, "graph_generation": None, "graph_state_verified": False}
 
 
 def with_graph_state(
@@ -79,7 +97,12 @@ def with_graph_state(
     strict: bool = False,
     state_reader: Callable[[], GraphState] | None = None,
 ) -> dict:
-    """Return ``fetch`` bracketed by the collision-safe graph state token."""
+    """Return ``fetch`` bracketed by the collision-safe graph state token.
+
+    Same contract as ``with_generation``: an unbracketed read comes back with
+    every state field null and ``graph_state_verified: False`` rather than
+    carrying a token it was not read under.
+    """
     read_state = state_reader if state_reader is not None else graph_state
     for attempt in range(_GENERATION_RETRIES):
         before = read_state()
@@ -91,19 +114,17 @@ def with_graph_state(
                 "graph_generation": before.generation,
                 "graph_instance_id": before.instance_id,
                 "graph_state": token,
+                "graph_state_verified": True,
             }
         _bracket_backoff(attempt)
     if strict:
         raise RuntimeError("graph state changed during every read attempt")
-    current = read_state()
     return {
         **result,
-        "graph_generation": current.generation,
-        "graph_instance_id": current.instance_id,
-        "graph_state": {
-            "instance_id": current.instance_id,
-            "generation": current.generation,
-        },
+        "graph_generation": None,
+        "graph_instance_id": None,
+        "graph_state": None,
+        "graph_state_verified": False,
     }
 
 

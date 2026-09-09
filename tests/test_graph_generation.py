@@ -143,9 +143,42 @@ def test_generation_bracket_fails_instead_of_mislabelling_after_retry_exhaustion
         queries.with_generation(lambda: {"value": "from-moving-graph"}, strict=True)
 
 
-def test_generation_bracket_live_query_self_heals_after_retry_exhaustion(monkeypatch):
+def test_unbracketed_live_query_returns_data_without_a_state_stamp(monkeypatch):
+    """An answer, yes; a generation it was never read at, no.
+
+    This used to stamp the generation read AFTER the last failed bracket --
+    the result came from generation 8 and went out labelled 10. The MCP tools
+    tell callers to cache per generation, so a verdict from before a
+    permission change could be cached under the generation that changed it.
+    A null generation cannot be a cache key, which is the whole mechanism.
+    """
     seq = iter(range(20))
     monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
     assert queries.with_generation(lambda: {"value": "live"}) == {
-        "value": "live", "graph_generation": 10,
+        "value": "live", "graph_generation": None, "graph_state_verified": False,
+    }
+
+
+def test_unbracketed_graph_state_query_drops_every_state_field(monkeypatch):
+    """The token, the instance id and the generation all go, not just one.
+
+    Leaving `graph_instance_id` or `graph_state` behind would let a caller
+    reconstruct a token the read never earned.
+    """
+    seq = iter(queries.GraphState("test-instance", n) for n in range(20))
+    got = queries.with_graph_state(lambda: {"value": "live"}, state_reader=lambda: next(seq))
+    assert got == {
+        "value": "live",
+        "graph_generation": None,
+        "graph_instance_id": None,
+        "graph_state": None,
+        "graph_state_verified": False,
+    }
+
+
+def test_a_bracketed_read_says_so_explicitly(monkeypatch):
+    """The success path carries the positive flag, so absence is never ambiguous."""
+    monkeypatch.setattr(queries, "graph_generation", lambda: 7)
+    assert queries.with_generation(lambda: {"value": "stable"}) == {
+        "value": "stable", "graph_generation": 7, "graph_state_verified": True,
     }

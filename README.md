@@ -456,7 +456,23 @@ server-qualified key. An unknown agent returns `agent_found: false`
 a typo'd agent is a context-construction error, not an empty catalog.
 
 MCP responses carry `graph_generation` (ADR-0004) so consumers can cache
-features per graph state with one integer comparison.
+features per graph state. Cache identity is the pair (`graph_instance_id`,
+`graph_generation`), not the integer alone: generations restart with the graph.
+
+A response also carries `graph_state_verified`. It is `true` when the read was
+bracketed by a stable graph state, and `false` when the graph moved under every
+retry — in which case all three state fields are null:
+
+```json
+{"graph_generation": null, "graph_instance_id": null,
+ "graph_state": null, "graph_state_verified": false}
+```
+
+An unverified response is still the answer to your question, but it must not be
+cached and must not be attributed to a graph state. Nothing enforces that for
+you: `null` is a usable dictionary key and two unverified responses compare
+equal on it. A consumer that turns eligibility into an authorization decision
+should reject or retry rather than proceed on one.
 
 If the graph backend is temporarily unavailable, every MCP tool returns
 `isError: true` with a typed `structuredContent` envelope instead of exposing

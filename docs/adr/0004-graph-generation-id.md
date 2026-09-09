@@ -23,12 +23,32 @@ feed the selector surface (and the MCP server responses) include
 `graph_generation`. Failed/rejected operations do not increment.
 
 Because Neo4j reads are read-committed, producers bracket a query with two
-generation reads and retry when they differ. Live MCP queries retain the
-historical availability-first fallback after bounded retry exhaustion: they
-return the last query result stamped with the freshest generation so caches
-self-heal on their next read. Persisted artifacts use strict bracketing and
-fail instead, because a potentially mislabelled replay artifact is worse than
-no artifact.
+generation reads and retry when they differ.
+
+Live MCP queries keep an availability-first fallback after bounded retry
+exhaustion, but they no longer stamp a state onto the result. The earlier
+fallback returned the last query result labelled with the freshest generation,
+described as letting caches "self-heal"; it did the opposite. A result read at
+generation 8 went out labelled 10, so a verdict computed before a permission
+change could be cached under the generation that changed it, and outlive it.
+
+An unbracketed read now returns `graph_generation`, `graph_instance_id` and
+`graph_state` all null, with `graph_state_verified: false`. Successful reads
+carry `graph_state_verified: true`, so an absent guarantee is never inferred
+from an absent field.
+
+The flag means one thing only: this read was bracketed by a stable graph state.
+It is not a freshness, provenance or enforcement claim. **Consumers must treat
+an unverified response as non-cacheable and must not attribute it to a graph
+state.** A null generation is not self-enforcing -- `None` is a perfectly good
+dictionary key, and two unverified responses compare equal on it -- so the
+obligation is on the consumer, and a consumer that turns eligibility into an
+authorization decision should reject or retry rather than proceed. Cache
+identity is the pair (`graph_instance_id`, `graph_generation`), and both are
+null exactly when there is nothing to key on.
+
+Persisted artifacts use strict bracketing and fail instead, because a
+potentially mislabelled replay artifact is worse than no artifact.
 
 ## Consequences
 

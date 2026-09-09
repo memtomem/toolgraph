@@ -11,11 +11,24 @@ All notable changes to Toolgraph are documented here.
   `mcp.server.fastmcp` and renamed every model field from camelCase to
   snake_case. The MCP wire format is unchanged, so existing clients need no
   change.
-- Unexpected exceptions raised inside an MCP tool no longer put their message
-  on the wire. Only errors toolgraph raises deliberately as `ContractError`
-  (for example an unknown selector profile) are forwarded; everything else
-  keeps the SDK's generic text, so an internal failure cannot disclose
-  filesystem paths, query bodies or credential-shaped values to a caller.
+- An unexpected exception raised by a toolgraph tool body no longer puts its
+  message on the wire. Only errors raised deliberately as `ContractError` (for
+  example an unknown selector profile) are forwarded; the rest keep the SDK's
+  generic text, so an internal failure cannot disclose filesystem paths, query
+  bodies or credential-shaped values. Argument-validation failures still echo
+  the caller's own input, as the MCP SDK intends.
+- **Breaking:** an MCP response whose read could not be bracketed by a stable
+  graph state now carries `graph_generation: null` and
+  `graph_state_verified: false` instead of the generation read afterwards.
+  Labelling such a result with a generation it was never read at let a verdict
+  from before a permission change be cached under the generation that changed
+  it, while the tool documentation tells callers to cache per generation.
+  Successful reads gain `graph_state_verified: true`, so the absence of a
+  guarantee is never inferred from a missing field. Null is not self-enforcing
+  — `None` is a usable cache key — so the obligation to skip the cache and to
+  attribute nothing to a graph state is the consumer's; ADR-0004 and the README
+  state it, and a consumer that turns eligibility into an authorization
+  decision should reject or retry such a response.
 
 ## 0.0.1 - 2026-09-09
 

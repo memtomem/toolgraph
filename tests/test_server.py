@@ -106,6 +106,7 @@ async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
         graph_generation=state.generation,
         graph_instance_id=state.instance_id,
         graph_state={"instance_id": state.instance_id, "generation": state.generation},
+        graph_state_verified=True,
     )
     assert got == expected
     assert got["verdict"] == "DENY"
@@ -173,6 +174,7 @@ async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container)
             graph_generation=state.generation,
             graph_instance_id=state.instance_id,
             graph_state={"instance_id": state.instance_id, "generation": state.generation},
+        graph_state_verified=True,
         )
         assert got == expected
 
@@ -216,5 +218,6 @@ async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
         graph_generation=state.generation,
         graph_instance_id=state.instance_id,
         graph_state={"instance_id": state.instance_id, "generation": state.generation},
+        graph_state_verified=True,
     )
     assert got == expected

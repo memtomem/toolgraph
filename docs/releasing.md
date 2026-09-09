@@ -56,11 +56,16 @@ executing inside the privileged job. Pass values through `env:`.
 
 ## Release candidate
 
-1. Keep `toolgraph/__init__.py::__version__` at `0.0.1` for the first public
-   alpha (the package classifier and README mark Alpha; this is not `0.0.1a1`).
-   Finalize PR #87 against current main, including the README and both beginner
-   guides. Date the changelog when the release candidate is confirmed. Do not
-   merge the PyPI-first instructions while publication prerequisites are unmet.
+1. Set `toolgraph/__init__.py::__version__` to the version being released, and
+   move the changelog's `## Unreleased` section under a dated heading for it.
+   PyPI refuses a version that already exists, so a released number is spent
+   even if the upload later fails verification.
+
+   The first public alpha was `0.0.1`. **The next release is `0.1.0`**: main
+   carries breaking changes against it — the MCP SDK floor moved to 2.x, and an
+   MCP response whose read could not be bracketed now returns null state fields
+   rather than the generation read afterwards. Callers pinned to `0.0.1`
+   continue to work; they are not silently upgraded.
 2. Run the full local release gate:
 
    ```bash
@@ -102,8 +107,11 @@ executing inside the privileged job. Pass values through `env:`.
 5. Verify **published** TestPyPI files against the candidate, not a successful
    workflow badge or a fresh `skip-existing` build:
 
+   Substitute the version being released for `$VERSION` throughout; these
+   commands were first written for `0.0.1` and are not specific to it.
+
    ```bash
-   python scripts/verify_index_release.py --index testpypi --version 0.0.1 --dist dist
+   python scripts/verify_index_release.py --index testpypi --version "$VERSION" --dist dist
    ```
 
    In a new Python 3.12 environment outside the checkout, download only the
@@ -112,10 +120,10 @@ executing inside the privileged job. Pass values through `env:`.
 
    ```bash
    python -m pip download --no-deps --only-binary=:all: \
-     --index-url https://test.pypi.org/simple/ --dest downloaded toolgraph==0.0.1
+     --index-url https://test.pypi.org/simple/ --dest downloaded "toolgraph==$VERSION"
    # Compare the downloaded wheel SHA-256 with the verifier's output first.
    python -m pip install --index-url https://pypi.org/simple/ \
-     'downloaded/toolgraph-0.0.1-py3-none-any.whl[ladybug]'
+     "downloaded/toolgraph-$VERSION-py3-none-any.whl[ladybug]"
    python -m pip check
    toolgraph --version
    toolgraph example init quickstart
@@ -153,16 +161,16 @@ changes and require an explicit release decision by a maintainer.
 
 While the production publish job waits for environment approval, download its
 `dist` artifact into a new directory and run `verify_index_release.py --index
-testpypi --version 0.0.1 --dist <production-dist>`. A mismatch, missing file,
+testpypi --version "$VERSION" --dist <production-dist>`. A mismatch, missing file,
 yanked release or unavailable index blocks approval. Only the two expected
 filenames are accepted. Retain the source SHA, both tag targets, workflow run
 IDs and both published file digests in the release evidence.
 
 After production upload, run the verifier with `--index pypi`, repeat the clean
 installation and quickstart from PyPI, and check metadata and publishing
-attestations. Then create the GitHub Release titled `v0.0.1 — Alpha` with its
-prerelease flag enabled to communicate maturity; the Python package version
-remains `0.0.1`. The release notes must state the advisory boundary and link to
+attestations. Then create the GitHub Release titled `v$VERSION — Alpha` with
+its prerelease flag enabled to communicate maturity; the tag and the Python
+package version must be the same number. The release notes must state the advisory boundary and link to
 the standalone quickstart. Do not call a successful local build publication.
 
 For a defective published release, yank it and fix forward with a new version;

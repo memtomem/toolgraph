@@ -4,6 +4,13 @@ it crawls. Thin wrappers over graph.queries — all logic lives there.
 Every response carries ``graph_generation`` (ADR-0004) so callers can cache
 graph-derived features and pin telemetry to a replayable graph state. The
 stamp lives HERE, not in the query layer — CLI output stays unchanged.
+
+``graph_generation`` is null, with ``graph_state_verified: false``, when the
+graph moved under every read attempt. The data is still the answer; what is
+missing is a state it was demonstrably read at. Such a response must not be
+cached and must not be attributed to a graph state — nothing enforces that on
+the consumer's behalf, so ADR-0004 states the obligation. A consumer turning
+eligibility into an authorization decision should reject or retry instead.
 """
 
 from __future__ import annotations
@@ -278,7 +285,9 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     four annotation self-claims — plus the rule-based ``risk_score`` from the
     published fixed table. No relevance, no learning. ``agent_found: false``
     means selection should abort: context-construction error, not an empty
-    result. Cache per ``graph_generation``.
+    result. Cache on (``graph_instance_id``, ``graph_generation``), and never
+    when ``graph_state_verified`` is false — that read could not be bracketed
+    by a stable graph state, so it belongs to no state at all.
     """
     return _with_generation(lambda: selector.rank_features(agent, candidates))
 
