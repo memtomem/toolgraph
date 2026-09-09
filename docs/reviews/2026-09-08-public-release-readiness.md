@@ -170,16 +170,35 @@ its summaries retain identifiers, hashes and counts, never matched credentials.
 
 ## External publication status and next actions
 
-- PyPI and TestPyPI JSON/simple lookups returned 404: no published Toolgraph
-  distribution was found. HTML Client Challenge responses are not project data.
-- The owner reports that both Pending Trusted Publishers are registered. Browser
-  management pages require authentication; actual OIDC upload is NOT RUN.
-- Visibility remains private. Environment/reviewer/tag restrictions, main branch
-  protection, public security features and final live install verification are
-  NOT RUN. The publisher cannot be inferred from YAML alone.
-- Complete historical-edit handling and the remaining surface review first.
-  Then public transition/settings, PR #87 merge with green CI, `test-v0.0.1`,
-  published-file verification and clean install, same-source `v0.0.1`, production
-  digest approval, PyPI readback/install and GitHub Release.
-- No paid provider canary, MCP 2.x migration, observation-based grant proposal,
-  production strict rollout, release tag or external package upload occurred.
+**Toolgraph 0.0.1 was published on 2026-09-09.** The sequence below is a record
+of what ran, not a plan.
+
+| Step | Outcome |
+| --- | --- |
+| PR #35 revision deletion | 4 of 4 deleted, verified by API readback |
+| Visibility | public; 0 rulesets existed, so none needed restoring |
+| `main` branch protection | required check `ci-required`, strict, force-push and deletion disabled |
+| Security features | secret scanning, push protection, Dependabot alerts and private vulnerability reporting all enabled; 0 alerts |
+| `pypi` environment | required reviewer `memtomem`, admin bypass disabled, tag policies `test-v*` and `v*` |
+| PR #87 | merged as `cfc83ad` with all 14 checks green |
+| Local release gate | 521 tests, ruff, three audits, twine and byte-identical sdist rebuild all PASS |
+| `test-v0.0.1` rehearsal | TestPyPI upload succeeded; index verification PASS |
+| Clean-room install | wheel digest matched; seven quickstart commands ran; `read_note` eligible and `publish_note` rejected with DENY path |
+| `v0.0.1` production | digest compared against published TestPyPI bytes before approval; PyPI upload succeeded |
+| PyPI readback | index verification PASS; fresh-venv install and quickstart acceptance repeated |
+| GitHub Release | `v0.0.1 — Alpha`, prerelease flag set |
+
+Both distributions carry PEP 740 attestations whose publisher is repository
+`memtomem/toolgraph`, workflow `release.yml`, environment `pypi`. Package
+metadata reads Apache-2.0 with `requires_python <3.15,>=3.12`.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `toolgraph-0.0.1-py3-none-any.whl` | `ec7739d5aaf3dc7141484948b44781bc151c52482eb5e7d6d69222ada6d74951` |
+| `toolgraph-0.0.1.tar.gz` | `55e19405cd4eb664bc9afbab04f457e1fad5d250e73ccf6b3a910170e71d0f5b` |
+
+These digests are identical across the local build, the CI rehearsal build and
+the production build, so the reviewed source and the published bytes correspond.
+
+Not done and deliberately out of scope: paid provider canary, MCP 2.x
+migration, observation-based grant proposal and production strict rollout.
