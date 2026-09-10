@@ -48,10 +48,13 @@ def build() -> MCPServer:
 class RequireToken:
     """Reject any HTTP request that does not carry the expected auth header.
 
-    Raw ASGI rather than Starlette's BaseHTTPMiddleware on purpose:
-    BaseHTTPMiddleware buffers the response, which breaks the long-lived SSE
-    stream this fixture has to serve. Non-HTTP scopes (notably `lifespan`) are
-    passed straight through, or the SDK's session manager never starts.
+    Raw ASGI rather than Starlette's BaseHTTPMiddleware: this forwards ASGI
+    messages untouched, where BaseHTTPMiddleware would relay the long-lived SSE
+    response through an extra task and memory object stream for no benefit here.
+    (It streams rather than buffers, so that route would work -- it is just more
+    machinery around a connection meant to stay open.) Non-HTTP scopes, notably
+    `lifespan`, are passed straight through, or the SDK's session manager never
+    starts.
 
     It also keeps a tally of rejections, readable without auth at
     `RECEIPT_PATH`. That receipt is the point: the SDK funnels both a 401 and a
