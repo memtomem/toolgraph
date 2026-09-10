@@ -12,6 +12,12 @@ All notable changes to Toolgraph are documented here.
   fixture server can now serve SSE, `tests/test_crawler.py` crawls it, and
   `scripts/verify_mcp_floor.py` drives it at the declared SDK floor alongside
   streamable-http. Endpoint redaction for SSE URLs is pinned by a test.
+- Auth-header forwarding is now verified on both HTTP transports (#103).
+  `ServerSpec.headers` carries crawl credentials to upstream MCP servers, but
+  streamable-http and SSE hand them to the SDK by different mechanisms and
+  neither had ever been run with a non-empty value. The fixture server can now
+  reject tokenless requests, so a dropped header fails a test instead of
+  quietly crawling a smaller tool set.
 
 ## 0.1.0 - 2026-09-10
 

@@ -13,7 +13,10 @@ declared SDK floor.
 
 Uses the preferred ``streamable_http_client``; since it takes headers via a
 custom httpx client rather than a ``headers=`` kwarg, we build one with the
-SDK's ``create_mcp_http_client`` when auth headers are supplied.
+SDK's ``create_mcp_http_client`` when auth headers are supplied. The two
+spellings mean one can stop carrying credentials without the other noticing, so
+``test_crawl_forwards_headers`` drives both against a fixture that rejects
+tokenless requests, and the floor script pins the streamable-http one.
 """
 
 from __future__ import annotations
