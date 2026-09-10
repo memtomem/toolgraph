@@ -123,6 +123,18 @@ def _rejections(port: int) -> int:
         return int(response.read())
 
 
+def _rejections_or_none(port: int) -> int | None:
+    """`_rejections`, but None while the server is not answering yet.
+
+    Called from inside the startup retry loop, where "connection refused" is
+    the normal case and must not be mistaken for a verdict.
+    """
+    try:
+        return _rejections(port)
+    except OSError:
+        return None
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -174,15 +186,15 @@ async def http_transport(mode: str, transport: str, path: str) -> None:
             proc.wait(timeout=10)
 
 
-async def header_forwarding() -> None:
+async def header_forwarding(mode: str, transport: str, path: str) -> None:
     """Auth headers must actually reach the server at the declared floor.
 
-    Only streamable-http is driven here. SSE hands `headers=` straight to
-    `sse_client`, but streamable-http cannot take that kwarg, so we build a
-    client with `create_mcp_http_client(headers=...)` and pass `http_client=` --
-    a 2.x-specific spelling, and the one that can silently stop carrying
-    credentials. `tests/test_crawler.py` covers both transports; this leg is
-    here so the floor cannot regress it unnoticed.
+    Both HTTP transports are driven, because they hand headers to the SDK by
+    different spellings: SSE passes `headers=` straight to `sse_client`, while
+    streamable-http cannot take that kwarg and needs a client built with
+    `create_mcp_http_client(headers=...)` and passed as `http_client=`. Either
+    can stop carrying credentials without the other noticing, and credentials
+    are what a private server's crawl depends on.
     """
     sys.path.insert(0, str(FIXTURE.parent))
     from sample_server import AUTH_HEADER, AUTH_TOKEN
@@ -191,10 +203,10 @@ async def header_forwarding() -> None:
     from toolgraph.models import ServerSpec
 
     port = _free_port()
-    proc = subprocess.Popen([sys.executable, str(FIXTURE), "http-auth", str(port)])
+    proc = subprocess.Popen([sys.executable, str(FIXTURE), mode, str(port)])
     try:
-        url = f"http://127.0.0.1:{port}/mcp"
-        authorized = ServerSpec(name="floor", transport="streamable-http", url=url,
+        url = f"http://127.0.0.1:{port}{path}"
+        authorized = ServerSpec(name="floor", transport=transport, url=url,
                                 headers={AUTH_HEADER: AUTH_TOKEN})
         deadline = time.monotonic() + 30
         while True:
@@ -208,11 +220,19 @@ async def header_forwarding() -> None:
                     async with open_session(authorized) as session:
                         await session.initialize()
                         listed = await session.list_tools()
-                        check("headers reach the server",
+                        check(f"{transport} headers reach the server",
                               {t.name for t in listed.tools}
                               == {"read_file", "write_file"})
                         break
             except Exception:
+                # The retry loop is here to wait out server STARTUP. A rejection
+                # in the tally means the server is already up and turning us
+                # away, so retrying just burns the deadline and buries the
+                # cause under a transport traceback. Fail now, and say why.
+                if _rejections_or_none(port):
+                    check(f"{transport} headers reach the server", False,
+                          "the server refused an authorized request -- "
+                          "headers are not reaching it")
                 if time.monotonic() > deadline:
                     raise
                 await asyncio.sleep(0.5)
@@ -221,11 +241,12 @@ async def header_forwarding() -> None:
         # check above would pass even if the header were dropped entirely.
         #
         # The evidence is the SERVER's rejection tally, not the exception the
-        # client sees. "Some exception was raised" would be vacuous: a timeout
-        # or a dead port would satisfy it, and the SDK maps both a 401 and a
-        # 500 onto the same generic error for streamable-http, so the exception
-        # cannot distinguish "refused" from "fell over".
-        anonymous = ServerSpec(name="floor", transport="streamable-http", url=url)
+        # client sees. "Some exception was raised" would be vacuous -- a
+        # timeout or a dead port satisfies it too. Nor is the exception's shape
+        # dependable across the two transports this runs for: SSE surfaces the
+        # 401 itself, while streamable-http funnels a 401 and a 500 into the
+        # same generic error. The tally answers the same way for both.
+        anonymous = ServerSpec(name="floor", transport=transport, url=url)
         before = _rejections(port)
         # The authorized loop above retries, so pin that none of its attempts
         # were turned away. Without this the comparison below could start from
@@ -267,7 +288,10 @@ async def main() -> int:
         ("pagination", pagination),
         ("streamable-http", lambda: http_transport("http", "streamable-http", "/mcp")),
         ("sse", lambda: http_transport("sse", "sse", "/sse")),
-        ("header forwarding", header_forwarding),
+        ("header forwarding (streamable-http)",
+         lambda: header_forwarding("http-auth", "streamable-http", "/mcp")),
+        ("header forwarding (sse)",
+         lambda: header_forwarding("sse-auth", "sse", "/sse")),
     ):
         print(f"{name}:")
         await make_coro()

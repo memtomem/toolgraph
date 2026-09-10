@@ -16,7 +16,7 @@ custom httpx client rather than a ``headers=`` kwarg, we build one with the
 SDK's ``create_mcp_http_client`` when auth headers are supplied. The two
 spellings mean one can stop carrying credentials without the other noticing, so
 ``test_crawl_forwards_headers`` drives both against a fixture that rejects
-tokenless requests, and the floor script pins the streamable-http one.
+tokenless requests, and the floor script pins both at the declared SDK floor.
 """
 
 from __future__ import annotations

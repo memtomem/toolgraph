@@ -17,7 +17,8 @@ All notable changes to Toolgraph are documented here.
   streamable-http and SSE hand them to the SDK by different mechanisms and
   neither had ever been run with a non-empty value. The fixture server can now
   reject tokenless requests, so a dropped header fails a test instead of
-  quietly crawling a smaller tool set.
+  quietly crawling a smaller tool set. Both transports are covered at the
+  lockfile version and at the declared SDK floor.
 
 ## 0.1.0 - 2026-09-10
 
