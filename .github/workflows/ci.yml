@@ -101,7 +101,9 @@ jobs:
       # The crawl above is stdio discovery and the query above is a local CLI
       # call, so neither reaches what the 2.x migration changed most: the
       # server's call_tool override and its error envelope, a continuation
-      # cursor, and the streamable-http transport.
+      # cursor, both HTTP transports (streamable-http and legacy SSE), and
+      # auth-header forwarding. This job is where those are proven at the
+      # declared floor; keep this list in step with the script's legs.
       - run: uv run --python .minimum-venv --no-project python scripts/verify_mcp_floor.py
 
   audit-runtime:

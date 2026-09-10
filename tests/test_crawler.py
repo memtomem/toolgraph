@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -14,6 +15,9 @@ import pytest
 from toolgraph.crawler.client import crawl_server
 from toolgraph.graph import loader
 from toolgraph.models import ServerSpec
+
+sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
+from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH  # noqa: E402
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
 
@@ -122,6 +126,67 @@ async def test_crawl_sse(sse_url):
     # The endpoint recorded on the result is the redacted origin, never the path.
     assert result.endpoint.startswith("http://127.0.0.1:")
     assert "/sse" not in result.endpoint
+
+
+# --- header forwarding: issue #103 ---------------------------------------
+#
+# Both HTTP transports forward `ServerSpec.headers`, but through DIFFERENT SDK
+# mechanisms: streamable-http cannot take a `headers=` kwarg, so we build a
+# client with `create_mcp_http_client(headers=...)` and hand it over as
+# `http_client=`, while SSE passes `headers=` straight through. One spelling can
+# break without the other, and this is the path that carries crawl credentials.
+#
+# The fixture's `-auth` modes reject any request without the token and keep a
+# tally of what they turned away. Each test drives BOTH halves against ONE
+# server: the same URL must succeed with headers and be refused without them.
+#
+# The tally, not the exception, is the evidence. `pytest.raises` alone would be
+# vacuous here -- a timeout, a dead port or a crashed server satisfies it just
+# as well as a refusal -- so the test asks the server how many requests it
+# actually turned away.
+
+
+def _rejection_count(port: int) -> int:
+    """Ask the fixture how many requests it has turned away for a bad token."""
+    with urllib.request.urlopen(
+        f"http://127.0.0.1:{port}{RECEIPT_PATH}", timeout=5
+    ) as response:
+        return int(response.read())
+
+
+@pytest.mark.parametrize(
+    ("mode", "transport", "path"),
+    [
+        ("http-auth", "streamable-http", "/mcp"),
+        ("sse-auth", "sse", "/sse"),
+    ],
+)
+async def test_crawl_forwards_headers(mode, transport, path):
+    with _serve(mode) as port:
+        url = f"http://127.0.0.1:{port}{path}"
+
+        authorized = ServerSpec(
+            name="sample-auth",
+            transport=transport,
+            url=url,
+            headers={AUTH_HEADER: AUTH_TOKEN},
+        )
+        result = await crawl_server(authorized)
+        assert sorted(t.name for t in result.tools) == ["read_file", "write_file"]
+        # The authorized crawl must not have been turned away even once, or the
+        # comparison below would be measuring the wrong thing.
+        assert _rejection_count(port) == 0
+
+        # Same server, same URL, headers omitted: the crawl must not succeed.
+        anonymous = ServerSpec(name="sample-auth", transport=transport, url=url)
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            await crawl_server(anonymous)
+
+        # And it must have failed because the SERVER refused it, not because
+        # something else went wrong. The SDK funnels a 401 and a 500 into the
+        # same generic error for streamable-http, so only the tally can tell
+        # those apart.
+        assert _rejection_count(port) > 0
 
 
 # --- pagination: Codex PR #1 review --------------------------------------
