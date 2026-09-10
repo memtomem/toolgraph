@@ -2,6 +2,17 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Fixed
+
+- The `sse` crawl transport is now verified end to end. `ServerSpec` has always
+  accepted `transport: sse`, but no test, script or CI job ever opened an SSE
+  session, so the branch survived the MCP 2.x migration unexercised. The test
+  fixture server can now serve SSE, `tests/test_crawler.py` crawls it, and
+  `scripts/verify_mcp_floor.py` drives it at the declared SDK floor alongside
+  streamable-http. Endpoint redaction for SSE URLs is pinned by a test.
+
 ## 0.1.0 - 2026-09-10
 
 Second alpha. Upgrading from `0.0.1` takes three things: the MCP SDK 2.x, one

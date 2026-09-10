@@ -1,7 +1,8 @@
-"""A tiny MCP server used to exercise the crawler. Runs over stdio or http.
+"""A tiny MCP server used to exercise the crawler. Runs over stdio, http or sse.
 
     python sample_server.py            # stdio (default)
-    python sample_server.py http 8077  # streamable-http on :8077
+    python sample_server.py http 8077  # streamable-http on :8077, endpoint /mcp
+    python sample_server.py sse 8078   # legacy HTTP+SSE on :8078, endpoint /sse
 """
 
 import sys
@@ -38,5 +39,7 @@ if __name__ == "__main__":
     server = build()
     if transport == "http":
         server.run(transport="streamable-http", host="127.0.0.1", port=port)
+    elif transport == "sse":
+        server.run(transport="sse", host="127.0.0.1", port=port)
     else:
         server.run()

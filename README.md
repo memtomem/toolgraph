@@ -574,7 +574,8 @@ All thirteen are pure graph reads and advertise `readOnlyHint` /
 
 ## Inputs
 
-- `servers.yaml` — MCP servers to crawl (stdio `command`/`args`, or http `url`).
+- `servers.yaml` — MCP servers to crawl (stdio `command`/`args`, or a `url` for
+  `streamable-http`; `sse` is accepted for legacy servers that predate it).
 - `governance.yaml` — authored agents, policies, `CAN_CALL` grants, `READS/WRITES`
   data access, `GOVERNED_BY` mappings, and `expected_exceptions` for intentional
   DENY-zone reach. Per-edge `provenance` is optional everywhere. See `examples/`.
@@ -596,7 +597,7 @@ Two reference exhibits:
 
 ```
 toolgraph/
-  crawler/   connect to MCP servers (stdio + streamable-http), enumerate tools/resources
+  crawler/   connect to MCP servers (stdio, streamable-http, legacy sse), enumerate tools/resources
   graph/     Neo4j driver, schema/constraints, idempotent loader, governance/audit queries
   manifest/  parse + ingest authored governance (idempotent)
   server/    MCP server exposing the queries as MCP tools

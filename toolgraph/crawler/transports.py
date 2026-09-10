@@ -2,8 +2,14 @@
 
 Normalizes the transport differences the SDK exposes. Under mcp 2.x every
 transport yields the same 2-tuple ``(read, write)``; the session-id getter
-streamable-http used to return as a third element is gone. SSE is supported
-only as a deprecated fallback.
+streamable-http used to return as a third element is gone.
+
+SSE is the legacy HTTP transport the MCP spec superseded with streamable-http;
+prefer streamable-http for anything new. The SDK still ships SSE and does not
+warn on it, so the branch below stays supported and is exercised for real by
+``tests/test_crawler.py::test_crawl_sse`` and by the ``sse`` leg of
+``scripts/verify_mcp_floor.py``, which the ``minimum-mcp`` CI job runs at the
+declared SDK floor.
 
 Uses the preferred ``streamable_http_client``; since it takes headers via a
 custom httpx client rather than a ``headers=`` kwarg, we build one with the

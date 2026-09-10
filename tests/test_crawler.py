@@ -1,4 +1,4 @@
-"""Phase 2: crawl a real MCP server over stdio and streamable-http."""
+"""Phase 2: crawl a real MCP server over stdio, streamable-http and SSE."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -47,38 +48,80 @@ async def test_crawl_then_load_creates_edges(graph, stdio_spec):
     }
 
 
-@pytest.fixture
-def http_url():
+@contextmanager
+def _serve(mode: str):
+    """Run the fixture server in `mode` and yield its port.
+
+    Shared by every HTTP-ish transport so streamable-http and SSE cannot drift
+    apart in how they are started, waited on, or torn down.
+    """
     # Pick an ephemeral free port instead of a hardcoded one: a busy CI
     # runner with 8077 taken made this fixture flaky. The tiny window
     # between closing the probe socket and the server binding is accepted.
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    proc = subprocess.Popen([sys.executable, FIXTURE, "http", str(port)])
+    proc = subprocess.Popen([sys.executable, FIXTURE, mode, str(port)])
     deadline = time.time() + 25
     try:
         while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"sample {mode} server exited early with code {proc.returncode}"
+                )
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                     break
             except OSError:
                 time.sleep(0.3)
         else:
-            raise RuntimeError("sample http server did not start")
-        yield f"http://127.0.0.1:{port}/mcp"
+            raise RuntimeError(f"sample {mode} server did not start")
+        yield port
     finally:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
+            # Reap after the kill too, or teardown returns with the child still
+            # exiting and the next test races it for a port.
             proc.kill()
+            proc.wait(timeout=10)
+
+
+@pytest.fixture
+def http_url():
+    with _serve("http") as port:
+        yield f"http://127.0.0.1:{port}/mcp"
+
+
+@pytest.fixture
+def sse_url():
+    with _serve("sse") as port:
+        yield f"http://127.0.0.1:{port}/sse"
 
 
 async def test_crawl_streamable_http(http_url):
     spec = ServerSpec(name="sample-http", transport="streamable-http", url=http_url)
     result = await crawl_server(spec)
     assert sorted(t.name for t in result.tools) == ["read_file", "write_file"]
+
+
+async def test_crawl_sse(sse_url):
+    """`transport: sse` is accepted by ServerSpec, so it has to actually crawl.
+
+    Legacy HTTP+SSE is superseded by streamable-http, but the config surface
+    still admits it and the SDK still ships it, so the branch in
+    `crawler/transports.py` needs a real server behind it.
+    """
+    spec = ServerSpec(name="sample-sse", transport="sse", url=sse_url)
+    result = await crawl_server(spec)
+
+    assert sorted(t.name for t in result.tools) == ["read_file", "write_file"]
+    assert [r.uri for r in result.resources] == ["file:///data/customers.csv"]
+    assert result.transport == "sse"
+    # The endpoint recorded on the result is the redacted origin, never the path.
+    assert result.endpoint.startswith("http://127.0.0.1:")
+    assert "/sse" not in result.endpoint
 
 
 # --- pagination: Codex PR #1 review --------------------------------------
