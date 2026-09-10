@@ -4,8 +4,9 @@
 The `minimum-mcp` CI job installs the declared floor and needs to prove the
 floor SPEAKS the protocol, not merely that the package imports. A crawl over
 stdio does not reach the pieces the 2.x migration changed most: the server's
-`call_tool` override and its error envelope, a continuation cursor, and the
-streamable-http transport. Those are what this script drives.
+`call_tool` override and its error envelope, a continuation cursor, and the two
+HTTP transports (streamable-http and legacy SSE). Those are what this script
+drives.
 
 Run it against any interpreter that has toolgraph installed::
 
@@ -115,16 +116,20 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-async def streamable_http() -> None:
-    """The transport the crawl over stdio never touches."""
+async def http_transport(mode: str, transport: str, path: str) -> None:
+    """Drive one HTTP-ish transport; the crawl over stdio never touches these.
+
+    `mode` is the fixture server's argv verb, `transport` the ServerSpec value
+    and `path` the endpoint the SDK's server mounts for it.
+    """
     from toolgraph.crawler.transports import open_session
     from toolgraph.models import ServerSpec
 
     port = _free_port()
-    proc = subprocess.Popen([sys.executable, str(FIXTURE), "http", str(port)])
+    proc = subprocess.Popen([sys.executable, str(FIXTURE), mode, str(port)])
     try:
-        url = f"http://127.0.0.1:{port}/mcp"
-        spec = ServerSpec(name="floor", transport="streamable-http", url=url)
+        url = f"http://127.0.0.1:{port}{path}"
+        spec = ServerSpec(name="floor", transport=transport, url=url)
         deadline = time.monotonic() + 30
         while True:
             if proc.poll() is not None:
@@ -139,7 +144,7 @@ async def streamable_http() -> None:
                     async with open_session(spec) as session:
                         await session.initialize()
                         listed = await session.list_tools()
-                        check("streamable-http lists tools",
+                        check(f"{transport} lists tools",
                               {t.name for t in listed.tools}
                               == {"read_file", "write_file"})
                         return
@@ -162,11 +167,17 @@ async def main() -> int:
 
     print(f"verifying the MCP surface against mcp {version('mcp')}")
     del mcp
-    for name, coro in (("server boundary", server_boundary()),
-                       ("pagination", pagination()),
-                       ("streamable-http", streamable_http())):
+    # Factories, not coroutine objects: a leg that fails raises out of the loop,
+    # and eagerly-built coroutines for the later legs would then be garbage
+    # collected unawaited, burying the real failure under RuntimeWarnings.
+    for name, make_coro in (
+        ("server boundary", server_boundary),
+        ("pagination", pagination),
+        ("streamable-http", lambda: http_transport("http", "streamable-http", "/mcp")),
+        ("sse", lambda: http_transport("sse", "sse", "/sse")),
+    ):
         print(f"{name}:")
-        await coro
+        await make_coro()
     print("floor verification passed")
     return 0
 

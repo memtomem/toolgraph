@@ -100,10 +100,16 @@ def test_endpoint_labels_never_include_args_or_url_secrets():
         transport="streamable-http",
         url="https://alice:secret@example.test:8443/mcp?token=super-secret#fragment",
     )
+    sse = ServerSpec(
+        transport="sse",
+        url="https://alice:secret@example.test:8443/sse?token=super-secret#fragment",
+    )
 
     assert endpoint_label(stdio) == "stdio:python"
     assert spec_label(stdio) == "stdio:python"
     assert endpoint_label(http) == "https://example.test:8443"
+    # SSE URLs carry the same credentials and query tokens as streamable-http.
+    assert endpoint_label(sse) == "https://example.test:8443"
     assert persisted_endpoint("stdio", "python server.py --token=secret") == "stdio:python"
 
 
