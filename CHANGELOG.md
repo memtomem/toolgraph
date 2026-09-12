@@ -4,7 +4,34 @@ All notable changes to Toolgraph are documented here.
 
 ## Unreleased
 
+### Added
+
+- `toolgraph example init` now writes a `README.md` into the generated
+  directory. `docs/` is excluded from the sdist, so a user who installed from
+  PyPI previously landed in a directory of three unexplained files with only
+  the CLI's one-line hint to go on. The file lists the commands in order,
+  states the expected outcome, and links the full guide.
+- `examples/README.md` maps each `servers-*.yaml` / `governance-*.yaml` input
+  to the script or workflow that consumes it, and to what it needs to run.
+- A `Documentation` URL in the project metadata, so the beginner guide is
+  reachable from the PyPI sidebar.
+
 ### Fixed
+
+- The packaged quickstart governance manifest now carries `provenance` on
+  every authored edge. The beginner guide claimed every authored edge had an
+  evidence pointer and then told the reader to run `unbacked-edges`, which
+  listed all three of them. The audit now comes back empty, and both the
+  manifest and the guide say what that does and does not prove: the demo tools
+  return strings and touch no file, so the READS/WRITES effects are synthetic
+  and their evidence cites the fixture that defines them. An empty audit means
+  every edge has a pointer, not that a claim is true.
+- Beginner guide corrections (both languages): the shared-backend section
+  needs a repository clone, since `docker-compose.yml` and `.env.example` ship
+  with neither the package nor the generated quickstart; `policy compile`
+  prints metadata describing the bundle, not the bundle; and the gateway step
+  is labelled optional, matching the README's statement that memtomem-stm is
+  not a required dependency.
 
 - The `sse` crawl transport is now verified end to end. `ServerSpec` has always
   accepted `transport: sse`, but no test, script or CI job ever opened an SSE

@@ -93,4 +93,7 @@ an issue.
 
 `toolgraph example init` builds a self-contained offline quickstart. A bug that
 reproduces from it is the most useful kind of report, because it needs no
-access to your servers or your governance manifest.
+access to your servers or your governance manifest. The generated directory
+carries its own `README.md`, and the
+[beginner guide](docs/beginner-guide.md) ([Korean](docs/ko-beginner-guide.md))
+walks the same path in full if you have not run Toolgraph before.

@@ -48,7 +48,15 @@ toolgraph ingest-manifest \
 ```
 
 예제는 `vibe-coder`에게 두 도구의 호출 권한을 주지만 draft 리소스에는
-DENY 정책을 적용합니다. 작성한 모든 edge에는 근거 포인터가 있습니다.
+DENY 정책을 적용합니다. 작성한 모든 edge에 `provenance` 근거 포인터가 있어서
+`toolgraph unbacked-edges` 결과가 비어 있습니다. `data_access` 항목 하나에서
+`provenance` 블록을 지우고 다시 적재한 뒤 실행하면 그 edge가 목록에 나타납니다.
+grant는 `unbacked-edges --include-grants`로 따로 감사합니다.
+
+결과가 비어 있다는 것은 모든 edge에 포인터가 있다는 뜻이지 그 주장이 사실이라는
+뜻이 아닙니다. demo 도구는 문자열만 반환하고 실제 파일을 건드리지 않으므로
+READS/WRITES 항목은 예제용이며 evidence에 그렇게 적혀 있습니다. 포인터를 따라가
+확인하는 것은 검토자의 몫이고, 포인터를 요구하는 이유가 바로 그것입니다.
 
 ## 4. 판정 확인
 
@@ -72,17 +80,21 @@ toolgraph policy compile \
   --output .toolgraph/policy-bundle.json
 ```
 
-성공하면 출력 경로, 정확한 byte digest, 그래프 instance/generation,
-eligible/rejected 개수가 JSON으로 표시됩니다. 번들은 canonical UTF-8
+성공하면 번들 자체가 아니라 번들을 설명하는 JSON(출력 경로, 정확한 byte
+digest, 그래프 instance/generation, eligible/rejected 개수)이 표시됩니다. 번들은 canonical UTF-8
 JSON이며 private 권한과 atomic replacement로 저장됩니다.
 
 첫 적용은 `review`가 안전합니다. reference gateway는 rejected 도구를 계속
 보이게 두고 would-block 호출을 기록합니다. 판정을 확인한 뒤 같은 정책을
 `strict` profile로 다시 컴파일하면 rejected 도구가 숨겨지고 차단됩니다.
 
-## 6. memtomem-stm에서 적용
+여기까지가 단독으로 완결되는 quickstart입니다. 아래는 모두 선택 사항입니다.
 
-Toolgraph와 gateway는 서로 독립된 패키지입니다.
+## 6. (선택) memtomem-stm에서 적용
+
+Toolgraph는 호출을 직접 막지 않으므로 DENY를 실제 차단으로 만들려면
+gateway가 필요합니다. reference gateway는 별도 패키지이며 Toolgraph를
+쓰는 데 필수는 아닙니다.
 [memtomem-stm Toolgraph 정책 gateway 가이드](https://github.com/memtomem/memtomem-stm/blob/main/docs/guides/toolgraph-policy-gateway.md)를
 따라 이 번들을 STM에 연결하고 `mms gateway status`, `explain`으로 확인한
 뒤 Codex 또는 Claude Code에 등록합니다.
@@ -107,9 +119,13 @@ toolgraph blast-radius draft-publish-deny
 ## 팀·공유 환경
 
 Ladybug는 로컬 단일 프로세스 기본값입니다. 여러 프로세스나 운영자가
-그래프를 공유해야 할 때 Neo4j를 사용합니다.
+그래프를 공유해야 할 때 Neo4j를 사용합니다. 이 부분은 저장소가 필요합니다.
+`docker-compose.yml`과 `.env.example`은 패키지나 생성된 quickstart가 아니라
+clone에만 들어 있습니다.
 
 ```bash
+git clone https://github.com/memtomem/toolgraph
+cd toolgraph
 docker compose up -d --wait
 cp .env.example .env
 toolgraph init --backend neo4j

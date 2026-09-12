@@ -46,6 +46,7 @@ ladybug = [
 
 [project.urls]
 Homepage = "https://github.com/memtomem/toolgraph"
+Documentation = "https://github.com/memtomem/toolgraph/blob/main/docs/beginner-guide.md"
 Repository = "https://github.com/memtomem/toolgraph"
 Issues = "https://github.com/memtomem/toolgraph/issues"
 

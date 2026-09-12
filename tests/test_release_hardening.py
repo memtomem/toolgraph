@@ -176,10 +176,34 @@ def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_pa
     created = runner.invoke(app, ["example", "init", str(destination)])
     assert created.exit_code == 0, created.output
     assert sorted(path.name for path in destination.iterdir()) == [
+        "README.md",
         "governance.yaml",
         "policy_gateway_server.py",
         "servers.yaml",
     ]
+    # The generated directory is the only guidance a PyPI user has on disk:
+    # `docs/` is excluded from the sdist, so the beginner guide is a URL away.
+    readme = (destination / "README.md").read_text()
+    assert "toolgraph init" in readme
+    assert "docs/beginner-guide.md" in readme
+    # The guide claims `unbacked-edges` comes back empty for this fixture; that
+    # only holds while every authored edge carries a non-blank evidence
+    # pointer. Counting the string would pass on an empty value, so parse it.
+    governance = yaml.safe_load((destination / "governance.yaml").read_text())
+    authored = [
+        *governance["grants"],
+        *governance["data_access"],
+        *(
+            binding
+            for bindings in governance["governed_by"].values()
+            for binding in bindings
+        ),
+    ]
+    assert len(authored) == 5
+    for edge in authored:
+        evidence = edge["provenance"]["evidence"]
+        assert isinstance(evidence, str) and evidence.strip(), edge
+
     servers = (destination / "servers.yaml").read_text()
     assert sys.executable in servers
     assert "__TOOLGRAPH_PYTHON__" not in servers
