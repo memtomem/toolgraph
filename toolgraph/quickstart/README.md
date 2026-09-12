@@ -8,7 +8,7 @@ operator-authored governance manifest.
 | :--- | :--- |
 | `policy_gateway_server.py` | A local MCP server exposing `read_note` (read-only) and `publish_note` (destructive). |
 | `servers.yaml` | Points the crawler at that server, named `policy-gateway`. |
-| `governance.yaml` | Who may call what, what each tool touches, and a DENY policy on the draft resource. |
+| `governance.yaml` | Who may call what, what each tool is modelled as touching, and a DENY policy on the draft resource. |
 
 ## Run it
 
@@ -23,9 +23,11 @@ toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
 
-`read_note` comes back eligible. `publish_note` comes back rejected, because it
-writes to a resource under a DENY policy, and `selection-explain` prints that
-path. The last command writes the bundle and prints its path, byte digest, and
+`read_note` comes back eligible. `publish_note` comes back rejected, because
+the manifest models it as writing to a resource under a DENY policy, and
+`selection-explain` prints that path. Neither demo tool touches a file; both
+return a string. The data-flow claims live in `governance.yaml` and exist to
+make the policy path reachable, which is what Toolgraph reasons over. The last command writes the bundle and prints its path, byte digest, and
 eligible/rejected counts.
 
 Toolgraph decided nothing at runtime here. It analyzed and compiled; a gateway
@@ -33,9 +35,14 @@ that consumes the bundle is what would actually block a call.
 
 ## Then
 
-Try `toolgraph unbacked-edges`, `unsafe-tools vibe-coder`, or
-`blast-radius draft-publish-deny`. Edit `governance.yaml`, rerun
-`ingest-manifest`, and recompile to see a decision change.
+Try `toolgraph unbacked-edges`, which comes back empty because every authored
+edge here carries an evidence pointer. Then try `unsafe-tools vibe-coder` and
+`blast-radius draft-publish-deny`, which do return a row: both are meant to
+name `publish_note` reaching the DENY policy. That is the demo working, not a
+failure.
+
+Edit `governance.yaml`, rerun `ingest-manifest`, and recompile to see a
+decision change.
 
 These files are a copy, not a link, so upgrading Toolgraph does not update
 them. After an upgrade, generate a fresh directory alongside this one

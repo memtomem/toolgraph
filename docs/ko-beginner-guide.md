@@ -112,6 +112,11 @@ toolgraph drift
 toolgraph blast-radius draft-publish-deny
 ```
 
+이 중 둘은 결과가 나오는 것이 정상입니다. `unsafe-tools`는 `publish_note`가
+`draft-publish-deny`에 닿는 것을 violation으로 보고하고, `blast-radius`는 그
+정책이 덮는 경로를 보고합니다. 그 도달 범위를 짚어 주는 것이 두 명령의 목적이므로
+이 예제에서는 결과가 비어 있지 않은 쪽이 맞습니다. 나머지 셋은 비어 있습니다.
+
 `read_note` grant를 제거하거나 draft 정책 binding을 바꾼 뒤 다시 적재·컴파일해
 보세요. 잘못된 manifest는 이전 그래프 상태를 유지한 채 거부되고, 컴파일
 실패도 마지막 정상 번들을 덮어쓰지 않습니다.

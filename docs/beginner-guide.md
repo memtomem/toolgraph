@@ -116,6 +116,12 @@ toolgraph drift
 toolgraph blast-radius draft-publish-deny
 ```
 
+Two of these return a row on purpose. `unsafe-tools` reports `publish_note`
+reaching `draft-publish-deny`, classified as a violation, and `blast-radius`
+reports the path that policy covers. Naming that reach is what they are for, so
+on this fixture a non-empty result is the correct one. The other three come
+back empty.
+
 Good first experiments are removing the `read_note` grant, changing the draft
 policy binding, and recompiling. Always rerun `ingest-manifest` before
 compilation. Invalid manifests are rejected without replacing the previous
