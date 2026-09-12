@@ -1,3 +1,18 @@
+# The operator-authored half of the quickstart graph. Crawling discovers what
+# tools exist; this file asserts who may call them and what they touch.
+#
+# Every authored edge carries `provenance`. `source: operator_asserted` means a
+# human claimed it (not a crawled fact), and `evidence` points at where the
+# claim can be checked. `toolgraph unbacked-edges` lists edges missing that
+# pointer, so a real deployment should keep this section filled in.
+#
+# Read the pointers here for what they are. The demo tools return strings and
+# touch no file at all, so the READS/WRITES entries are synthetic effects that
+# exist to make the DENY path reachable; their evidence cites the fixture that
+# defines them. An empty `unbacked-edges` result means every edge has a
+# pointer, never that a claim is true. Checking the claim is the reviewer's
+# job, which is the whole reason the pointer is required.
+
 agents:
   - vibe-coder
 
@@ -11,18 +26,38 @@ grants:
   - agent: vibe-coder
     tool: "policy-gateway::read_note"
     granted_by: quickstart
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: governance.yaml:read-grant
   - agent: vibe-coder
     tool: "policy-gateway::publish_note"
     granted_by: quickstart
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: governance.yaml:publish-grant
 
 data_access:
   - tool: "policy-gateway::read_note"
     resource: "file:///demo/notes"
     mode: READS
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: "policy_gateway_server.py:read_note (synthetic demo effect)"
   - tool: "policy-gateway::publish_note"
     resource: "file:///demo/drafts"
     mode: WRITES
+    provenance:
+      source: operator_asserted
+      confidence: high
+      evidence: "policy_gateway_server.py:publish_note (synthetic demo effect)"
 
 governed_by:
   "file:///demo/drafts":
-    - draft-publish-deny
+    - policy: draft-publish-deny
+      provenance:
+        source: operator_asserted
+        confidence: high
+        evidence: governance.yaml:draft-policy

@@ -50,7 +50,17 @@ toolgraph ingest-manifest \
 ```
 
 The example grants `vibe-coder` both tools but places the draft resource under
-a DENY policy. Every authored edge includes a local evidence pointer.
+a DENY policy. Every authored edge carries `provenance` with an evidence
+pointer, so `toolgraph unbacked-edges` returns an empty list. Delete the
+`provenance` block under one of the `data_access` entries, rerun the
+`ingest-manifest` command above, and `unbacked-edges` names that edge. Grants
+are audited separately, under `unbacked-edges --include-grants`.
+
+An empty result means every edge has a pointer, not that the claims behind
+them are true. The demo tools return strings and touch no file, so the
+READS/WRITES entries are synthetic; their evidence says so. Verifying a
+pointer is the reviewer's work, and requiring one is what makes that work
+possible.
 
 ## 4. Inspect the decision
 
@@ -73,17 +83,22 @@ toolgraph policy compile \
   --output .toolgraph/policy-bundle.json
 ```
 
-Success prints JSON containing the output path, exact byte digest, graph
-instance/generation, and eligible/rejected counts. The artifact is canonical
+Success prints JSON describing the bundle -- output path, exact byte digest,
+graph instance/generation, and eligible/rejected counts -- not the bundle
+itself. The artifact is canonical
 UTF-8 JSON, written privately with atomic replacement.
 
 Start with `review`: the reference gateway keeps rejected tools visible and
 records would-block calls. After inspecting the decisions, compile a matching
 `strict` bundle to hide and block rejected tools.
 
-## 6. Enforce it with memtomem-stm
+That is the end of the standalone quickstart. Everything below is optional.
 
-Toolgraph and the gateway remain separate packages. Follow the
+## 6. Optional: enforce it with memtomem-stm
+
+Toolgraph never blocks a call itself, so a gateway is how a DENY becomes real.
+The reference consumer is a separate package and is not required to use
+Toolgraph. Follow the
 [memtomem-stm Toolgraph policy gateway guide](https://github.com/memtomem/memtomem-stm/blob/main/docs/guides/toolgraph-policy-gateway.md)
 to point STM at this bundle, run `mms gateway status` and `explain`, and connect
 it to Codex or Claude Code.
@@ -101,6 +116,12 @@ toolgraph drift
 toolgraph blast-radius draft-publish-deny
 ```
 
+Two of these return a row on purpose. `unsafe-tools` reports `publish_note`
+reaching `draft-publish-deny`, classified as a violation, and `blast-radius`
+reports the path that policy covers. Naming that reach is what they are for, so
+on this fixture a non-empty result is the correct one. The other three come
+back empty.
+
 Good first experiments are removing the `read_note` grant, changing the draft
 policy binding, and recompiling. Always rerun `ingest-manifest` before
 compilation. Invalid manifests are rejected without replacing the previous
@@ -109,9 +130,13 @@ graph state; failed compilation leaves the previous bundle intact.
 ## Shared or fleet operation
 
 Ladybug is the default single-process local backend. Use Neo4j when multiple
-processes or operators need a shared graph:
+processes or operators need a shared graph. This part needs the repository:
+`docker-compose.yml` and `.env.example` ship with the clone, not with the
+package or the generated quickstart.
 
 ```bash
+git clone https://github.com/memtomem/toolgraph
+cd toolgraph
 docker compose up -d --wait
 cp .env.example .env
 toolgraph init --backend neo4j
