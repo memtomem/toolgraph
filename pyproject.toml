@@ -86,13 +86,17 @@ packages = ["toolgraph"]
 # the project page, the license and changelog, and the JSON contracts.
 # `contracts/fixtures/` is test data and is excluded with the tests.
 [tool.hatch.build.targets.sdist]
-# The root-file patterns are anchored with a leading `/`. Hatchling matches an
-# unanchored pattern at any depth, so a bare `README.md` also pulled in
+# Every pattern here is anchored with a leading `/`, because Hatchling matches
+# an unanchored pattern at any depth. A bare `README.md` also pulled in
 # `examples/README.md`, which `scripts/verify-artifacts.sh` then rejected as
-# outside the allowlist. Anchor anything meant to be a single root file.
+# outside the allowlist -- its own allowlist is a root-anchored regex. The
+# directory entries had the same latent reach in both directions: `toolgraph/`
+# would have swept in a nested directory of that name, and `docs/` would have
+# excluded a future `toolgraph/docs/`. Anchor them and the two allowlists
+# cannot drift apart again.
 include = [
-    "toolgraph/",
-    "contracts/",
+    "/toolgraph/",
+    "/contracts/",
     "/README.md",
     "/CHANGELOG.md",
     "/LICENSE",
@@ -100,8 +104,8 @@ include = [
     "/pyproject.toml",
 ]
 exclude = [
-    "contracts/fixtures/",
-    "docs/",
+    "/contracts/fixtures/",
+    "/docs/",
 ]
 # Note: hatchling always ships the VCS ignore file (.gitignore) in an sdist;
 # an exclude entry for it has no effect.
