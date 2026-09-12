@@ -86,14 +86,18 @@ packages = ["toolgraph"]
 # the project page, the license and changelog, and the JSON contracts.
 # `contracts/fixtures/` is test data and is excluded with the tests.
 [tool.hatch.build.targets.sdist]
+# The root-file patterns are anchored with a leading `/`. Hatchling matches an
+# unanchored pattern at any depth, so a bare `README.md` also pulled in
+# `examples/README.md`, which `scripts/verify-artifacts.sh` then rejected as
+# outside the allowlist. Anchor anything meant to be a single root file.
 include = [
     "toolgraph/",
     "contracts/",
-    "README.md",
-    "CHANGELOG.md",
-    "LICENSE",
-    "SECURITY.md",
-    "pyproject.toml",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/SECURITY.md",
+    "/pyproject.toml",
 ]
 exclude = [
     "contracts/fixtures/",
