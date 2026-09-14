@@ -412,7 +412,10 @@ async def assert_list(
                     raise SmokeError("review mode blocked a would-block call")
                 if spool_count(spool, "read_note") != before + 1:
                     raise SmokeError("review call did not reach the upstream exactly once")
-                health = await session.call_tool("stm_proxy_health", {})
+                if "stm_admin" in names:
+                    health = await session.call_tool("stm_admin", {"action": "proxy_health"})
+                else:
+                    health = await session.call_tool("stm_proxy_health", {})
                 if health.is_error:
                     raise SmokeError("review health surface was not callable")
                 if expected_would_block is None:
