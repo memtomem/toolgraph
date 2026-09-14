@@ -264,6 +264,19 @@ def session() -> Iterator[Session | LadybugSession]:
             current.close()
 
 
+@contextmanager
+def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
+    """Acquire a read-only session without creating missing directories or database files."""
+    if backend_name() == "ladybug":
+        path = Path(config.settings.db_path)
+        if not path.exists():
+            raise BackendUnavailableError(
+                f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist"
+            )
+    with session() as s:
+        yield s
+
+
 def close_driver() -> None:
     global _driver, _ladybug_database
     with _backend_lock:

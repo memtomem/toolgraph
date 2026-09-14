@@ -32,7 +32,7 @@ from toolgraph.crawler.crawl import (
     spec_label,
 )
 from toolgraph.graph import driver, loader, queries, schema, selector
-from toolgraph.manifest.ingest import governance_counts, ingest_governance
+from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.preflight import build_preflight
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
@@ -328,6 +328,10 @@ def ingest_manifest(
         help="Treat drifted tool refs (no live EXPOSES edge) as errors that "
              "reject the manifest. Default: non-fatal notice.",
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="Analyze and display proposed graph changes without modifying the database.",
+    ),
 ) -> None:
     """Ingest authored governance (agents, policies, ACL, data access, GOVERNED_BY)."""
     path = governance or config.settings.governance_config
@@ -336,6 +340,20 @@ def ingest_manifest(
     except Exception as exc:  # noqa: BLE001 - config errors share one CLI contract
         typer.echo(f"Invalid governance config at {path}: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from None
+    if dry_run:
+        report = dry_run_ingest(gov, strict_drift=strict_drift)
+        if report.warnings:
+            typer.echo(f"DRY-RUN REJECTED — manifest at {path} would not apply (graph unchanged)")
+            for w in report.warnings:
+                typer.echo(f"  [warn] {w}")
+            for n in report.notices:
+                typer.echo(f"  [info] {n}")
+            raise typer.Exit(code=1)
+        for n in report.notices:
+            typer.echo(f"  [info] {n}")
+        typer.echo(f"DRY-RUN: manifest at {path} would apply cleanly")
+        typer.echo(report.summary_text())
+        return
     schema.init_schema()
     report = ingest_governance(gov, strict_drift=strict_drift)
     if report.warnings:

@@ -8,9 +8,15 @@ MERGE stays idempotent. No vector index in this MVP.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
-from toolgraph.graph.driver import BackendConfigurationError, backend_name, session
+from toolgraph.graph.driver import (
+    BackendConfigurationError,
+    acquire_readonly_session,
+    backend_name,
+    session,
+)
 
 # Version of the physical backend schema this code understands. Bumped only
 # when a table/constraint shape changes incompatibly. IF NOT EXISTS silently
@@ -127,6 +133,15 @@ def _refuse_version_mismatch(stored: int | None) -> None:
                 else "migrate the database (no automatic migration exists)"
             )
         )
+
+
+def check_backend_schema_version(s: Any = None) -> None:
+    """Read-only version gate: refuses incompatible schema versions without running DDL or writing."""
+    if s is not None:
+        _refuse_version_mismatch(_stored_backend_schema_version(s))
+    else:
+        with acquire_readonly_session() as sess:
+            _refuse_version_mismatch(_stored_backend_schema_version(sess))
 
 
 def init_schema() -> None:

@@ -14,13 +14,15 @@ unknown tools, and undefined policy ids become warnings that abort the ingest.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
-from neo4j import ManagedTransaction
+from neo4j import ManagedTransaction, Session
 
-from toolgraph.graph.driver import session
+from toolgraph.graph import queries
+from toolgraph.graph.driver import acquire_readonly_session, session
 from toolgraph.graph.queries import resolve_tool_refs
-from toolgraph.graph.schema import bump_generation, exception_key
+from toolgraph.graph.schema import bump_generation, check_backend_schema_version, exception_key
 from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
@@ -43,6 +45,71 @@ class IngestReport:
     @property
     def applied(self) -> bool:
         return not self.warnings
+
+
+@dataclass
+class GovernanceDiffReport:
+    """Outcome of a dry-run manifest ingest."""
+
+    applied: bool = True
+    warnings: list[str] = field(default_factory=list)
+    notices: list[str] = field(default_factory=list)
+    graph_state: dict[str, Any] = field(default_factory=dict)
+    agents_created: list[str] = field(default_factory=list)
+    agents_deleted: list[str] = field(default_factory=list)
+    policies_created: list[dict[str, Any]] = field(default_factory=list)
+    policies_deleted: list[str] = field(default_factory=list)
+    policy_properties_modified: list[dict[str, Any]] = field(default_factory=list)
+    grants_added: list[dict[str, Any]] = field(default_factory=list)
+    grants_revoked: list[dict[str, Any]] = field(default_factory=list)
+    granted_by_modified: list[dict[str, Any]] = field(default_factory=list)
+    data_access_added: list[dict[str, Any]] = field(default_factory=list)
+    data_access_removed: list[dict[str, Any]] = field(default_factory=list)
+    governed_by_added: list[dict[str, Any]] = field(default_factory=list)
+    governed_by_removed: list[dict[str, Any]] = field(default_factory=list)
+    provenance_modified: list[dict[str, Any]] = field(default_factory=list)
+    expected_exceptions_added: list[dict[str, Any]] = field(default_factory=list)
+    expected_exceptions_removed: list[dict[str, Any]] = field(default_factory=list)
+    expected_exceptions_reason_updated: list[dict[str, Any]] = field(default_factory=list)
+    resources_created: list[str] = field(default_factory=list)
+    resources_pruned: list[str] = field(default_factory=list)
+    resources_retained_crawled: list[str] = field(default_factory=list)
+    tools_pruned: list[str] = field(default_factory=list)
+    tools_retained_crawled: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def summary_text(self) -> str:
+        lines = []
+        if not self.applied:
+            lines.append("DRY-RUN RESULT: REJECTED (warnings present)")
+            for w in self.warnings:
+                lines.append(f"  [warn] {w}")
+            return "\n".join(lines)
+        lines.append("DRY-RUN RESULT: VALID (would apply cleanly)")
+        lines.append(f"  Graph state token: {self.graph_state}")
+        lines.append("  Delta summary:")
+        lines.append(f"    Agents: +{len(self.agents_created)} / -{len(self.agents_deleted)}")
+        lines.append(
+            f"    Policies: +{len(self.policies_created)} / -{len(self.policies_deleted)} / ~{len(self.policy_properties_modified)}"
+        )
+        lines.append(
+            f"    Grants: +{len(self.grants_added)} / -{len(self.grants_revoked)} / ~{len(self.granted_by_modified)} (granted_by)"
+        )
+        lines.append(f"    Data access: +{len(self.data_access_added)} / -{len(self.data_access_removed)}")
+        lines.append(f"    Governed by: +{len(self.governed_by_added)} / -{len(self.governed_by_removed)}")
+        lines.append(
+            f"    Exceptions: +{len(self.expected_exceptions_added)} / -{len(self.expected_exceptions_removed)} / ~{len(self.expected_exceptions_reason_updated)}"
+        )
+        lines.append(f"    Provenance modified: {len(self.provenance_modified)}")
+        lines.append(
+            f"    Resources: +{len(self.resources_created)} created / -{len(self.resources_pruned)} pruned (final degree 0) / {len(self.resources_retained_crawled)} retained crawled"
+        )
+        lines.append(
+            f"    Tools: -{len(self.tools_pruned)} pruned (final degree 0) / {len(self.tools_retained_crawled)} retained crawled"
+        )
+        return "\n".join(lines)
 
 
 def _normalize_bindings(items: list) -> list[GovernedByBinding]:
@@ -81,23 +148,12 @@ def _resolve_problem(ref: str, matches: list[str]) -> str:
     return f"ambiguous {matches}" if matches else "not found"
 
 
-def _ingest(
-    tx: ManagedTransaction,
+def _validate_manifest(
+    tx: ManagedTransaction | Session,
     gov: Governance,
     strict_drift: bool = False,
-    digest: str | None = None,
-) -> tuple[list[str], list[str]]:
-    """Two phases in one transaction; returns (warnings, notices).
-
-    Phase 1 validates every reference read-only and collects warnings. If ANY
-    warning is found the manifest is rejected whole — nothing is mutated — so a
-    typo can never wipe an existing DENY and leave a false ALLOW behind. Phase 2
-    runs only for a fully clean manifest: clear authored edges, then re-apply.
-
-    Drift (a resolved tool ref with no live EXPOSES edge) is a NOTICE, not a
-    warning: rejecting would make a fleet with one temporarily-down server
-    un-ingestable. ``strict_drift`` promotes drift to warnings for CI use.
-    """
+) -> tuple[list[str], list[str], dict[str, Any]]:
+    """Phase 1 read-only validation; returns (warnings, notices, resolved)."""
     warnings: list[str] = []
     notices: list[str] = []
     # Detect duplicate policy ids BEFORE building deny_policies. Without this,
@@ -306,8 +362,44 @@ def _ingest(
                 f"the manifest, or re-crawl its server if it should still exist."
             )
 
+    resolved = {
+        "resolved_grants": resolved_grants,
+        "resolved_access": resolved_access,
+        "resolved_governed": resolved_governed,
+        "resolved_exceptions": resolved_exceptions,
+        "known_agents": known_agents,
+        "known_policies": known_policies,
+        "deny_policies": deny_policies,
+    }
+    return warnings, notices, resolved
+
+
+def _ingest(
+    tx: ManagedTransaction,
+    gov: Governance,
+    strict_drift: bool = False,
+    digest: str | None = None,
+) -> tuple[list[str], list[str]]:
+    """Two phases in one transaction; returns (warnings, notices).
+
+    Phase 1 validates every reference read-only and collects warnings. If ANY
+    warning is found the manifest is rejected whole — nothing is mutated — so a
+    typo can never wipe an existing DENY and leave a false ALLOW behind. Phase 2
+    runs only for a fully clean manifest: clear authored edges, then re-apply.
+
+    Drift (a resolved tool ref with no live EXPOSES edge) is a NOTICE, not a
+    warning: rejecting would make a fleet with one temporarily-down server
+    un-ingestable. ``strict_drift`` promotes drift to warnings for CI use.
+    """
+    warnings, notices, resolved = _validate_manifest(tx, gov, strict_drift)
     if warnings:  # reject the whole manifest — do not mutate
         return warnings, notices
+
+    resolved_grants = resolved["resolved_grants"]
+    resolved_access = resolved["resolved_access"]
+    resolved_governed = resolved["resolved_governed"]
+    resolved_exceptions = resolved["resolved_exceptions"]
+    known_agents = resolved["known_agents"]
 
     # --- Phase 2: mutate (clean manifest only) ---------------------------
     # Deliberate size tradeoff: this transaction scales with the total number
@@ -509,6 +601,312 @@ def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestRepo
             _ingest, gov, strict_drift, governance_digest(gov)
         )
         return IngestReport(warnings=warnings, notices=notices)
+
+
+def _compute_dry_run_diff(
+    s: Session,
+    gov: Governance,
+    strict_drift: bool = False,
+) -> dict[str, Any]:
+    warnings, notices, resolved = _validate_manifest(s, gov, strict_drift)
+    if warnings:
+        return {
+            "applied": False,
+            "warnings": warnings,
+            "notices": notices,
+        }
+
+    # Agents
+    db_agents = {r["id"] for r in s.run("MATCH (a:Agent) RETURN a.id AS id")}
+    prop_agents = set(resolved["known_agents"])
+    agents_created = sorted(prop_agents - db_agents)
+    agents_deleted = sorted(db_agents - prop_agents)
+
+    # Policies
+    db_policies = {
+        r["id"]: {
+            "effect": r["effect"],
+            "scope": r["scope"],
+            "description": r["description"],
+        }
+        for r in s.run(
+            "MATCH (p:Policy) RETURN p.id AS id, p.effect AS effect, p.scope AS scope, p.description AS description"
+        )
+    }
+    prop_policies = {
+        p.id: {
+            "effect": p.effect,
+            "scope": p.scope,
+            "description": p.description,
+        }
+        for p in gov.policies
+    }
+    policies_created = [
+        {"id": pid, **prop_policies[pid]}
+        for pid in sorted(set(prop_policies) - set(db_policies))
+    ]
+    policies_deleted = sorted(set(db_policies) - set(prop_policies))
+    policy_properties_modified = []
+    for pid in sorted(set(db_policies) & set(prop_policies)):
+        if db_policies[pid] != prop_policies[pid]:
+            policy_properties_modified.append({
+                "id": pid,
+                "before": db_policies[pid],
+                "after": prop_policies[pid],
+            })
+
+    # Grants
+    db_grants = {}
+    for row in s.run(
+        "MATCH (a:Agent)-[r:CAN_CALL]->(t:Tool) "
+        "RETURN a.id AS agent, t.key AS tool, r.granted_by AS granted_by, "
+        "r.source AS source, r.confidence AS confidence, r.evidence AS evidence"
+    ):
+        db_grants[(row["agent"], row["tool"])] = {
+            "granted_by": row["granted_by"],
+            "provenance": {
+                "source": row["source"],
+                "confidence": row["confidence"],
+                "evidence": row["evidence"],
+            },
+        }
+    prop_grants = {}
+    for agent, key, granted_by, prov_props in resolved["resolved_grants"]:
+        prop_grants[(agent, key)] = {
+            "granted_by": granted_by,
+            "provenance": prov_props,
+        }
+    grants_added = [
+        {"agent": a, "tool": k, "granted_by": info["granted_by"], "provenance": info["provenance"]}
+        for (a, k), info in sorted(prop_grants.items())
+        if (a, k) not in db_grants
+    ]
+    grants_revoked = [
+        {"agent": a, "tool": k}
+        for (a, k) in sorted(db_grants.keys())
+        if (a, k) not in prop_grants
+    ]
+    granted_by_modified = []
+    provenance_modified = []
+    for a, k in sorted(set(db_grants) & set(prop_grants)):
+        if db_grants[(a, k)]["granted_by"] != prop_grants[(a, k)]["granted_by"]:
+            granted_by_modified.append({
+                "agent": a,
+                "tool": k,
+                "before": db_grants[(a, k)]["granted_by"],
+                "after": prop_grants[(a, k)]["granted_by"],
+            })
+        if db_grants[(a, k)]["provenance"] != prop_grants[(a, k)]["provenance"]:
+            provenance_modified.append({
+                "kind": "grant",
+                "agent": a,
+                "tool": k,
+                "before": db_grants[(a, k)]["provenance"],
+                "after": prop_grants[(a, k)]["provenance"],
+            })
+
+    # Data Access
+    db_access = {}
+    for row in s.run(
+        "MATCH (t:Tool)-[r:READS]->(res:Resource) "
+        "RETURN t.key AS tool, 'READS' AS mode, res.uri AS resource, "
+        "r.source AS source, r.confidence AS confidence, r.evidence AS evidence "
+        "UNION ALL "
+        "MATCH (t:Tool)-[r:WRITES]->(res:Resource) "
+        "RETURN t.key AS tool, 'WRITES' AS mode, res.uri AS resource, "
+        "r.source AS source, r.confidence AS confidence, r.evidence AS evidence"
+    ):
+        db_access[(row["tool"], row["mode"], row["resource"])] = {
+            "source": row["source"],
+            "confidence": row["confidence"],
+            "evidence": row["evidence"],
+        }
+    prop_access = {}
+    for key, mode, uri, prov_props in resolved["resolved_access"]:
+        prop_access[(key, mode, uri)] = prov_props
+    data_access_added = [
+        {"tool": k, "mode": m, "resource": u, "provenance": prov}
+        for (k, m, u), prov in sorted(prop_access.items())
+        if (k, m, u) not in db_access
+    ]
+    data_access_removed = [
+        {"tool": k, "mode": m, "resource": u}
+        for (k, m, u) in sorted(db_access.keys())
+        if (k, m, u) not in prop_access
+    ]
+    for k, m, u in sorted(set(db_access) & set(prop_access)):
+        if db_access[(k, m, u)] != prop_access[(k, m, u)]:
+            provenance_modified.append({
+                "kind": "data_access",
+                "tool": k,
+                "mode": m,
+                "resource": u,
+                "before": db_access[(k, m, u)],
+                "after": prop_access[(k, m, u)],
+            })
+
+    # Governed By
+    db_governed = {}
+    for row in s.run(
+        "MATCH (res:Resource)-[r:GOVERNED_BY]->(p:Policy) "
+        "RETURN 'resource' AS kind, res.uri AS ref, p.id AS policy, "
+        "r.source AS source, r.confidence AS confidence, r.evidence AS evidence "
+        "UNION ALL "
+        "MATCH (t:Tool)-[r:GOVERNED_BY]->(p:Policy) "
+        "RETURN 'tool' AS kind, t.key AS ref, p.id AS policy, "
+        "r.source AS source, r.confidence AS confidence, r.evidence AS evidence"
+    ):
+        db_governed[(row["kind"], row["ref"], row["policy"])] = {
+            "source": row["source"],
+            "confidence": row["confidence"],
+            "evidence": row["evidence"],
+        }
+    prop_governed = {}
+    for kind, key_or_uri, valid_bindings in resolved["resolved_governed"]:
+        for pid, prov_props in valid_bindings:
+            prop_governed[(kind, key_or_uri, pid)] = prov_props
+    governed_by_added = [
+        {"kind": kind, "ref": ref, "policy": pid, "provenance": prov}
+        for (kind, ref, pid), prov in sorted(prop_governed.items())
+        if (kind, ref, pid) not in db_governed
+    ]
+    governed_by_removed = [
+        {"kind": kind, "ref": ref, "policy": pid}
+        for (kind, ref, pid) in sorted(db_governed.keys())
+        if (kind, ref, pid) not in prop_governed
+    ]
+    for kind, ref, pid in sorted(set(db_governed) & set(prop_governed)):
+        if db_governed[(kind, ref, pid)] != prop_governed[(kind, ref, pid)]:
+            provenance_modified.append({
+                "kind": "governed_by",
+                "node_kind": kind,
+                "ref": ref,
+                "policy": pid,
+                "before": db_governed[(kind, ref, pid)],
+                "after": prop_governed[(kind, ref, pid)],
+            })
+
+    # Expected Exceptions
+    db_exceptions = {}
+    for row in s.run(
+        "MATCH (e:ExpectedException) "
+        "RETURN e.agent AS agent, e.tool_key AS tool, e.resource AS resource, "
+        "e.policy AS policy, e.reason AS reason"
+    ):
+        db_exceptions[(row["agent"], row["tool"], row["resource"], row["policy"])] = row["reason"]
+    prop_exceptions = {}
+    for agent, tool_key, resource_uri, policy_id, reason in resolved["resolved_exceptions"]:
+        prop_exceptions[(agent, tool_key, resource_uri, policy_id)] = reason
+    expected_exceptions_added = [
+        {"agent": a, "tool": t, "resource": r, "policy": p, "reason": reason}
+        for (a, t, r, p), reason in sorted(prop_exceptions.items())
+        if (a, t, r, p) not in db_exceptions
+    ]
+    expected_exceptions_removed = [
+        {"agent": a, "tool": t, "resource": r, "policy": p}
+        for (a, t, r, p) in sorted(db_exceptions.keys())
+        if (a, t, r, p) not in prop_exceptions
+    ]
+    expected_exceptions_reason_updated = [
+        {
+            "agent": a,
+            "tool": t,
+            "resource": r,
+            "policy": p,
+            "before": db_exceptions[(a, t, r, p)],
+            "after": prop_exceptions[(a, t, r, p)],
+        }
+        for (a, t, r, p) in sorted(set(db_exceptions) & set(prop_exceptions))
+        if db_exceptions[(a, t, r, p)] != prop_exceptions[(a, t, r, p)]
+    ]
+
+    # Whole-graph final degree calculations (ADR-0001, ADR-0007)
+    db_resources = {r["uri"] for r in s.run("MATCH (res:Resource) RETURN res.uri AS uri")}
+    crawled_resources = {
+        r["uri"]
+        for r in s.run("MATCH (:MCPServer)-[:PROVIDES]->(res:Resource) RETURN res.uri AS uri")
+    }
+    prop_authored_resources = {
+        uri for _, _, uri, _ in resolved["resolved_access"]
+    } | {
+        ref for kind, ref, _ in resolved["resolved_governed"] if kind == "resource"
+    }
+    resources_created = sorted(prop_authored_resources - db_resources)
+    resources_pruned = sorted([
+        uri
+        for uri in db_resources
+        if uri not in crawled_resources and uri not in prop_authored_resources
+    ])
+    lost_authored_resources = {uri for (_, _, uri) in db_access} | {
+        ref for (kind, ref, _) in db_governed if kind == "resource"
+    }
+    resources_retained_crawled = sorted([
+        uri
+        for uri in (lost_authored_resources - prop_authored_resources)
+        if uri in crawled_resources
+    ])
+
+    db_tools = {r["key"] for r in s.run("MATCH (t:Tool) RETURN t.key AS key")}
+    crawled_tools = {
+        r["key"] for r in s.run("MATCH (:MCPServer)-[:EXPOSES]->(t:Tool) RETURN t.key AS key")
+    }
+    prop_authored_tools = (
+        {k for (_, k) in prop_grants}
+        | {k for (k, _, _) in prop_access}
+        | {ref for (kind, ref, _) in prop_governed if kind == "tool"}
+    )
+    tools_pruned = sorted([
+        t for t in db_tools if t not in crawled_tools and t not in prop_authored_tools
+    ])
+    lost_authored_tools = (
+        {t for (_, t) in db_grants}
+        | {t for (t, _, _) in db_access}
+        | {ref for (kind, ref, _) in db_governed if kind == "tool"}
+    )
+    tools_retained_crawled = sorted([
+        t for t in (lost_authored_tools - prop_authored_tools) if t in crawled_tools
+    ])
+
+    return {
+        "applied": True,
+        "warnings": [],
+        "notices": notices,
+        "agents_created": agents_created,
+        "agents_deleted": agents_deleted,
+        "policies_created": policies_created,
+        "policies_deleted": policies_deleted,
+        "policy_properties_modified": policy_properties_modified,
+        "grants_added": grants_added,
+        "grants_revoked": grants_revoked,
+        "granted_by_modified": granted_by_modified,
+        "data_access_added": data_access_added,
+        "data_access_removed": data_access_removed,
+        "governed_by_added": governed_by_added,
+        "governed_by_removed": governed_by_removed,
+        "provenance_modified": provenance_modified,
+        "expected_exceptions_added": expected_exceptions_added,
+        "expected_exceptions_removed": expected_exceptions_removed,
+        "expected_exceptions_reason_updated": expected_exceptions_reason_updated,
+        "resources_created": resources_created,
+        "resources_pruned": resources_pruned,
+        "resources_retained_crawled": resources_retained_crawled,
+        "tools_pruned": tools_pruned,
+        "tools_retained_crawled": tools_retained_crawled,
+    }
+
+
+def dry_run_ingest(gov: Governance, strict_drift: bool = False) -> GovernanceDiffReport:
+    """Analyze the exact delta that would be applied without mutating anything."""
+    check_backend_schema_version()
+
+    def _fetch_diff() -> dict[str, Any]:
+        with acquire_readonly_session() as s:
+            return _compute_dry_run_diff(s, gov, strict_drift)
+
+    res = queries.with_graph_state(_fetch_diff, strict=True)
+    report_fields = {f.name for f in GovernanceDiffReport.__dataclass_fields__.values()}
+    kwargs = {k: v for k, v in res.items() if k in report_fields}
+    return GovernanceDiffReport(**kwargs)
 
 
 def governance_counts() -> dict[str, int]:
