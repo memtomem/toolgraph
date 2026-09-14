@@ -177,5 +177,63 @@ def list_constraints() -> list[dict]:
         return [dict(r) for r in s.run("SHOW CONSTRAINTS")]
 
 
+def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
+    """Inspect physical schema integrity via live catalog queries."""
+    def _inspect(sess: Any) -> dict[str, Any]:
+        backend = backend_name()
+        version = _stored_backend_schema_version(sess)
+        version_ok = (version == BACKEND_SCHEMA_VERSION)
+        missing_tables: list[str] = []
+        live_tables: list[str] = []
+        missing_constraints: list[str] = []
+        live_constraints: list[str] = []
+
+        if backend == "ladybug":
+            expected_node_tables = {
+                "MCPServer", "Tool", "Resource", "Agent", "Policy",
+                "ExpectedException", "GraphMeta",
+            }
+            expected_rel_tables = {
+                "EXPOSES", "PROVIDES", "CAN_CALL", "READS", "WRITES", "GOVERNED_BY",
+            }
+            expected_all = expected_node_tables | expected_rel_tables
+            try:
+                rows = sess.run("CALL show_tables() RETURN *")
+                live_tables = sorted([r.get("name") for r in rows if r.get("name")])
+            except Exception:
+                live_tables = []
+            missing_tables = sorted(expected_all - set(live_tables))
+            healthy = version_ok and not missing_tables
+        else:  # neo4j
+            expected_constraints = {
+                "mcpserver_name", "tool_key", "resource_uri", "agent_id",
+                "policy_id", "exception_key", "graphmeta_id",
+            }
+            try:
+                rows = sess.run("SHOW CONSTRAINTS")
+                live_constraints = sorted([r.get("name") for r in rows if r.get("name")])
+            except Exception:
+                live_constraints = []
+            missing_constraints = sorted(expected_constraints - set(live_constraints))
+            healthy = version_ok and not missing_constraints
+
+        return {
+            "backend": backend,
+            "schema_version": version,
+            "expected_version": BACKEND_SCHEMA_VERSION,
+            "version_ok": version_ok,
+            "live_tables": live_tables,
+            "missing_tables": missing_tables,
+            "live_constraints": live_constraints,
+            "missing_constraints": missing_constraints,
+            "healthy": healthy,
+        }
+
+    if s is not None:
+        return _inspect(s)
+    with acquire_readonly_session() as sess:
+        return _inspect(sess)
+
+
 def bump_generation(tx) -> None:
     tx.run(BUMP_GENERATION, graph_instance_id=str(uuid4()))

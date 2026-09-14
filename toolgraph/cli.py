@@ -32,6 +32,7 @@ from toolgraph.crawler.crawl import (
     spec_label,
 )
 from toolgraph.graph import driver, loader, queries, schema, selector
+from toolgraph.health import run_doctor
 from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.preflight import build_preflight
@@ -235,6 +236,20 @@ def init_schema() -> None:
     schema.init_schema()
     names = [c.get("name") for c in schema.list_constraints()]
     typer.echo("Constraints present: " + ", ".join(sorted(n for n in names if n)))
+
+
+@app.command("doctor")
+def doctor(
+    as_json: bool = typer.Option(False, "--json", help="Emit structured JSON diagnosis report."),
+) -> None:
+    """Diagnose local configuration, database connectivity, and schema integrity."""
+    report = run_doctor()
+    if as_json:
+        typer.echo(json.dumps(report.to_dict(), indent=2))
+    else:
+        typer.echo(report.summary_text())
+    if not report.healthy:
+        raise typer.Exit(code=1)
 
 
 @app.command()

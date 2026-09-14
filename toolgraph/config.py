@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,49 @@ _explicit_config_path: Path | None = None
 def runtime_config_path() -> Path:
     value = _explicit_config_path or os.getenv("TOOLGRAPH_CONFIG", ".toolgraph/config.json")
     return Path(value).expanduser()
+
+
+def check_config_health() -> dict[str, Any]:
+    """Inspect active configuration file existence, schema validity, and permissions."""
+    path = runtime_config_path()
+    exists = path.is_file()
+    if not exists:
+        return {
+            "path": str(path),
+            "exists": False,
+            "valid_json": False,
+            "permissions_ok": None,
+            "permissions": None,
+            "healthy": False,
+            "detail": f"configuration file not found at {path}",
+        }
+
+    permissions_ok = True
+    perms_octal = None
+    if os.name != "nt":
+        mode = path.stat().st_mode & 0o777
+        perms_octal = oct(mode)
+        permissions_ok = (mode == 0o600)
+
+    valid_json = False
+    detail = "ok"
+    try:
+        cfg = _runtime_config()
+        valid_json = bool(cfg)
+    except Exception as exc:
+        detail = str(exc)
+        valid_json = False
+
+    healthy = exists and valid_json and (permissions_ok is not False)
+    return {
+        "path": str(path),
+        "exists": exists,
+        "valid_json": valid_json,
+        "permissions_ok": permissions_ok,
+        "permissions": perms_octal,
+        "healthy": healthy,
+        "detail": detail,
+    }
 
 
 class RuntimeConfigurationError(RuntimeError):
