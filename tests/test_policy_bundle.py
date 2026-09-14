@@ -27,9 +27,13 @@ ROOT = Path(__file__).parent.parent
 
 
 def _mock_graph(
-    monkeypatch, *, agent_found: bool = True, instance_id: str | None = "graph-instance-1"
+    monkeypatch,
+    *,
+    agent_found: bool = True,
+    instance_id: str | None = "graph-instance-1",
+    generation: object = 7,
 ) -> None:
-    state = queries.GraphState(instance_id, 7, "a" * 64)
+    state = queries.GraphState(instance_id, generation, "a" * 64)  # type: ignore[arg-type]
     contracts = [
         {
             "tool_key": "alpha::read",
@@ -272,6 +276,21 @@ def test_missing_graph_instance_id_never_produces_bundle(monkeypatch):
     _mock_graph(monkeypatch, instance_id=None)
     with pytest.raises(PolicyBundleError, match="no instance id"):
         build_policy_bundle(agent="codex", created_at=NOW)
+
+
+@pytest.mark.parametrize("invalid_generation", [1.0, True, False, -1, "7", None])
+def test_invalid_graph_generation_never_produces_bundle(monkeypatch, invalid_generation):
+    _mock_graph(monkeypatch, generation=invalid_generation)
+    with pytest.raises(PolicyBundleError, match="must be a non-negative integer"):
+        build_policy_bundle(agent="codex", created_at=NOW)
+
+
+def test_bundle_generation_serializes_as_pure_integer(monkeypatch):
+    _mock_graph(monkeypatch, generation=7)
+    bundle = build_policy_bundle(agent="codex", created_at=NOW)
+    assert bundle["graph_state"]["generation"] == 7
+    raw_json = canonical_json_bytes(bundle).decode("utf-8")
+    assert '"generation":7' in raw_json
 
 
 def test_policy_compile_writes_private_exact_bytes(monkeypatch, tmp_path):

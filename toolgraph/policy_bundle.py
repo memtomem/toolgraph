@@ -157,6 +157,11 @@ def build_policy_bundle(
         raise PolicyBundleError(
             "graph has no instance id — run init-schema before compiling"
         )
+    gen = graph_state.get("generation")
+    if isinstance(gen, bool) or not isinstance(gen, int) or gen < 0:
+        raise PolicyBundleError(
+            f"graph_state.generation must be a non-negative integer, got {gen!r}"
+        )
     governance_digest = compiled["governance_digest"]
     if not governance_digest:
         raise PolicyBundleError(
