@@ -37,6 +37,7 @@ from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_
 from toolgraph.manifest.parser import load_governance
 from toolgraph.preflight import build_preflight
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
+from toolgraph.policy_propose import PolicyProposeError, run_propose
 from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
 from toolgraph.review_candidates import (
     ReviewCandidateError,
@@ -901,6 +902,55 @@ def policy_review_plan(
             indent=2,
         )
     )
+
+
+@policy_app.command("propose")
+@_reports_backend_outage
+def policy_propose(
+    governance: Path = typer.Argument(..., help="Path to governance.yaml manifest."),
+    observed: Path = typer.Argument(..., help="Path to observed JSONL export."),
+    min_would_block: int = typer.Option(
+        3, "--min-would-block", min=1, help="Minimum would_block_calls to propose a grant."
+    ),
+    window_label: str = typer.Option(
+        "unspecified", "--window-label", help="Descriptive label for the observation window."
+    ),
+    unverified_provenance: bool = typer.Option(
+        False, "--unverified-provenance", help="Proceed on export lacking an envelope."
+    ),
+    revalidate_current: bool = typer.Option(
+        False,
+        "--revalidate-current",
+        help="Revalidate against current live catalog if generation changed.",
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Write proposal markdown to file instead of stdout."
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit raw proposal dictionary as JSON."
+    ),
+) -> None:
+    """Propose governance.yaml grant changes from observed gateway usage."""
+    try:
+        proposal, rendered = run_propose(
+            governance,
+            observed,
+            min_would_block=min_would_block,
+            window_label=window_label,
+            unverified_provenance=unverified_provenance,
+            revalidate_current=revalidate_current,
+        )
+    except (PolicyProposeError, ValueError, OSError) as exc:
+        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        typer.echo(json.dumps(proposal, indent=2))
+    elif output is not None:
+        output.write_text(rendered, encoding="utf-8")
+        typer.echo(f"Wrote proposal to {output}")
+    else:
+        typer.echo(rendered, nl=False)
 
 
 def _review_candidate_failure(exc: ReviewCandidateError) -> NoReturn:

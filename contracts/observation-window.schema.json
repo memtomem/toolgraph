@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toolgraph.dev/contracts/observation-window.schema.json",
+  "title": "Observation Window Record",
+  "description": "Schema for records in an observation window JSONL export, including envelope and row records.",
+  "oneOf": [
+    {"$ref": "#/$defs/EnvelopeRecord"},
+    {"$ref": "#/$defs/ObservationRowRecord"}
+  ],
+  "$defs": {
+    "EnvelopeRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["envelope"],
+      "properties": {
+        "envelope": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "governance_digest",
+            "graph_generation",
+            "profile",
+            "window_start",
+            "window_end"
+          ],
+          "properties": {
+            "governance_digest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "graph_generation": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "graph_instance_id": {
+              "type": ["string", "null"]
+            },
+            "instance_id": {
+              "type": ["string", "null"]
+            },
+            "profile": {
+              "type": "string",
+              "enum": ["strict", "review", "explore"]
+            },
+            "window_start": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "window_end": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        }
+      }
+    },
+    "ObservationRowRecord": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["agent", "decision"],
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_key": {
+          "type": "string",
+          "pattern": "^[^:\\s]+::[^:\\s]+$"
+        },
+        "candidate": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision": {
+          "type": "string",
+          "enum": ["eligible", "rejected"]
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "would_block_calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reject_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "TOOL_NOT_FOUND",
+              "AMBIGUOUS_TOOL",
+              "NOT_GRANTED",
+              "DENY_VIOLATION",
+              "DENY_GOVERNED",
+              "DRIFTED",
+              "UNMAPPED"
+            ]
+          }
+        },
+        "reject_reason": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {"required": ["tool_key"]},
+        {"required": ["candidate"]}
+      ]
+    }
+  }
+}
