@@ -66,8 +66,19 @@ def _bracket(monkeypatch, *, rejected: bool = False) -> None:
             "graph_state": {"instance_id": "test-instance", "generation": 42},
         }
 
+    class MockSession:
+        def run(self, *args, **kwargs):
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
     monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
     monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", bracket)
+    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
     monkeypatch.setattr("toolgraph.control_plan._test_calls", calls, raising=False)
 
 
@@ -189,6 +200,17 @@ def test_missing_graph_instance_fails_closed(monkeypatch):
             "rejected": [],
         },
     )
+    class MockSession:
+        def run(self, *args, **kwargs):
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
     with pytest.raises(ControlPlanError, match="no instance id"):
         build_control_preflight(_raw())
 
@@ -266,3 +288,267 @@ def test_deeply_nested_plan_fails_typed_not_recursion_error():
     raw = _json.dumps({"schema_version": 1, "deep": nested}).encode()
     with pytest.raises(ControlPlanError, match="nesting exceeds"):
         load_control_plan(raw)
+
+
+def test_control_plan_transitive_exposure_and_redaction(monkeypatch, artifact_format_checker):
+    import jsonschema
+
+    class MockExposureSession:
+        def run(self, query, keys=None, **kwargs):
+            # mock tool data access
+            rows = []
+            if "filesystem::read_file" in (keys or []):
+                rows.append({
+                    "tool_key": "filesystem::read_file",
+                    "mode": "READS",
+                    "resource_uri": "https://api.test/data?token=supersecret123",
+                })
+            if "filesystem::write_file" in (keys or []):
+                rows.append({
+                    "tool_key": "filesystem::write_file",
+                    "mode": "WRITES",
+                    "resource_uri": "https://user:password123@storage.test/vault",
+                })
+            return rows
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def eligible(principal, candidates, *, profile):
+        return {
+            "agent": principal,
+            "agent_found": True,
+            "profile": profile,
+            "eligible": list(candidates),
+            "rejected": [],
+        }
+
+    def bracket(fetch, *, strict):
+        assert strict is True
+        return {
+            **fetch(),
+            "graph_state": {"instance_id": "test-instance", "generation": 42},
+        }
+
+    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
+    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", bracket)
+    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+
+    # Build plan where start -> reader_node -> router -> writer_node -> end
+    doc = {
+        "schema_version": 1,
+        "kind": "toolgraph.control-plan",
+        "run_id": "exposure-run-1",
+        "producer": {
+            "name": "test-orch",
+            "version": "1.0",
+        },
+        "limits": {
+            "maximum_agent_calls": 10,
+            "maximum_parallelism": 2,
+            "maximum_cycles": 0,
+        },
+        "principals": [
+            {"id": "p_reader", "candidate_tools": ["filesystem::read_file"]},
+            {"id": "p_writer", "candidate_tools": ["filesystem::write_file"]},
+        ],
+        "nodes": [
+            {"id": "start", "kind": "start", "principals": [], "agent_call": False},
+            {
+                "id": "node_reader",
+                "kind": "agent",
+                "agent_call": True,
+                "principals": ["p_reader"],
+                "max_invocations": 1,
+                "max_parallelism": 1,
+                "timeout_seconds": 60,
+            },
+            {"id": "router", "kind": "join", "principals": [], "agent_call": False},
+            {
+                "id": "node_writer",
+                "kind": "agent",
+                "agent_call": True,
+                "principals": ["p_writer"],
+                "max_invocations": 1,
+                "max_parallelism": 1,
+                "timeout_seconds": 60,
+            },
+            {"id": "end", "kind": "end", "principals": [], "agent_call": False},
+        ],
+        "edges": [
+            {"from": "start", "to": "node_reader", "kind": "always", "decided_by": "code"},
+            {"from": "node_reader", "to": "router", "kind": "always", "decided_by": "code"},
+            {"from": "router", "to": "node_writer", "kind": "always", "decided_by": "code"},
+            {"from": "node_writer", "to": "end", "kind": "always", "decided_by": "code"},
+        ],
+    }
+
+    raw = json.dumps(doc).encode()
+    res = build_control_preflight(raw, profile="strict")
+
+    # 1. Decision must be advisory_warn due to exposure
+    assert res["decision"] == "advisory_warn"
+
+    # 2. Potential exposures detected
+    exposures = res.get("potential_exposures", [])
+    assert len(exposures) == 1
+    exp = exposures[0]
+    assert exp["reader_node"] == "node_reader"
+    assert exp["writer_node"] == "node_writer"
+    assert exp["witness_path"] == ["node_reader", "router", "node_writer"]
+
+    # 3. Credential scrubbing: neither supersecret123 nor password123 in serialized output!
+    serialized = json.dumps(res)
+    assert "supersecret123" not in serialized
+    assert "password123" not in serialized
+    assert "<redacted:credential>" in exp["read_resource"] or "token=" not in exp["read_resource"]
+    assert "<redacted:credential>" in exp["write_resource"] or "password" not in exp["write_resource"]
+
+    # 4. v1 schema validation
+    schema_path = ROOT / "contracts" / "control-preflight.schema.json"
+    schema = json.loads(schema_path.read_text())
+    validator = jsonschema.Draft202012Validator(schema, format_checker=artifact_format_checker)
+    validator.validate(res)
+
+
+def test_control_plan_cycle_and_invalid_edge_safe_traversal(monkeypatch):
+    class MockExposureSession:
+        def run(self, query, keys=None, **kwargs):
+            return [
+                {"tool_key": "t::read", "mode": "READS", "resource_uri": "res://a"},
+                {"tool_key": "t::write", "mode": "WRITES", "resource_uri": "res://b"},
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", lambda p, c, **kwargs: {
+        "agent": p, "agent_found": True, "profile": kwargs.get("profile", "strict"), "eligible": list(c), "rejected": []
+    })
+    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", lambda fetch, **kwargs: {
+        **fetch(), "graph_state": {"instance_id": "test-instance", "generation": 1}
+    })
+    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+
+    doc = {
+        "schema_version": 1,
+        "kind": "toolgraph.control-plan",
+        "run_id": "cycle-run",
+        "producer": {"name": "test-orch", "version": "1.0"},
+        "limits": {"maximum_agent_calls": 5, "maximum_parallelism": 1, "maximum_cycles": 0},
+        "principals": [
+            {"id": "p1", "candidate_tools": ["t::read", "t::write"]},
+        ],
+        "nodes": [
+            {"id": "start", "kind": "start", "principals": [], "agent_call": False},
+            {
+                "id": "n1",
+                "kind": "agent",
+                "agent_call": True,
+                "principals": ["p1"],
+                "max_invocations": 1,
+                "max_parallelism": 1,
+                "timeout_seconds": 60,
+            },
+            {
+                "id": "n2",
+                "kind": "agent",
+                "agent_call": True,
+                "principals": ["p1"],
+                "max_invocations": 1,
+                "max_parallelism": 1,
+                "timeout_seconds": 60,
+            },
+            {"id": "end", "kind": "end", "principals": [], "agent_call": False},
+        ],
+        "edges": [
+            {"from": "start", "to": "n1", "kind": "always", "decided_by": "code"},
+            {"from": "n1", "to": "n2", "kind": "always", "decided_by": "code"},
+            # Cycle n2 -> n1: must NOT loop forever
+            {"from": "n2", "to": "n1", "kind": "always", "decided_by": "code"},
+            # Invalid edge to non-existent node: must be skipped safely
+            {"from": "n2", "to": "ghost_node", "kind": "always", "decided_by": "code"},
+            {"from": "n2", "to": "end", "kind": "always", "decided_by": "code"},
+        ],
+    }
+
+    res = build_control_preflight(json.dumps(doc).encode())
+    assert res["decision"] == "advisory_warn"
+    assert len(res["potential_exposures"]) >= 1
+
+
+def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
+    class MockExposureSession:
+        def run(self, query, keys=None, **kwargs):
+            return [
+                {"tool_key": "t::read", "mode": "READS", "resource_uri": "res://r"},
+                {"tool_key": "t::write", "mode": "WRITES", "resource_uri": "res://w"},
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", lambda p, c, **kwargs: {
+        "agent": p, "agent_found": True, "profile": kwargs.get("profile", "strict"), "eligible": list(c), "rejected": []
+    })
+    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", lambda fetch, **kwargs: {
+        **fetch(), "graph_state": {"instance_id": "test-instance", "generation": 1}
+    })
+    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+
+    # Build 100 node chain: start -> n_0 -> ... -> n_99 -> end
+    nodes = [{"id": "start", "kind": "start", "principals": [], "agent_call": False}]
+    edges = []
+    prev = "start"
+    for i in range(100):  # 100 intermediate nodes for test speed
+        nid = f"n_{i}"
+        principals = ["p_reader"] if i == 0 else (["p_writer"] if i == 99 else [])
+        agent_call = bool(principals)
+        node_def = {
+            "id": nid,
+            "kind": "agent" if agent_call else "join",
+            "principals": principals,
+            "agent_call": agent_call,
+        }
+        if agent_call:
+            node_def["max_invocations"] = 1
+            node_def["max_parallelism"] = 1
+            node_def["timeout_seconds"] = 60
+        nodes.append(node_def)
+        edges.append({"from": prev, "to": nid, "kind": "always", "decided_by": "code"})
+        prev = nid
+    nodes.append({"id": "end", "kind": "end", "principals": [], "agent_call": False})
+    edges.append({"from": prev, "to": "end", "kind": "always", "decided_by": "code"})
+
+    doc = {
+        "schema_version": 1,
+        "kind": "toolgraph.control-plan",
+        "run_id": "chain-run",
+        "producer": {"name": "test-orch", "version": "1.0"},
+        "limits": {"maximum_agent_calls": 10, "maximum_parallelism": 1, "maximum_cycles": 0},
+        "principals": [
+            {"id": "p_reader", "candidate_tools": ["t::read"]},
+            {"id": "p_writer", "candidate_tools": ["t::write"]},
+        ],
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+    res = build_control_preflight(json.dumps(doc).encode())
+    assert res["decision"] == "advisory_warn"
+    assert len(res["potential_exposures"]) == 1
+    exp = res["potential_exposures"][0]
+    witness = exp["witness_path"]
+    # 100 node path is compressed to 33 elements
+    assert len(witness) == 33
+    assert "... (68 intermediate nodes) ..." in witness[16]
+

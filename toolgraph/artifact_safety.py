@@ -57,6 +57,8 @@ _EVIDENCE_FIELDS = frozenset(
         "resource",
         "resource_uri",
         "exception_reason",
+        "read_resource",
+        "write_resource",
     }
 )
 _IDENTITY_FIELDS = frozenset(

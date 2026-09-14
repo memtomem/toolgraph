@@ -8,16 +8,16 @@ collision-safe graph-state bracket.
 
 from __future__ import annotations
 
-from collections import deque
+from collections import defaultdict, deque
 from datetime import datetime, timezone
 import json
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from toolgraph.artifacts import rfc3339_offset_error, sha256_bytes
-from toolgraph.graph import queries, selector
+from toolgraph.graph import driver, queries, selector
 from toolgraph.artifact_safety import _CREDENTIAL_QUERY, _CREDENTIAL_URI, safe_artifact
 
 SCHEMA_VERSION = 1
@@ -26,6 +26,10 @@ RESULT_KIND = "toolgraph.control-preflight"
 MAX_PLAN_BYTES = 1_000_000
 # JSON nesting bound for the body-free walk (and json.loads' own recursion).
 _MAX_PLAN_DEPTH = 100
+
+MAX_EXPOSURE_RECORDS = 100
+MAX_WITNESS_PATH_NODES = 32
+MAX_AGGREGATE_EXPOSURE_BYTES = 64_000
 
 _QUALIFIED_TOOL = re.compile(r"^[^:\s]+::[^:\s]+$")
 _FORBIDDEN_KEYS = frozenset(
@@ -429,11 +433,129 @@ def lint_control_plan(plan: ControlPlan) -> list[dict]:
     return findings
 
 
+def _compress_witness_path(path: list[str]) -> list[str]:
+    if len(path) <= MAX_WITNESS_PATH_NODES:
+        return path
+    head = path[:16]
+    tail = path[-16:]
+    omitted = len(path) - 32
+    return head + [f"... ({omitted} intermediate nodes) ..."] + tail
+
+
+def compute_control_plan_exposures(
+    plan: ControlPlan,
+    evaluations: list[dict],
+    session: Any,
+) -> dict[str, Any]:
+    """Compute transitive exposures from reader nodes to writer nodes under hard budgets."""
+    eligible_by_principal: dict[str, list[str]] = {
+        ev["principal"]: ev.get("eligible", []) for ev in evaluations
+    }
+    all_eligible = sorted({t for tools in eligible_by_principal.values() for t in tools})
+    if not all_eligible:
+        return {"exposures": [], "truncated": False, "total_candidate_pairs_found": 0}
+
+    reads_by_tool: dict[str, list[str]] = defaultdict(list)
+    writes_by_tool: dict[str, list[str]] = defaultdict(list)
+    for row in session.run(
+        """
+        MATCH (t:Tool)-[acc:READS|WRITES]->(res:Resource)
+        WHERE t.key IN $keys
+        RETURN t.key AS tool_key, type(acc) AS mode, res.uri AS resource_uri
+        ORDER BY tool_key, resource_uri
+        """,
+        keys=all_eligible,
+    ):
+        tk = row["tool_key"]
+        uri = row["resource_uri"]
+        mode = row["mode"]
+        if mode == "READS":
+            reads_by_tool[tk].append(uri)
+        elif mode == "WRITES":
+            writes_by_tool[tk].append(uri)
+
+    node_readers: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    node_writers: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+
+    for node in plan.nodes:
+        for pid in node.principals:
+            for tk in eligible_by_principal.get(pid, []):
+                for res in reads_by_tool.get(tk, []):
+                    node_readers[node.id].append((pid, tk, res))
+                for res in writes_by_tool.get(tk, []):
+                    node_writers[node.id].append((pid, tk, res))
+
+    reader_node_ids = [n.id for n in plan.nodes if node_readers[n.id]]
+    if not reader_node_ids:
+        return {"exposures": [], "truncated": False, "total_candidate_pairs_found": 0}
+
+    nodes = {node.id: node for node in plan.nodes}
+    adjacency: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+    for edge in plan.edges:
+        if edge.source in nodes and edge.target in nodes:
+            adjacency[edge.source].append(edge.target)
+
+    exposures: list[dict] = []
+    truncated = False
+    total_candidate_pairs = 0
+    current_aggregate_bytes = 2
+
+    for r_node_id in reader_node_ids:
+        if truncated:
+            break
+        queue = deque([(r_node_id, [r_node_id])])
+        visited = {r_node_id}
+        while queue:
+            curr, path = queue.popleft()
+            if curr != r_node_id and node_writers.get(curr):
+                for r_pid, r_tool, r_res in node_readers[r_node_id]:
+                    for w_pid, w_tool, w_res in node_writers[curr]:
+                        total_candidate_pairs += 1
+                        if len(exposures) >= MAX_EXPOSURE_RECORDS:
+                            truncated = True
+                            break
+                        rec = {
+                            "reader_node": r_node_id,
+                            "reader_principal": r_pid,
+                            "read_tool": r_tool,
+                            "read_resource": r_res,
+                            "writer_node": curr,
+                            "writer_principal": w_pid,
+                            "write_tool": w_tool,
+                            "write_resource": w_res,
+                            "witness_path": _compress_witness_path(path),
+                        }
+                        rec_bytes = len(json.dumps(rec).encode("utf-8"))
+                        if (
+                            current_aggregate_bytes + rec_bytes + 2
+                            > MAX_AGGREGATE_EXPOSURE_BYTES
+                        ):
+                            truncated = True
+                            break
+                        exposures.append(rec)
+                        current_aggregate_bytes += rec_bytes + 1
+                    if truncated:
+                        break
+            if truncated:
+                break
+            for neighbor in adjacency.get(curr, []):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append((neighbor, path + [neighbor]))
+
+    return {
+        "exposures": exposures,
+        "truncated": truncated,
+        "total_candidate_pairs_found": total_candidate_pairs,
+    }
+
+
 def build_control_preflight(
     raw_plan: bytes,
     *,
     profile: str = selector.DEFAULT_PROFILE,
     created_at: datetime | None = None,
+    session_factory: Any | None = None,
 ) -> dict:
     """Evaluate a valid control plan as one advisory, graph-state-bound artifact."""
     if profile not in selector.PROFILES:
@@ -461,19 +583,37 @@ def build_control_preflight(
                     "rejected": verdict["rejected"],
                 }
             )
-        return {"evaluations": evaluations}
+        session_ctx = session_factory if session_factory is not None else driver.session
+        with session_ctx() as s:
+            exposure_result = compute_control_plan_exposures(plan, evaluations, s)
+        return {
+            "evaluations": evaluations,
+            "attempt_exposures": exposure_result["exposures"],
+            "truncated": exposure_result["truncated"],
+            "total_candidate_pairs_found": exposure_result["total_candidate_pairs_found"],
+        }
 
     compiled = queries.with_graph_state(fetch, strict=True)
     graph_state = compiled["graph_state"]
     if not isinstance(graph_state.get("instance_id"), str) or not graph_state["instance_id"]:
         raise ControlPlanError("graph has no instance id — run init-schema before preflight")
 
-    warned = bool(findings) or any(
-        not evaluation["agent_found"] or evaluation["rejected"]
-        for evaluation in compiled["evaluations"]
+    attempt_exposures = compiled["attempt_exposures"]
+    truncated = compiled["truncated"]
+    total_candidate_pairs_found = compiled["total_candidate_pairs_found"]
+
+    warned = (
+        bool(findings)
+        or any(
+            not evaluation["agent_found"] or evaluation["rejected"]
+            for evaluation in compiled["evaluations"]
+        )
+        or bool(attempt_exposures)
+        or truncated
     )
     timestamp = created_at or datetime.now(timezone.utc)
-    return {
+    sanitized_exposures = safe_artifact(attempt_exposures)
+    result = {
         "schema_version": SCHEMA_VERSION,
         "kind": RESULT_KIND,
         "run_id": plan.run_id,
@@ -483,12 +623,11 @@ def build_control_preflight(
         "plan_digest": f"sha256:{sha256_bytes(raw_plan)}",
         "graph_state": graph_state,
         "decision": "advisory_warn" if warned else "advisory_allow",
-        # Redaction covers graph evidence only. Applied to the whole artifact
-        # it also rewrites identities: a URI-shaped run_id loses its query, and
-        # principals differing only there collapse into one output identity —
-        # which breaks the run correlation this artifact exists for. Identity
-        # fields are already credential-free; load_control_plan rejects a plan
-        # carrying credential-shaped values.
         "evaluations": safe_artifact(compiled["evaluations"]),
         "findings": findings,
+        "potential_exposures": sanitized_exposures,
     }
+    if truncated:
+        result["truncated"] = True
+        result["total_candidate_pairs_found"] = total_candidate_pairs_found
+    return result
