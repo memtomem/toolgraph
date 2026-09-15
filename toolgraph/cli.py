@@ -916,12 +916,12 @@ def policy_propose(
         "unspecified", "--window-label", help="Descriptive label for the observation window."
     ),
     unverified_provenance: bool = typer.Option(
-        False, "--unverified-provenance", help="Proceed on export lacking an envelope."
+        False, "--unverified-provenance", help="Allow missing envelope/identity with explicitly unverified provenance; contradictions still fail."
     ),
     revalidate_current: bool = typer.Option(
         False,
         "--revalidate-current",
-        help="Revalidate against current live catalog if generation changed.",
+        help="Check proposed additions against the current strict catalog, even at the same generation.",
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write proposal markdown to file instead of stdout."

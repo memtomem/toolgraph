@@ -797,14 +797,19 @@ def _compute_dry_run_diff(
     prop_exceptions = {}
     for agent, tool_key, resource_uri, policy_id, reason in resolved["resolved_exceptions"]:
         prop_exceptions[(agent, tool_key, resource_uri, policy_id)] = reason
+
+    def _exc_key(key: tuple[str, str, str | None, str]) -> tuple[str, str, bool, str, str]:
+        agent, tool, resource, policy = key
+        return agent, tool, resource is not None, resource or "", policy
+
     expected_exceptions_added = [
         {"agent": a, "tool": t, "resource": r, "policy": p, "reason": reason}
-        for (a, t, r, p), reason in sorted(prop_exceptions.items())
+        for (a, t, r, p), reason in sorted(prop_exceptions.items(), key=lambda item: _exc_key(item[0]))
         if (a, t, r, p) not in db_exceptions
     ]
     expected_exceptions_removed = [
         {"agent": a, "tool": t, "resource": r, "policy": p}
-        for (a, t, r, p) in sorted(db_exceptions.keys())
+        for (a, t, r, p) in sorted(db_exceptions.keys(), key=_exc_key)
         if (a, t, r, p) not in prop_exceptions
     ]
     expected_exceptions_reason_updated = [
@@ -816,7 +821,7 @@ def _compute_dry_run_diff(
             "before": db_exceptions[(a, t, r, p)],
             "after": prop_exceptions[(a, t, r, p)],
         }
-        for (a, t, r, p) in sorted(set(db_exceptions) & set(prop_exceptions))
+        for (a, t, r, p) in sorted(set(db_exceptions) & set(prop_exceptions), key=_exc_key)
         if db_exceptions[(a, t, r, p)] != prop_exceptions[(a, t, r, p)]
     ]
 
@@ -829,7 +834,7 @@ def _compute_dry_run_diff(
     prop_authored_resources = {
         uri for _, _, uri, _ in resolved["resolved_access"]
     } | {
-        ref for kind, ref, _ in resolved["resolved_governed"] if kind == "resource"
+        ref for kind, ref, bindings in resolved["resolved_governed"] if kind == "resource" and bindings
     }
     resources_created = sorted(prop_authored_resources - db_resources)
     resources_pruned = sorted([
@@ -853,7 +858,7 @@ def _compute_dry_run_diff(
     prop_authored_tools = (
         {k for (_, k) in prop_grants}
         | {k for (k, _, _) in prop_access}
-        | {ref for (kind, ref, _) in prop_governed if kind == "tool"}
+        | {ref for (kind, ref, bindings) in resolved["resolved_governed"] if kind == "tool" and bindings}
     )
     tools_pruned = sorted([
         t for t in db_tools if t not in crawled_tools and t not in prop_authored_tools

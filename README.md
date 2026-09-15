@@ -50,6 +50,9 @@ audit ergonomics simple, and that embedding-only registries cannot.
 Every edge here is either a crawled fact or an operator-authored assertion;
 nothing is LLM-guessed.
 
+For observed-usage grant proposals and provenance checks, see the
+[policy proposal guide](docs/policy-propose.md).
+
 ## Graph model
 
 ```

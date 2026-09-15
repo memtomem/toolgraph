@@ -7,6 +7,7 @@ from typing import Any
 
 from toolgraph import config
 from toolgraph.graph import driver, queries, schema
+from toolgraph.redaction import redact_text
 
 
 @dataclass
@@ -44,7 +45,15 @@ def run_doctor() -> DoctorReport:
     overall_healthy = True
 
     # 1. Configuration check
-    cfg_info = config.check_config_health()
+    try:
+        cfg_info = config.check_config_health()
+    except Exception as exc:
+        error = redact_text(exc)
+        return DoctorReport(healthy=False, checks=[DoctorCheck(
+            name="Configuration", status="FAIL",
+            message=f"Failed to inspect configuration: {error}", details={"error": error},
+        )])
+    cfg_info = {key: redact_text(value) if isinstance(value, str) else value for key, value in cfg_info.items()}
     if not cfg_info["exists"]:
         # Missing config file is a non-fatal warning if running on environment defaults
         checks.append(
@@ -64,7 +73,7 @@ def run_doctor() -> DoctorReport:
                 details=cfg_info,
             )
         )
-        overall_healthy = False
+        return DoctorReport(healthy=False, checks=checks)
     elif cfg_info["permissions_ok"] is False:
         checks.append(
             DoctorCheck(
@@ -84,6 +93,22 @@ def run_doctor() -> DoctorReport:
             )
         )
 
+    # Safely obtain backend name from settings
+    backend_name = "unknown"
+    try:
+        backend_name = redact_text(config.settings.backend)
+    except Exception as exc:
+        redacted_err = redact_text(exc)
+        checks.append(
+            DoctorCheck(
+                name="Configuration",
+                status="FAIL",
+                message=f"Failed to load configuration settings: {redacted_err}",
+                details={"error": redacted_err},
+            )
+        )
+        return DoctorReport(healthy=False, checks=checks)
+
     # 2. Connectivity check
     try:
         driver.verify_connectivity()
@@ -91,17 +116,18 @@ def run_doctor() -> DoctorReport:
             DoctorCheck(
                 name="Connectivity",
                 status="PASS",
-                message=f"Backend '{config.settings.backend}' connected and responsive",
-                details={"backend": config.settings.backend},
+                message=f"Backend '{backend_name}' connected and responsive",
+                details={"backend": backend_name},
             )
         )
     except Exception as exc:
+        redacted_err = redact_text(exc)
         checks.append(
             DoctorCheck(
                 name="Connectivity",
                 status="FAIL",
-                message=f"Failed to connect to backend '{config.settings.backend}': {exc}",
-                details={"backend": config.settings.backend, "error": str(exc)},
+                message=f"Failed to connect to backend '{backend_name}': {redacted_err}",
+                details={"backend": backend_name, "error": redacted_err},
             )
         )
         overall_healthy = False
@@ -137,12 +163,13 @@ def run_doctor() -> DoctorReport:
             )
             overall_healthy = False
     except Exception as exc:
+        redacted_err = redact_text(exc)
         checks.append(
             DoctorCheck(
                 name="Schema Integrity",
                 status="FAIL",
-                message=f"Failed to inspect schema: {exc}",
-                details={"error": str(exc)},
+                message=f"Failed to inspect schema: {redacted_err}",
+                details={"error": redacted_err},
             )
         )
         overall_healthy = False
@@ -173,12 +200,13 @@ def run_doctor() -> DoctorReport:
                 )
             )
     except Exception as exc:
+        redacted_err = redact_text(exc)
         checks.append(
             DoctorCheck(
                 name="Graph State",
                 status="FAIL",
-                message=f"Failed to read graph state: {exc}",
-                details={"error": str(exc)},
+                message=f"Failed to read graph state: {redacted_err}",
+                details={"error": redacted_err},
             )
         )
         overall_healthy = False

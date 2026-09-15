@@ -12,7 +12,7 @@ from typing import Any
 
 import yaml
 
-from toolgraph.graph import driver, queries
+from toolgraph.graph import driver, queries, selector
 from toolgraph.graph.selector import PROFILES
 from toolgraph.manifest.parser import Governance, governance_digest, load_governance
 
@@ -117,6 +117,18 @@ def _instant(value: str, where: str) -> datetime:
         raise ProvenanceError(f"{where} is not a real date: {value!r} ({exc})") from exc
 
 
+def _instance_id(value: object, where: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or UNSAFE_IN_NAME.search(value):
+        raise ProvenanceError(f"{where} must be a string without control characters")
+    if not value.strip():
+        return None
+    if value != value.strip():
+        raise ProvenanceError(f"{where} must not have surrounding whitespace")
+    return value
+
+
 def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
     missing = [f for f in ENVELOPE_FIELDS if f not in envelope]
     if missing:
@@ -160,10 +172,11 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
             f'window_end ({envelope["window_end"]})'
         )
     out = {f: envelope[f] for f in ENVELOPE_FIELDS}
-    if "graph_instance_id" in envelope:
-        out["graph_instance_id"] = envelope["graph_instance_id"]
-    if "instance_id" in envelope:
-        out["instance_id"] = envelope["instance_id"]
+    canonical = _instance_id(envelope.get("graph_instance_id"), "graph_instance_id")
+    alias = _instance_id(envelope.get("instance_id"), "instance_id")
+    if canonical is not None and alias is not None and canonical != alias:
+        raise ProvenanceError("graph_instance_id and instance_id conflict")
+    out["graph_instance_id"] = canonical or alias
     return out
 
 
@@ -468,10 +481,7 @@ def render(
         a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
         a("> the digest of the manifest supplied. That is the whole of it.")
         a(">")
-        if provenance_note:
-            a(f"> provenance: {provenance_note}")
-            a(">")
-        a(f'> governance_digest: `{envelope["governance_digest"]}` (verified)')
+        a(f'> governance_digest: `{envelope["governance_digest"]}` (matches supplied manifest)')
         a(
             f'> graph_generation: {envelope["graph_generation"]} · '
             f'profile: `{envelope["profile"]}` (declared)'
@@ -487,6 +497,9 @@ def render(
                 "fewer reasons than `strict`. A tool absent from these rows was not"
             )
             a("> necessarily allowed under strict.")
+    if provenance_note:
+        a(">")
+        a(f"> provenance: {provenance_note}")
     a("")
     a(
         f"decision_mode: human_required · automatic_change: false · "
@@ -583,94 +596,182 @@ def run_propose(
             "Or pass --unverified-provenance to proceed without envelope verification."
         )
 
-    # Perform graph-bracketed read for live state & grant resolution
+    # Recompute every graph-dependent input together on each bracket retry.
     def fetch_bracketed():
         st = queries.graph_state()
-        with driver.session() as s:
-            granted, ambiguous_grants = resolve_grants_from_graph(s, gov.get("grants") or [])
-            # Also resolve live tool keys for revalidation if needed
-            live_tools = queries.resolve_tool_refs(s, [o["ref"] for o in observed if o["has_tool_key"]])
-        return {
-            "state": st,
-            "granted": granted,
-            "ambiguous_grants": ambiguous_grants,
-            "live_tools": live_tools,
-        }
+        with driver.session() as session:
+            granted, ambiguous = resolve_grants_from_graph(session, gov.get("grants") or [])
+        proposal = propose(
+            gov, observed, min_would_block,
+            granted=granted, ambiguous_grants=ambiguous,
+        )
+        ranked = []
+        if revalidate_current:
+            candidates: dict[str, list[str]] = defaultdict(list)
+            for addition in proposal["additions"]:
+                candidates[addition["agent"]].append(addition["tool"])
+            for agent, keys in sorted(candidates.items()):
+                for start in range(0, len(keys), selector.MAX_CANDIDATES):
+                    ranked.append(selector.rank_features(
+                        agent, keys[start:start + selector.MAX_CANDIDATES],
+                    ))
+        return {"state": st, "proposal": proposal, "ranked": ranked}
 
     try:
         bracket_result = queries.with_graph_state(fetch_bracketed, strict=True)
     except RuntimeError as exc:
-        if "graph state changed during every read attempt" in str(exc) or "generation changed" in str(exc):
-            raise StateChurnError("graph state churn during observation proposal: concurrent graph modifications exhausted 5 read attempts") from exc
+        if str(exc) in {
+            "graph state changed during every read attempt",
+            "graph generation changed during every read attempt",
+        }:
+            raise StateChurnError(
+                "graph state churn during observation proposal: "
+                "concurrent graph modifications exhausted 5 read attempts"
+            ) from exc
         raise
 
-    state: queries.GraphState = bracket_result["state"]
-    granted = bracket_result["granted"]
-    ambiguous_grants = bracket_result["ambiguous_grants"]
-    live_tools = bracket_result["live_tools"]
-
-    provenance_note: str | None = None
-
-    # Composite state validation if envelope is present
-    if envelope is not None:
-        env_instance = envelope.get("graph_instance_id") or envelope.get("instance_id")
-        if state.instance_id and env_instance and env_instance != state.instance_id:
-            raise StateMismatchError(
-                f"graph instance mismatch: export declared {env_instance}, "
-                f"live graph is {state.instance_id}"
-            )
-        if state.governance_digest and envelope["governance_digest"] != state.governance_digest:
-            raise StateMismatchError(
-                f"graph governance digest mismatch: export declared {envelope['governance_digest'][:12]}..., "
-                f"live graph is {state.governance_digest[:12]}..."
-            )
-        if envelope["graph_generation"] != state.generation:
-            if not revalidate_current:
-                raise StateMismatchError(
-                    f"export declared graph_generation {envelope['graph_generation']} but "
-                    f"live graph generation is {state.generation}. The catalog may have changed. "
-                    "Re-export or pass --revalidate-current to revalidate against the current catalog."
-                )
-            provenance_note = (
-                f"declared (revalidated against current catalog; observed: "
-                f"instance={env_instance or 'none'}, gen={envelope['graph_generation']}; "
-                f"current: instance={state.instance_id}, gen={state.generation})"
-            )
-        else:
-            provenance_note = (
-                f"declared (exact composite token matched: {state.instance_id}, "
-                f"gen {state.generation})"
-            )
-
-    proposal = propose(
-        gov,
-        observed,
-        min_would_block,
-        granted=granted,
-        ambiguous_grants=ambiguous_grants,
+    provenance = _proposal_provenance(
+        envelope, bracket_result["state"], expected_digest=expected_digest,
+        unverified_provenance=unverified_provenance,
+        revalidate_current=revalidate_current,
     )
-
-    # In revalidate-current mode, verify that proposed additions still exist in the current graph
-    if revalidate_current and proposal["additions"]:
-        surviving_additions = []
-        for add in proposal["additions"]:
-            tool_key = add["tool"]
-            matches = live_tools.get(tool_key, [])
-            if matches:
-                surviving_additions.append(add)
-            else:
-                proposal["not_grant_shaped"].append({
-                    **add,
-                    "reason": "DRIFTED",
-                    "note": f"tool '{tool_key}' no longer exists in the current live graph catalog (revalidation)",
-                })
-        proposal["additions"] = surviving_additions
-
+    proposal = bracket_result["proposal"]
+    if revalidate_current:
+        _revalidate_additions(proposal, bracket_result["ranked"])
+    proposal["provenance"] = provenance
     rendered = render(
-        proposal,
-        window_label,
-        min_would_block,
-        envelope=envelope,
-        provenance_note=provenance_note,
+        proposal, window_label, min_would_block, envelope=envelope,
+        provenance_note=_provenance_note(provenance),
     )
     return proposal, rendered
+
+
+def _proposal_provenance(
+    envelope: dict | None,
+    state: queries.GraphState,
+    *,
+    expected_digest: str,
+    unverified_provenance: bool,
+    revalidate_current: bool,
+) -> dict[str, Any]:
+    instance = _instance_id(state.instance_id, "live instance_id")
+    digest = state.governance_digest
+    if digest is not None:
+        if not isinstance(digest, str):
+            raise ProvenanceError("live governance_digest must be a string")
+        if not digest.strip():
+            digest = None
+        elif not DIGEST_RE.fullmatch(digest):
+            raise ProvenanceError("live governance_digest must be 64 lowercase hex characters")
+    if digest is not None and digest != expected_digest:
+        raise StateMismatchError("graph governance digest mismatch: supplied manifest and live graph differ")
+    if type(state.generation) is not int or state.generation < 0:
+        raise ProvenanceError("live graph generation must be a non-negative integer")
+    current = {"instance_id": instance, "generation": state.generation, "governance_digest": digest}
+    observed = None
+    missing = []
+    if envelope is None:
+        missing.append("envelope")
+    else:
+        env_instance = envelope["graph_instance_id"]
+        observed = {
+            "instance_id": env_instance,
+            "generation": envelope["graph_generation"],
+            "governance_digest": envelope["governance_digest"],
+        }
+        if instance is not None and env_instance is not None and instance != env_instance:
+            raise StateMismatchError(
+                f"graph instance mismatch: export declared {env_instance}, live graph is {instance}"
+            )
+        if digest is not None and digest != observed["governance_digest"]:
+            raise StateMismatchError("graph governance digest mismatch: export and live graph differ")
+        if observed["generation"] != state.generation and not revalidate_current:
+            raise StateMismatchError(
+                f"export declared graph_generation {observed['generation']} but "
+                f"live graph generation is {state.generation}. The catalog may have changed. "
+                "Re-export or pass --revalidate-current to revalidate against the current catalog."
+            )
+        if env_instance is None:
+            missing.append("observed.instance_id")
+    if instance is None:
+        missing.append("current.instance_id")
+    if digest is None:
+        missing.append("current.governance_digest")
+    if missing and not unverified_provenance:
+        raise ProvenanceError(
+            f"incomplete provenance: missing {', '.join(missing)}. "
+            "Re-export/initialize the graph, or pass --unverified-provenance "
+            "to proceed with explicitly unverified provenance."
+        )
+    return {
+        "status": "unverified" if missing else "revalidated" if revalidate_current else "exact",
+        "missing_fields": missing,
+        "observed_state": observed,
+        "current_state": current,
+        "current_revalidated": revalidate_current,
+        "revalidation_profile": "strict" if revalidate_current else None,
+    }
+
+
+def _provenance_note(provenance: dict) -> str:
+    current = provenance["current_state"]
+    if provenance["status"] == "exact":
+        return (
+            f"declared (exact composite token matched: {current['instance_id']}, "
+            f"gen {current['generation']})"
+        )
+    observed = provenance["observed_state"] or {}
+    tokens = (
+        f"observed: instance={observed.get('instance_id') or 'none'}, "
+        f"gen={observed.get('generation', 'none')}; "
+        f"current: instance={current['instance_id']}, gen={current['generation']}"
+    )
+    checked = "revalidated against current catalog; profile=strict; " if provenance["current_revalidated"] else ""
+    if provenance["status"] == "unverified":
+        return (
+            "UNVERIFIED PROVENANCE (missing: " + ", ".join(provenance["missing_fields"])
+            + f"; {checked}{tokens}; current checks do not establish historical provenance)"
+        )
+    return f"declared ({checked}{tokens})"
+
+
+def _revalidate_additions(proposal: dict, ranked_batches: list[dict]) -> None:
+    features = {
+        (ranked["agent"], feature["candidate"]): feature
+        for ranked in ranked_batches for feature in ranked["features"]
+    }
+    missing_agents = {ranked["agent"] for ranked in ranked_batches if not ranked["agent_found"]}
+    survivors = []
+    for addition in proposal["additions"]:
+        agent, tool = addition["agent"], addition["tool"]
+        if agent in missing_agents:
+            proposal["insufficient_evidence"].append({
+                **addition, "reason": "AGENT_NOT_FOUND",
+                "note": "agent is absent from the current graph (strict revalidation)",
+            })
+            continue
+        feature = features[(agent, tool)]
+        # Only the hypothetical grant changes. Drift, mapping and DENY facts
+        # remain authoritative, including reasons hidden behind NOT_GRANTED.
+        hypothetical = {**feature, "permitted": True}
+        filtered = selector.filter_features(
+            {"agent": agent, "agent_found": True, "features": [hypothetical]}, "strict",
+        )
+        if filtered["rejected"]:
+            reason = filtered["rejected"][0]["reason"]
+            bucket = "conflicts" if reason in {"DENY_VIOLATION", "DENY_GOVERNED"} else "not_grant_shaped"
+            proposal[bucket].append({
+                **addition, "reason": reason,
+                "note": f"current strict revalidation rejected {tool}: {reason}; a grant cannot clear this blocker",
+            })
+        elif feature["permitted"]:
+            proposal["insufficient_evidence"].append({
+                **addition, "reason": "ALREADY_GRANTED",
+                "note": "the current graph already grants this tool; no addition proposed",
+            })
+        else:
+            survivors.append(addition)
+    proposal["additions"] = survivors
+    proposal["conflicts"].sort(key=lambda row: (row["agent"], row["tool"]))
+    for bucket in ("not_grant_shaped", "insufficient_evidence"):
+        proposal[bucket].sort(key=lambda row: (-row["would_block_calls"], row["agent"], row["tool"]))

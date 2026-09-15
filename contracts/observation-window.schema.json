@@ -33,9 +33,11 @@
               "minimum": 0
             },
             "graph_instance_id": {
+              "description": "Graph identity. Missing, null or blank identity requires --unverified-provenance; supplied identities must be valid and agree with instance_id when both are present.",
               "type": ["string", "null"]
             },
             "instance_id": {
+              "description": "Compatibility alias for graph_instance_id; conflicting nonempty aliases are refused.",
               "type": ["string", "null"]
             },
             "profile": {

@@ -215,6 +215,13 @@ def test_run_propose_generation_shift_and_revalidation(backend_graph, sample_gov
     with pytest.raises(StateMismatchError, match="export declared graph_generation 1 but live graph generation is 2"):
         run_propose(sample_gov_path, sample_observed_jsonl, revalidate_current=False)
 
+    # Strict revalidation needs a live agent, exposure, and authored data flow.
+    with driver.session() as s:
+        s.run("CREATE (:Agent {id:'public-bot'})")
+        s.run("MATCH (t:Tool {key:'filesystem::read_file'}) "
+              "CREATE (m:MCPServer {name:'filesystem'}) CREATE (m)-[:EXPOSES]->(t) "
+              "CREATE (r:Resource {uri:'file:///data'}) CREATE (t)-[:READS]->(r)")
+
     # With revalidate_current=True -> succeeds with distinguishing header
     proposal, rendered = run_propose(sample_gov_path, sample_observed_jsonl, revalidate_current=True)
     assert len(proposal["additions"]) == 1
