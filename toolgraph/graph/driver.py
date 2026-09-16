@@ -30,7 +30,7 @@ _ladybug_database: Any | None = None
 # two first-requests concurrently; an unguarded check-then-set would leak one
 # Neo4j driver, or open a second Ladybug Database that trips the file lock and
 # misreports a spurious BACKEND_LOCKED.
-_backend_lock = threading.Lock()
+_backend_lock = threading.RLock()
 
 
 class BackendConfigurationError(RuntimeError):
@@ -233,12 +233,13 @@ def _get_ladybug_database() -> Any:
         return _ladybug_database
 
 
-def verify_connectivity() -> None:
+def verify_connectivity(*, read_only: bool = False) -> None:
     if backend_name() == "neo4j":
         with _translating_backend_errors():
             get_driver().verify_connectivity()
         return
-    with session() as current:
+    session_factory = acquire_readonly_session if read_only else session
+    with session_factory() as current:
         current.run("RETURN 1 AS ok").single()
 
 
@@ -266,15 +267,55 @@ def session() -> Iterator[Session | LadybugSession]:
 
 @contextmanager
 def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
-    """Acquire a read-only session without creating missing directories or database files."""
-    if backend_name() == "ladybug":
-        path = Path(config.settings.db_path)
-        if not path.exists():
-            raise BackendUnavailableError(
-                f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist"
-            )
-    with session() as s:
-        yield s
+    """Borrow an open database or open an existing embedded file read-only.
+
+    An owned read-only handle is never installed as the global writable handle.
+    Its native read_only flag also prevents creation if the file vanishes after
+    the existence check. The lifecycle lock prevents another thread from closing
+    a borrowed handle before this session exits. Reentrancy allows nested reads.
+    Callers issue only reads and bracket graph changes separately.
+    Owned reads also serialize the first writable open. Callers must not close
+    the driver reentrantly from inside their own active session.
+    Ladybug deliberately serializes all acquisitions through this helper across
+    threads for the entire context, including any graph-state retry backoff.
+    It is intended for diagnostics and previews, not parallel request serving.
+    The Neo4j branch uses the ordinary session/access mode: read-only here is a
+    caller query contract, not database-enforced write protection or READ routing.
+    """
+    if backend_name() != "ladybug":
+        with session() as current:
+            yield current
+        return
+    path = Path(config.settings.db_path)
+    if not path.is_file():
+        raise BackendUnavailableError(
+            f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist or is not a file"
+        )
+    owned = None
+    with _backend_lock:
+        database = _ladybug_database
+        if database is None:
+            try:
+                import ladybug as lb
+            except ImportError as exc:
+                raise BackendConfigurationError("backend=ladybug requires the 'ladybug' extra") from exc
+            try:
+                owned = database = lb.Database(path, read_only=True)
+            except RuntimeError as exc:
+                if "lock" in str(exc).lower() or "another process" in str(exc).lower():
+                    raise BackendLockedError(f"BACKEND_LOCKED: Ladybug database {path} already has an owner") from exc
+                if not path.is_file():
+                    raise BackendUnavailableError(f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist") from exc
+                raise BackendUnavailableError("BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file integrity and format") from exc
+        try:
+            current = LadybugSession(database)
+            try:
+                yield current
+            finally:
+                current.close()
+        finally:
+            if owned is not None:
+                owned.close()
 
 
 def close_driver() -> None:

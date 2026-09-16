@@ -548,7 +548,7 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
     assert len(res["potential_exposures"]) == 1
     exp = res["potential_exposures"][0]
     witness = exp["witness_path"]
-    # 100 node path is compressed to 33 elements
-    assert len(witness) == 33
-    assert "... (68 intermediate nodes) ..." in witness[16]
+    # The 32-element budget includes the omitted-nodes marker
+    assert len(witness) == 32
+    assert "... (69 intermediate nodes) ..." in witness[16]
 

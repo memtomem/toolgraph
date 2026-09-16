@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "kind": "toolgraph.control-preflight",
+  "run_id": "run-control-1",
+  "created_at": "2026-08-11T00:00:00+00:00",
+  "mode": "advisory",
+  "profile": "review",
+  "plan_digest": "sha256:b16c6555fcbebcbf32b5f9227ae47cc055acf8a64b606e6b79cd4bd861529f20",
+  "graph_state": {
+    "instance_id": "test-instance",
+    "generation": 42
+  },
+  "decision": "advisory_warn",
+  "evaluations": [
+    {
+      "principal": "codex",
+      "agent_found": true,
+      "eligible": [
+        "workspace::read",
+        "workspace::write"
+      ],
+      "rejected": []
+    },
+    {
+      "principal": "claude",
+      "agent_found": true,
+      "eligible": [
+        "workspace::read",
+        "workspace::write"
+      ],
+      "rejected": []
+    }
+  ],
+  "findings": [],
+  "potential_exposures": [
+    {
+      "reader_node": "attempts",
+      "reader_principal": "codex",
+      "read_tool": "workspace::read",
+      "read_resource": "file:///workspace/input",
+      "writer_node": "verify",
+      "writer_principal": "claude",
+      "write_tool": "workspace::write",
+      "write_resource": "file:///workspace/output",
+      "witness_path": [
+        "attempts",
+        "verify"
+      ]
+    },
+    {
+      "reader_node": "attempts",
+      "reader_principal": "claude",
+      "read_tool": "workspace::read",
+      "read_resource": "file:///workspace/input",
+      "writer_node": "verify",
+      "writer_principal": "claude",
+      "write_tool": "workspace::write",
+      "write_resource": "file:///workspace/output",
+      "witness_path": [
+        "attempts",
+        "verify"
+      ]
+    }
+  ]
+}

@@ -27,6 +27,8 @@ FIXTURES = CONTRACTS / "fixtures"
     [
         ("control-plan.schema.json", "control-plan-v1.json"),
         ("control-preflight.schema.json", "control-preflight-v1.json"),
+        ("control-plan.schema.json", "control-plan-exposure-v1.json"),
+        ("control-preflight.schema.json", "control-preflight-exposure-v1.json"),
     ],
 )
 def test_golden_fixture_validates(schema_name, fixture_name):
@@ -91,7 +93,28 @@ def test_producer_and_schema_agree_on_required_node_fields():
             load_control_plan(raw)
 
 
-def test_golden_result_binds_the_exact_golden_plan_bytes():
-    raw_plan = (FIXTURES / "control-plan-v1.json").read_bytes()
-    result = json.loads((FIXTURES / "control-preflight-v1.json").read_text())
+@pytest.mark.parametrize('suffix', ['v1', 'exposure-v1'])
+def test_golden_result_binds_the_exact_golden_plan_bytes(suffix):
+    raw_plan = (FIXTURES / f"control-plan-{suffix}.json").read_bytes()
+    result = json.loads((FIXTURES / f"control-preflight-{suffix}.json").read_text())
     assert result["plan_digest"] == f"sha256:{hashlib.sha256(raw_plan).hexdigest()}"
+
+
+@pytest.mark.parametrize('decision', ['advisory_allow', 'advisory_warn'])
+@pytest.mark.parametrize('evidence', ['none', 'finding', 'missing_agent', 'rejected', 'exposure'])
+def test_v1_schema_preserves_legacy_decisions(decision, evidence):
+    """Schema acceptance does not retroactively impose current producer policy."""
+    result = json.loads((FIXTURES / 'control-preflight-v1.json').read_text())
+    result['decision'] = decision
+    if evidence == 'finding':
+        result['findings'] = [{'code': 'UNREACHABLE_NODE', 'nodes': ['old-node']}]
+    elif evidence == 'missing_agent':
+        result['evaluations'][0]['agent_found'] = False
+    elif evidence == 'rejected':
+        result['evaluations'][0]['rejected'] = [{'candidate': 'workspace::write'}]
+    elif evidence == 'exposure':
+        result['potential_exposures'] = json.loads(
+            (FIXTURES / 'control-preflight-exposure-v1.json').read_text()
+        )['potential_exposures']
+    schema = json.loads((CONTRACTS / 'control-preflight.schema.json').read_text())
+    Draft202012Validator(schema).validate(result)

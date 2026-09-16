@@ -16,6 +16,7 @@ import typer
 
 from toolgraph import __version__
 from toolgraph import config
+from toolgraph.artifact_safety import redact
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
 from toolgraph.control_plan import (
     MAX_PLAN_BYTES,
@@ -95,7 +96,7 @@ def _reports_backend_outage(fn):
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except config.RuntimeConfigurationError as exc:
+        except (config.RuntimeConfigurationError, driver.BackendConfigurationError) as exc:
             typer.echo(f"ERROR: {redact_text(exc)}", err=True)
             raise typer.Exit(code=1) from None
         except driver.BackendUnavailableError as exc:
@@ -344,12 +345,15 @@ def ingest_manifest(
         help="Treat drifted tool refs (no live EXPOSES edge) as errors that "
              "reject the manifest. Default: non-fatal notice.",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Emit the complete dry-run delta as JSON; requires --dry-run."),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Analyze and display proposed graph changes without modifying the database.",
     ),
 ) -> None:
     """Ingest authored governance (agents, policies, ACL, data access, GOVERNED_BY)."""
+    if json_output and not dry_run:
+        raise typer.BadParameter("--json requires --dry-run")
     path = governance or config.settings.governance_config
     try:
         gov = load_governance(path)
@@ -358,15 +362,22 @@ def ingest_manifest(
         raise typer.Exit(code=1) from None
     if dry_run:
         report = dry_run_ingest(gov, strict_drift=strict_drift)
+        if json_output:
+            # A display-only delta, not a replay artifact: scrub every string,
+            # including URI lists and free-text warnings/reasons.
+            typer.echo(json.dumps(redact(report.to_dict()), indent=2))
+            if report.warnings:
+                raise typer.Exit(code=1)
+            return
         if report.warnings:
             typer.echo(f"DRY-RUN REJECTED — manifest at {path} would not apply (graph unchanged)")
             for w in report.warnings:
-                typer.echo(f"  [warn] {w}")
+                typer.echo(f"  [warn] {redact_text(w)}")
             for n in report.notices:
-                typer.echo(f"  [info] {n}")
+                typer.echo(f"  [info] {redact_text(n)}")
             raise typer.Exit(code=1)
         for n in report.notices:
-            typer.echo(f"  [info] {n}")
+            typer.echo(f"  [info] {redact_text(n)}")
         typer.echo(f"DRY-RUN: manifest at {path} would apply cleanly")
         typer.echo(report.summary_text())
         return
@@ -378,12 +389,12 @@ def ingest_manifest(
         # "Ingested" as success.
         typer.echo(f"REJECTED — manifest at {path} not applied (graph unchanged)")
         for w in report.warnings:
-            typer.echo(f"  [warn] {w}")
+            typer.echo(f"  [warn] {redact_text(w)}")
         for n in report.notices:
-            typer.echo(f"  [info] {n}")
+            typer.echo(f"  [info] {redact_text(n)}")
         raise typer.Exit(code=1)
     for n in report.notices:
-        typer.echo(f"  [info] {n}")
+        typer.echo(f"  [info] {redact_text(n)}")
     typer.echo(f"Ingested governance from {path}")
     typer.echo(f"Governance now: {governance_counts()}")
 
@@ -931,6 +942,8 @@ def policy_propose(
     ),
 ) -> None:
     """Propose governance.yaml grant changes from observed gateway usage."""
+    if json_output and output is not None:
+        raise typer.BadParameter("--json and --output cannot be combined")
     try:
         proposal, rendered = run_propose(
             governance,
@@ -947,7 +960,11 @@ def policy_propose(
     if json_output:
         typer.echo(json.dumps(proposal, indent=2))
     elif output is not None:
-        output.write_text(rendered, encoding="utf-8")
+        try:
+            output.write_text(rendered, encoding="utf-8")
+        except OSError as exc:
+            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
         typer.echo(f"Wrote proposal to {output}")
     else:
         typer.echo(rendered, nl=False)

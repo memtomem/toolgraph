@@ -23,7 +23,10 @@
         "generation": {"type": "integer", "minimum": 0}
       }
     },
-    "decision": {"enum": ["advisory_allow", "advisory_warn"]},
+    "decision": {
+      "enum": ["advisory_allow", "advisory_warn"],
+      "description": "Current producers warn for findings, missing agents, rejected tools, exposures or truncation; otherwise allow. Cross-field decision rules are producer behavior, not v1 schema validation constraints, preserving legacy result compatibility."
+    },
     "evaluations": {
       "type": "array",
       "minItems": 1,
@@ -32,6 +35,21 @@
     "findings": {
       "type": "array",
       "items": {"$ref": "#/$defs/finding"}
+    },
+    "potential_exposures": {
+      "description": "Sanitized potential reader-to-downstream-writer evidence, not proof of executed data transfer. Optional for legacy v1 producers; current producers always emit it. Serialized default json.dumps UTF-8 array is at most 64000 bytes. The byte limit is enforced by the producer and tested at runtime; JSON Schema does not measure serialized byte size.",
+      "type": "array",
+      "maxItems": 100,
+      "items": {"$ref": "#/$defs/exposure"}
+    },
+    "truncated": {
+      "description": "True if the record, serialized byte, or traversal-work budget prevented a complete search. Absence means false. Current producers warn on truncation even if no exposure was emitted; v1 schema validation does not enforce that decision mapping.",
+      "type": "boolean"
+    },
+    "total_candidate_pairs_found": {
+      "description": "Number of candidate evidence pairs encountered before stopping, including a candidate rejected by output budgets. On truncated results this is a lower bound, NOT the total number of graph pairs and NOT the number of emitted records. Zero is possible when traversal work is exhausted first.",
+      "type": "integer",
+      "minimum": 0
     }
   },
   "$defs": {
@@ -70,6 +88,41 @@
         "declared": {"type": "integer", "minimum": 0},
         "required": {"type": "integer", "minimum": 0}
       }
+    },
+    "exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reader_node", "reader_principal", "read_tool", "read_resource", "writer_node", "writer_principal", "write_tool", "write_resource", "witness_path"],
+      "properties": {
+        "reader_node": {"type": "string", "minLength": 1},
+        "reader_principal": {"type": "string", "minLength": 1},
+        "read_tool": {"$ref": "#/$defs/qualifiedToolKey"},
+        "read_resource": {"type": "string", "minLength": 1},
+        "writer_node": {"type": "string", "minLength": 1},
+        "writer_principal": {"type": "string", "minLength": 1},
+        "write_tool": {"$ref": "#/$defs/qualifiedToolKey"},
+        "write_resource": {"type": "string", "minLength": 1},
+        "witness_path": {
+          "description": "Shortest control path; long paths keep 16 leading and 15 trailing IDs plus one omitted-nodes marker.",
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 32,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["truncated"],
+        "properties": {
+          "truncated": {"const": true}
+        }
+      },
+      "then": {
+        "required": ["total_candidate_pairs_found"]
+      }
+    }
+  ]
 }

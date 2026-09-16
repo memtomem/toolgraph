@@ -67,3 +67,32 @@ revalidation: checking today's catalog cannot establish historical provenance.
 Markdown reports the same status and separates observed and current identities.
 A successful proposal can contain zero additions; inspect its other categories
 for excluded candidates and their reasons.
+
+`--json` and `--output` are mutually exclusive. Failed Markdown file writes
+return a redacted error and nonzero exit status without a traceback.
+
+## Preview and diagnostic requirements
+
+For governance change previews, `toolgraph ingest-manifest --governance
+GOVERNANCE_YAML --dry-run --json` emits the complete structural delta, including
+specific revoked grants, exception changes and resource pruning. A rejected
+manifest still returns a JSON report with warnings and exits nonzero. `--json`
+requires `--dry-run`; ordinary ingest behavior is unchanged. Uninitialized
+embedded databases are rejected with `init-schema` guidance without creating or
+modifying database files. `doctor` also opens an existing embedded DB read-only.
+
+Dry-run JSON is a display report, not an identity-preserving replay artifact.
+URI credentials, queries and fragments are scrubbed throughout its lists,
+warnings and reasons; the underlying in-memory delta is unchanged. Catalog
+inspection failures report connectivity/permission guidance, separately from
+missing-schema guidance. Corrupt embedded files return a controlled error.
+
+Neo4j preview and diagnostic readers require permission to run `SHOW CONSTRAINTS`
+in addition to reading graph data. A data-read role without catalog inspection
+permission cannot pass the physical-schema check; grant that permission through
+the database administrator. The check does not fall back to version-only
+validation when catalog access fails. Ladybug diagnostic/preview reads serialize
+across threads for the full session, including retry backoff, to protect handle
+lifetime. This helper is not intended for parallel request serving. Neo4j uses
+ordinary session routing; callers issue only reads, without driver-enforced
+write protection.

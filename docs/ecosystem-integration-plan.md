@@ -217,3 +217,17 @@ finished and a single real run can be traced through the preflight artifact, the
 syncmill run result and the tracegraph artifact under the same `run_id`.
 Automatic policy changes and a runtime gateway are not completion conditions for
 this plan.
+
+### Control-plan preflight exposure extension
+
+The single-agent preflight rule above does not define the separate
+`toolgraph.control-preflight` artifact. For control-plan results,
+`advisory_warn` also covers structural findings, missing agents, potential
+reader-to-writer exposures, and any truncated exploration. Even fully eligible
+tool evaluations can therefore warn. `potential_exposures` contains sanitized
+path evidence; a truncated result includes a discovered lower-bound
+`total_candidate_pairs_found`, not a complete count. Consumers must not treat
+omitted legacy exposure fields as a negative exposure finding. See
+[ADR-0013](adr/0013-bounded-control-plan-preflight.md) and
+[the result schema](../contracts/control-preflight.schema.json) for normative
+fields, budgets and decision rules.

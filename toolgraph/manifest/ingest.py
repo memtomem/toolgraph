@@ -902,13 +902,12 @@ def _compute_dry_run_diff(
 
 def dry_run_ingest(gov: Governance, strict_drift: bool = False) -> GovernanceDiffReport:
     """Analyze the exact delta that would be applied without mutating anything."""
-    check_backend_schema_version()
-
-    def _fetch_diff() -> dict[str, Any]:
-        with acquire_readonly_session() as s:
-            return _compute_dry_run_diff(s, gov, strict_drift)
-
-    res = queries.with_graph_state(_fetch_diff, strict=True)
+    with acquire_readonly_session() as session:
+        check_backend_schema_version(session)
+        res = queries.with_graph_state(
+            lambda: _compute_dry_run_diff(session, gov, strict_drift),
+            strict=True, state_reader=lambda: queries.graph_state(session),
+        )
     report_fields = {f.name for f in GovernanceDiffReport.__dataclass_fields__.values()}
     kwargs = {k: v for k, v in res.items() if k in report_fields}
     return GovernanceDiffReport(**kwargs)

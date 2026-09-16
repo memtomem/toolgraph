@@ -4,7 +4,7 @@
 
 - Working tree based on `32f6be2da07cf1fd49c084ba97a98b4975a43b37`.
 - Review base: `66076e824aae1dedebfaee2ad0ac6452d521f428` (the six v12 commits plus current WIP).
-- The original two uncommitted files were carried forward. No commit, push or deployment was performed.
+- The original two uncommitted files were carried forward. At the time of this validation snapshot, no commit, push or deployment had been performed. The reviewed changes were subsequently committed as `bbe296eabc9a0baa424b0bcad7feebcfbc661d9d` and pushed to main on 2026-09-15; CI run `34955079546` passed.
 - Previous review: `codex-20260915-070318-33453.final.md`, NEEDS-FIX (1 blocker, 5 majors).
 
 ## Remediation
@@ -53,9 +53,9 @@ checkout. Remote CI, release and deployment were not validated in this task.
 **SHIP — 0 blocker, 0 major, 0 minor findings.** The invocation final, parsed result, caller receipt and manifest agree.
 
 - Run: `codex-20260915-184759-40740-3ef7`; completed `2026-09-15T18:49:49+09:00`.
-- Final: [codex-20260915-184759-40740.final.md](../../.dev-trio/log/default/codex-20260915-184759-40740.final.md). SHA-256: `60930e0db37bc7f3af8209010551bd2ecbd1e827827b0be15283d49798350a38`.
-- Result: [codex-20260915-184759-40740.review.json](../../.dev-trio/log/default/codex-20260915-184759-40740.review.json). SHA-256: `047ca7bcca9affb207bd84e1cb2632e501d97fb41bd0b5a634eefbf325aea064`.
-- Manifest: [codex-20260915-184759-40740.manifest.json](../../.dev-trio/log/default/codex-20260915-184759-40740.manifest.json). SHA-256: `bb71dcaf19ece665d76e9acbccaf60e0b63704083bf9e6e7d1f2e1985c40a3cf`.
+- Final: `codex-20260915-184759-40740.final.md` (local ignored artifact under `.dev-trio/log/default/`). SHA-256: `60930e0db37bc7f3af8209010551bd2ecbd1e827827b0be15283d49798350a38`.
+- Result: `codex-20260915-184759-40740.review.json` (local ignored artifact under `.dev-trio/log/default/`). SHA-256: `047ca7bcca9affb207bd84e1cb2632e501d97fb41bd0b5a634eefbf325aea064`.
+- Manifest: `codex-20260915-184759-40740.manifest.json` (local ignored artifact under `.dev-trio/log/default/`). SHA-256: `bb71dcaf19ece665d76e9acbccaf60e0b63704083bf9e6e7d1f2e1985c40a3cf`.
 
 The reviewer independently ran **102 passing focused tests, 41 deselected, and 1 setup error** caused by sandbox-denied Docker access. The full 689-test run above was executed with Docker access and includes isolated Neo4j coverage. Neither run validates the current gateway consumer.
 

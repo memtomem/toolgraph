@@ -287,11 +287,13 @@ def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
     info = {'path': 'probe.json', 'exists': True, 'valid_json': True,
             'permissions_ok': True, 'permissions': '0o600', 'healthy': True, 'detail': 'ok'}
     monkeypatch.setattr(config, 'check_config_health', lambda: info)
-    monkeypatch.setattr(driver, 'verify_connectivity', lambda: None)
+    monkeypatch.setattr(driver, 'verify_connectivity', lambda **kwargs: None)
     monkeypatch.setattr(schema, 'inspect_backend_schema', lambda: {
         'healthy': True, 'schema_version': 1, 'backend': 'ladybug', 'live_tables': [],
     })
-    monkeypatch.setattr(queries, 'graph_state', lambda: queries.GraphState('probe', 1))
+    from contextlib import nullcontext
+    monkeypatch.setattr(driver, 'acquire_readonly_session', lambda: nullcontext(None))
+    monkeypatch.setattr(queries, 'graph_state', lambda *_: queries.GraphState('probe', 1))
     error = RuntimeError('bolt://user:synthetic-password@localhost:7687 token=synthetic-token')
     targets = {
         'inspection': (config, 'check_config_health'),

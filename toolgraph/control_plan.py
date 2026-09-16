@@ -30,6 +30,7 @@ _MAX_PLAN_DEPTH = 100
 MAX_EXPOSURE_RECORDS = 100
 MAX_WITNESS_PATH_NODES = 32
 MAX_AGGREGATE_EXPOSURE_BYTES = 64_000
+MAX_EXPOSURE_TRAVERSAL_STEPS = 65_536
 
 _QUALIFIED_TOOL = re.compile(r"^[^:\s]+::[^:\s]+$")
 _FORBIDDEN_KEYS = frozenset(
@@ -436,9 +437,11 @@ def lint_control_plan(plan: ControlPlan) -> list[dict]:
 def _compress_witness_path(path: list[str]) -> list[str]:
     if len(path) <= MAX_WITNESS_PATH_NODES:
         return path
-    head = path[:16]
-    tail = path[-16:]
-    omitted = len(path) - 32
+    head_count = MAX_WITNESS_PATH_NODES // 2
+    tail_count = MAX_WITNESS_PATH_NODES - head_count - 1
+    head = path[:head_count]
+    tail = path[-tail_count:]
+    omitted = len(path) - head_count - tail_count
     return head + [f"... ({omitted} intermediate nodes) ..."] + tail
 
 
@@ -485,67 +488,95 @@ def compute_control_plan_exposures(
                 for res in writes_by_tool.get(tk, []):
                     node_writers[node.id].append((pid, tk, res))
 
-    reader_node_ids = [n.id for n in plan.nodes if node_readers[n.id]]
-    if not reader_node_ids:
-        return {"exposures": [], "truncated": False, "total_candidate_pairs_found": 0}
+    empty = {"exposures": [], "truncated": False, "total_candidate_pairs_found": 0}
+    writer_ids = {key for key, facts in node_writers.items() if facts}
+    if not writer_ids:
+        return empty
 
-    nodes = {node.id: node for node in plan.nodes}
-    adjacency: dict[str, list[str]] = {node_id: [] for node_id in nodes}
+    nodes = {node.id for node in plan.nodes}
+    adjacency: dict[str, list[str]] = {key: [] for key in nodes}
+    reverse: dict[str, list[str]] = {key: [] for key in nodes}
     for edge in plan.edges:
         if edge.source in nodes and edge.target in nodes:
             adjacency[edge.source].append(edge.target)
+            reverse[edge.target].append(edge.source)
+
+    # One reverse walk removes readers and branches that cannot reach a writer.
+    # The validated plan already bounds this pass to 4096 nodes / 16384 edges.
+    can_reach_writer = set(writer_ids)
+    queue = deque(sorted(writer_ids))
+    while queue:
+        for parent in reverse[queue.popleft()]:
+            if parent not in can_reach_writer:
+                can_reach_writer.add(parent)
+                queue.append(parent)
 
     exposures: list[dict] = []
     truncated = False
     total_candidate_pairs = 0
-    current_aggregate_bytes = 2
+    current_aggregate_bytes = 2  # JSON array brackets, with default json.dumps separators.
+    steps = 0
 
-    for r_node_id in reader_node_ids:
-        if truncated:
-            break
-        queue = deque([(r_node_id, [r_node_id])])
-        visited = {r_node_id}
-        while queue:
-            curr, path = queue.popleft()
-            if curr != r_node_id and node_writers.get(curr):
-                for r_pid, r_tool, r_res in node_readers[r_node_id]:
-                    for w_pid, w_tool, w_res in node_writers[curr]:
+    for node in plan.nodes:
+        root = node.id
+        if not node_readers[root] or root not in can_reach_writer:
+            continue
+        queue = deque([root])
+        parents: dict[str, str | None] = {root: None}
+        while queue and not truncated:
+            if steps >= MAX_EXPOSURE_TRAVERSAL_STEPS:
+                truncated = True
+                break
+            steps += 1
+            current = queue.popleft()
+            witness = None
+            if current != root and node_writers.get(current):
+                for r_pid, r_tool, r_res in node_readers[root]:
+                    for w_pid, w_tool, w_res in node_writers[current]:
                         total_candidate_pairs += 1
                         if len(exposures) >= MAX_EXPOSURE_RECORDS:
                             truncated = True
                             break
-                        rec = {
-                            "reader_node": r_node_id,
-                            "reader_principal": r_pid,
-                            "read_tool": r_tool,
-                            "read_resource": r_res,
-                            "writer_node": curr,
-                            "writer_principal": w_pid,
-                            "write_tool": w_tool,
-                            "write_resource": w_res,
-                            "witness_path": _compress_witness_path(path),
-                        }
-                        rec_bytes = len(json.dumps(rec).encode("utf-8"))
-                        if (
-                            current_aggregate_bytes + rec_bytes + 2
-                            > MAX_AGGREGATE_EXPOSURE_BYTES
-                        ):
+                        if witness is None:
+                            path = []
+                            cursor: str | None = current
+                            while cursor is not None:
+                                path.append(cursor)
+                                cursor = parents[cursor]
+                            witness = _compress_witness_path(list(reversed(path)))
+                        record = safe_artifact({
+                            "reader_node": root, "reader_principal": r_pid,
+                            "read_tool": r_tool, "read_resource": r_res,
+                            "writer_node": current, "writer_principal": w_pid,
+                            "write_tool": w_tool, "write_resource": w_res,
+                            "witness_path": witness,
+                        })
+                        record_bytes = len(json.dumps(record).encode("utf-8"))
+                        added_bytes = record_bytes + (2 if exposures else 0)
+                        if current_aggregate_bytes + added_bytes > MAX_AGGREGATE_EXPOSURE_BYTES:
                             truncated = True
                             break
-                        exposures.append(rec)
-                        current_aggregate_bytes += rec_bytes + 1
+                        exposures.append(record)
+                        current_aggregate_bytes += added_bytes
                     if truncated:
                         break
             if truncated:
                 break
-            for neighbor in adjacency.get(curr, []):
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append((neighbor, path + [neighbor]))
+            for neighbor in adjacency[current]:
+                if steps >= MAX_EXPOSURE_TRAVERSAL_STEPS:
+                    truncated = True
+                    break
+                steps += 1
+                if neighbor in can_reach_writer and neighbor not in parents:
+                    parents[neighbor] = current
+                    queue.append(neighbor)
+        if truncated:
+            break
 
     return {
         "exposures": exposures,
         "truncated": truncated,
+        # Exact only if the traversal completed; otherwise a discovered lower bound.
         "total_candidate_pairs_found": total_candidate_pairs,
     }
 
@@ -612,7 +643,6 @@ def build_control_preflight(
         or truncated
     )
     timestamp = created_at or datetime.now(timezone.utc)
-    sanitized_exposures = safe_artifact(attempt_exposures)
     result = {
         "schema_version": SCHEMA_VERSION,
         "kind": RESULT_KIND,
@@ -625,7 +655,7 @@ def build_control_preflight(
         "decision": "advisory_warn" if warned else "advisory_allow",
         "evaluations": safe_artifact(compiled["evaluations"]),
         "findings": findings,
-        "potential_exposures": sanitized_exposures,
+        "potential_exposures": attempt_exposures,
     }
     if truncated:
         result["truncated"] = True

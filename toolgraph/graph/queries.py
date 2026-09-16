@@ -179,15 +179,21 @@ def graph_generation() -> int:
         return rec["generation"] if rec else 0
 
 
-def graph_state() -> GraphState:
+def graph_state(s: Session | None = None) -> GraphState:
     """Return the current collision-safe graph state and governance digest."""
-    with session() as s:
-        rec = s.run(
-            "MATCH (m:GraphMeta {id:'singleton'}) "
-            "RETURN m.instance_id AS instance_id, "
-            "coalesce(m.generation, 0) AS generation, "
-            "m.governance_digest AS governance_digest"
-        ).single()
+    if s is None:
+        with session() as current:
+            return _read_graph_state(current)
+    return _read_graph_state(s)
+
+
+def _read_graph_state(s: Session) -> GraphState:
+    rec = s.run(
+        "MATCH (m:GraphMeta {id:'singleton'}) "
+        "RETURN m.instance_id AS instance_id, "
+        "coalesce(m.generation, 0) AS generation, "
+        "m.governance_digest AS governance_digest"
+    ).single()
     if rec is None:
         return GraphState(instance_id=None, generation=0)
     return GraphState(

@@ -57,6 +57,8 @@ _EVIDENCE_FIELDS = frozenset(
         "resource",
         "resource_uri",
         "exception_reason",
+        # Reserved evidence keys across artifacts, including control-preflight
+        # exposures. These resource labels are scrubbed, not opaque identities.
         "read_resource",
         "write_resource",
     }

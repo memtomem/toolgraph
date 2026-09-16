@@ -111,7 +111,7 @@ def run_doctor() -> DoctorReport:
 
     # 2. Connectivity check
     try:
-        driver.verify_connectivity()
+        driver.verify_connectivity(read_only=True)
         checks.append(
             DoctorCheck(
                 name="Connectivity",
@@ -130,7 +130,6 @@ def run_doctor() -> DoctorReport:
                 details={"backend": backend_name, "error": redacted_err},
             )
         )
-        overall_healthy = False
         return DoctorReport(healthy=False, checks=checks)
 
     # 3. Schema integrity check
@@ -176,7 +175,8 @@ def run_doctor() -> DoctorReport:
 
     # 4. Graph State / Metadata
     try:
-        state = queries.graph_state()
+        with driver.acquire_readonly_session() as session:
+            state = queries.graph_state(session)
         if state.instance_id:
             checks.append(
                 DoctorCheck(

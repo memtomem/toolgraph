@@ -123,6 +123,10 @@ toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
 
+For `ingest-manifest --dry-run --json` and `doctor`, see the
+[preview and diagnostic requirements](docs/policy-propose.md#preview-and-diagnostic-requirements),
+including Neo4j catalog permissions and Ladybug session serialization.
+
 Ladybug is the local single-process backend. Toolgraph commands own the DB
 sequentially; gateways read only the generated JSON bundle. Use Neo4j for a
 shared service or multiple concurrent processes. The beginner guides explain

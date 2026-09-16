@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from toolgraph.graph.driver import (
     BackendConfigurationError,
+    BackendUnavailableError,
+    _translating_backend_errors,
     acquire_readonly_session,
     backend_name,
     session,
@@ -136,12 +138,18 @@ def _refuse_version_mismatch(stored: int | None) -> None:
 
 
 def check_backend_schema_version(s: Any = None) -> None:
-    """Read-only version gate: refuses incompatible schema versions without running DDL or writing."""
-    if s is not None:
-        _refuse_version_mismatch(_stored_backend_schema_version(s))
-    else:
-        with acquire_readonly_session() as sess:
-            _refuse_version_mismatch(_stored_backend_schema_version(sess))
+    """Require an initialized compatible schema for non-mutating readers."""
+    if s is None:
+        with acquire_readonly_session() as current:
+            check_backend_schema_version(current)
+        return
+    version = _stored_backend_schema_version(s)
+    _refuse_version_mismatch(version)
+    info = inspect_backend_schema(s)
+    # A missing legacy version stamp is still readable when the physical schema
+    # exists. Do not migrate it from a reader, or confuse it with missing tables.
+    if info["missing_tables"] or info["missing_constraints"]:
+        raise BackendConfigurationError("backend schema is not initialized or incomplete — run 'toolgraph init-schema'")
 
 
 def init_schema() -> None:
@@ -198,10 +206,13 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
             }
             expected_all = expected_node_tables | expected_rel_tables
             try:
-                rows = sess.run("CALL show_tables() RETURN *")
-                live_tables = sorted([r.get("name") for r in rows if r.get("name")])
-            except Exception:
-                live_tables = []
+                with _translating_backend_errors():
+                    rows = sess.run("CALL show_tables() RETURN *")
+                    live_tables = sorted([r.get("name") for r in rows if r.get("name")])
+            except BackendUnavailableError:
+                raise
+            except Exception as exc:
+                raise BackendConfigurationError("cannot inspect backend schema catalog; check connectivity and catalog read permissions") from exc
             missing_tables = sorted(expected_all - set(live_tables))
             healthy = version_ok and not missing_tables
         else:  # neo4j
@@ -210,10 +221,13 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 "policy_id", "exception_key", "graphmeta_id",
             }
             try:
-                rows = sess.run("SHOW CONSTRAINTS")
-                live_constraints = sorted([r.get("name") for r in rows if r.get("name")])
-            except Exception:
-                live_constraints = []
+                with _translating_backend_errors():
+                    rows = sess.run("SHOW CONSTRAINTS")
+                    live_constraints = sorted([r.get("name") for r in rows if r.get("name")])
+            except BackendUnavailableError:
+                raise
+            except Exception as exc:
+                raise BackendConfigurationError("cannot inspect backend schema catalog; check connectivity and catalog read permissions") from exc
             missing_constraints = sorted(expected_constraints - set(live_constraints))
             healthy = version_ok and not missing_constraints
 
