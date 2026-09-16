@@ -6,6 +6,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 import threading
 
 from jsonschema import Draft202012Validator, ValidationError
@@ -155,10 +156,10 @@ def test_json_options_are_rejected_before_graph_or_file_access(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(cli.app, ['policy', 'propose', 'missing.yaml', 'missing.jsonl', '--json', '--output', 'unused.md'])
     assert result.exit_code == 2
-    assert 'cannot be combined' in result.output
+    assert 'cannot be combined' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
     result = runner.invoke(cli.app, ['ingest-manifest', '--json'])
     assert result.exit_code == 2
-    assert 'requires --dry-run' in result.output
+    assert 'requires --dry-run' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
 
 
 def test_proposal_file_write_failure_has_redacted_error(monkeypatch, tmp_path):
