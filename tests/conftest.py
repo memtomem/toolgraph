@@ -20,8 +20,19 @@ def neo4j_container():
 
 @pytest.fixture
 def graph(neo4j_container, monkeypatch):
-    """Point the driver at the container, reset schema, and start from an empty graph."""
+    """Point the driver at the container, reset schema, and start from an empty graph.
+
+    The backend is pinned rather than left to ``Settings``' defaults. Those read
+    ``TOOLGRAPH_BACKEND`` / ``TOOLGRAPH_DB_PATH`` and ``.toolgraph/config.json``
+    in the working directory, so an unpinned fixture run from a checkout where
+    someone ran ``toolgraph init`` would aim the wipe below at that Ladybug
+    database instead of the container.
+    """
+    for name in ("TOOLGRAPH_BACKEND", "TOOLGRAPH_DB_PATH", "TOOLGRAPH_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "_explicit_config_path", None)
     test_settings = config.Settings(
+        backend="neo4j",
         neo4j_uri=neo4j_container.get_connection_url(),
         neo4j_user="neo4j",
         neo4j_password=TEST_PASSWORD,
