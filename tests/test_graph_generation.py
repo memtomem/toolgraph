@@ -137,10 +137,15 @@ def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
 
 
 def test_generation_bracket_fails_instead_of_mislabelling_after_retry_exhaustion(monkeypatch):
-    seq = iter(range(20))
-    monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
-    with pytest.raises(RuntimeError, match="generation changed"):
-        queries.with_generation(lambda: {"value": "from-moving-graph"}, strict=True)
+    seq = iter(queries.GraphState("test-instance", n) for n in range(20))
+    monkeypatch.setattr(queries, "_bracket_backoff", lambda _: None)
+    with pytest.raises(queries.GraphStateChurnError) as raised:
+        queries.with_graph_state(
+            lambda: {"value": "from-moving-graph"},
+            strict=True,
+            state_reader=lambda: next(seq),
+        )
+    assert str(raised.value) == "graph state changed during every read attempt"
 
 
 def test_unbracketed_live_query_returns_data_without_a_state_stamp(monkeypatch):
@@ -152,11 +157,12 @@ def test_unbracketed_live_query_returns_data_without_a_state_stamp(monkeypatch):
     permission change could be cached under the generation that changed it.
     A null generation cannot be a cache key, which is the whole mechanism.
     """
-    seq = iter(range(20))
-    monkeypatch.setattr(queries, "graph_generation", lambda: next(seq))
-    assert queries.with_generation(lambda: {"value": "live"}) == {
-        "value": "live", "graph_generation": None, "graph_state_verified": False,
-    }
+    seq = iter(queries.GraphState("test-instance", n) for n in range(20))
+    monkeypatch.setattr(queries, "_bracket_backoff", lambda _: None)
+    got = queries.with_graph_state(lambda: {"value": "live"}, state_reader=lambda: next(seq))
+    assert got["value"] == "live"
+    assert got["graph_generation"] is None
+    assert got["graph_state_verified"] is False
 
 
 def test_unbracketed_graph_state_query_drops_every_state_field(monkeypatch):
@@ -178,7 +184,11 @@ def test_unbracketed_graph_state_query_drops_every_state_field(monkeypatch):
 
 def test_a_bracketed_read_says_so_explicitly(monkeypatch):
     """The success path carries the positive flag, so absence is never ambiguous."""
-    monkeypatch.setattr(queries, "graph_generation", lambda: 7)
-    assert queries.with_generation(lambda: {"value": "stable"}) == {
-        "value": "stable", "graph_generation": 7, "graph_state_verified": True,
+    state = queries.GraphState("test-instance", 7)
+    assert queries.with_graph_state(lambda: {"value": "stable"}, state_reader=lambda: state) == {
+        "value": "stable",
+        "graph_generation": 7,
+        "graph_instance_id": "test-instance",
+        "graph_state": {"instance_id": "test-instance", "generation": 7},
+        "graph_state_verified": True,
     }

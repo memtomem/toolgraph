@@ -243,9 +243,24 @@ def test_state_churn_exhaustion_typed_refusal(backend_graph, sample_gov_path, sa
         )
 
     # Simulate 5-attempt churn exhaustion
-    with patch("toolgraph.graph.queries.with_graph_state", side_effect=RuntimeError("graph state changed during every read attempt")):
-        with pytest.raises(StateChurnError, match="graph state churn during observation proposal"):
+    from toolgraph.graph import queries
+
+    churn = queries.GraphStateChurnError("graph state changed during every read attempt")
+    with patch("toolgraph.graph.queries.with_graph_state", side_effect=churn):
+        with pytest.raises(StateChurnError) as raised:
             run_propose(sample_gov_path, sample_observed_jsonl)
+    assert str(raised.value) == (
+        "graph state churn during observation proposal: concurrent graph "
+        "modifications exhausted 5 read attempts"
+    )
+
+    # Any other RuntimeError is not churn and must surface unchanged, whatever
+    # its text says.
+    other = RuntimeError("graph state changed during every read attempt")
+    with patch("toolgraph.graph.queries.with_graph_state", side_effect=other):
+        with pytest.raises(RuntimeError) as raised:
+            run_propose(sample_gov_path, sample_observed_jsonl)
+    assert raised.value is other
 
 
 def test_cli_policy_propose(backend_graph, sample_gov_path, sample_observed_jsonl):

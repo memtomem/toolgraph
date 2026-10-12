@@ -154,3 +154,55 @@ def test_ladybug_reset_changes_instance_id_and_returns_to_generation_zero(
     after = queries.graph_state()
     assert after.generation == 0
     assert after.instance_id and after.instance_id != before.instance_id
+
+
+def test_fresh_embedded_database_reads_as_unversioned(tmp_path, monkeypatch):
+    pytest.importorskip("ladybug")
+    monkeypatch.setattr(
+        config, "settings", config.Settings(backend="ladybug", db_path=tmp_path / "fresh.lbug")
+    )
+    driver.close_driver()
+    try:
+        with driver.session() as s:
+            assert schema._stored_backend_schema_version(s) is None
+    finally:
+        driver.close_driver()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        driver.BackendUnavailableError("BACKEND_UNAVAILABLE: offline"),
+        driver.BackendConfigurationError("bad config"),
+        RuntimeError("IO exception: corrupted page"),
+    ],
+)
+def test_schema_version_read_only_treats_a_missing_table_as_fresh(error):
+    class Failing:
+        def run(self, *args, **kwargs):
+            raise error
+
+    with pytest.raises(RuntimeError) as raised:
+        schema._stored_backend_schema_version(Failing())
+    assert raised.value is error
+
+
+def test_init_schema_does_not_skip_the_version_gate_on_an_outage(monkeypatch):
+    statements = []
+
+    class Outage:
+        def run(self, query, **kwargs):
+            statements.append(query)
+            raise driver.BackendUnavailableError("BACKEND_UNAVAILABLE: offline")
+
+    from contextlib import contextmanager
+
+    @contextmanager
+    def fake_session():
+        yield Outage()
+
+    monkeypatch.setattr(schema, "session", fake_session)
+
+    with pytest.raises(driver.BackendUnavailableError):
+        schema.init_schema()
+    assert len(statements) == 1  # the version read; no DDL ran

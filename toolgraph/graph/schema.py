@@ -118,8 +118,15 @@ def _stored_backend_schema_version(s) -> int | None:
             "MATCH (m:GraphMeta {id:'singleton'}) "
             "RETURN m.backend_schema_version AS version"
         ).single()
-    except RuntimeError:
-        # Fresh embedded database: the GraphMeta table does not exist yet.
+    except RuntimeError as exc:
+        # Fresh embedded database: Ladybug has no typed error for a missing
+        # table, only this binder message. Anything else -- a translated
+        # outage, a configuration error, a corrupt file -- must surface:
+        # treating it as "fresh" would skip the version gate below.
+        if isinstance(exc, (BackendUnavailableError, BackendConfigurationError)):
+            raise
+        if "Table GraphMeta does not exist" not in str(exc):
+            raise
         return None
     return record["version"] if record else None
 
