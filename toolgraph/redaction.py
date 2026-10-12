@@ -74,9 +74,35 @@ def persisted_endpoint(transport: str, value: str | None) -> str:
     return _url_origin(value or "", f"{transport}:<redacted>")
 
 
+_BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+")
+# Same keywords as _CREDENTIAL, but a ':' followed by another ':' is the tool
+# key separator (`token::refresh`, `vault-secret::read_file`), not an
+# assignment. Used only where a match refuses the value outright.
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)"
+    r"['\"]?\s*(?:=|:(?!:))"
+)
+
+
+def contains_credential(text: str) -> bool:
+    """True when ``text`` holds an assignment- or header-shaped credential.
+
+    For values that must be refused rather than scrubbed, because rewriting
+    them would change what they identify. Covers the forms ``redact_text``
+    scrubs (``password=…``, ``Authorization: …``, ``Bearer …``) without
+    mistaking a ``server::tool`` separator for an assignment.
+    """
+    return bool(
+        _CREDENTIAL_ASSIGNMENT.search(text)
+        or _AUTHORIZATION.search(text)
+        or _BEARER.search(text)
+    )
+
+
 def redact_text(value: object) -> str:
     """Scrub URLs and common credential-shaped values from an error message."""
     text = str(value)
     text = _URI.sub(lambda match: _diagnostic_uri_origin(match.group(0)), text)
     text = _AUTHORIZATION.sub("Authorization=<redacted>", text)
+    text = _BEARER.sub(lambda match: f"{match.group(1)} <redacted>", text)
     return _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)

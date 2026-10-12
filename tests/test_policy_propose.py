@@ -346,3 +346,132 @@ def test_load_export_refuses_an_oversized_file(tmp_path, monkeypatch):
         policy_propose.load_export(export)
 
     assert str(raised.value) == f"refusing to load {export}: exceeds the 16-byte limit"
+
+
+def _seed_matching_graph(gov_path: Path) -> None:
+    schema.init_schema()
+    digest = governance_digest(load_governance(gov_path))
+    with driver.session() as s:
+        s.run("CREATE (t:Tool {key: 'filesystem::read_file', name: 'read_file'})")
+        s.run("CREATE (t:Tool {key: 'filesystem::write_file', name: 'write_file'})")
+        s.run(
+            "MERGE (m:GraphMeta {id: 'singleton'}) "
+            "SET m.instance_id = 'test-instance', m.generation = 1, m.governance_digest = $d",
+            d=digest,
+        )
+
+
+@pytest.mark.parametrize("extra", [[], ["--json"]])
+@pytest.mark.parametrize(
+    ("field", "value", "position"),
+    [
+        ("tool_key", "filesystem::read_file?token=hunter2", "additions[0].tool"),
+        ("tool_key", "filesystem::password=hunter2", "additions[0].tool"),
+        ("candidate", "Authorization: Bearer hunter2", "insufficient_evidence[0].tool"),
+    ],
+)
+def test_cli_propose_refuses_a_credential_shaped_ref(
+    backend_graph, sample_gov_path, sample_observed_jsonl, extra, field, value, position
+):
+    _seed_matching_graph(sample_gov_path)
+    lines = sample_observed_jsonl.read_text().splitlines()
+    row = json.loads(lines[1])
+    row.pop("tool_key")
+    row[field] = value
+    lines[1] = json.dumps(row)
+    sample_observed_jsonl.write_text("\n".join(lines) + "\n")
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["policy", "propose", str(sample_gov_path), str(sample_observed_jsonl), *extra],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        f"ERROR: refusing to emit a proposal: {position} "
+        "contains credential-shaped data\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "shown"),
+    [
+        ("august token=hunter2", "august token=<redacted>"),
+        ("august Bearer hunter2.x", "august Bearer <redacted>"),
+    ],
+)
+def test_window_label_is_redacted_in_the_rendered_proposal(
+    backend_graph, sample_gov_path, sample_observed_jsonl, label, shown
+):
+    _seed_matching_graph(sample_gov_path)
+
+    _, rendered = run_propose(sample_gov_path, sample_observed_jsonl, window_label=label)
+
+    [header] = [line for line in rendered.splitlines() if line.startswith("decision_mode:")]
+    assert header.split(" · ")[2] == f"window: {shown}"
+    assert "hunter2" not in rendered
+
+
+def test_tool_key_with_credential_word_in_server_name_is_proposed(
+    backend_graph, sample_gov_path, sample_observed_jsonl
+):
+    _seed_matching_graph(sample_gov_path)
+    lines = sample_observed_jsonl.read_text().splitlines()
+    row = json.loads(lines[1])
+    row["tool_key"] = "vault-secret::read_file"
+    lines[1] = json.dumps(row)
+    sample_observed_jsonl.write_text("\n".join(lines) + "\n")
+
+    proposal, _ = run_propose(sample_gov_path, sample_observed_jsonl)
+
+    assert [row["tool"] for row in proposal["additions"]] == ["vault-secret::read_file"]
+
+
+def test_output_identity_check_names_the_position_not_the_value():
+    from toolgraph.policy_propose import ProvenanceError, _check_output_identities
+
+    proposal = {
+        "additions": [],
+        "removals": [],
+        "conflicts": [],
+        "not_grant_shaped": [],
+        "insufficient_evidence": [
+            {
+                "agent": "ops-agent",
+                "tool": "read_file",
+                "reason": "AMBIGUOUS_GRANT",
+                "note": "matches a::read_file or https://u:pw@host/x::read_file",
+            }
+        ],
+        "provenance": {"observed_state": None, "current_state": {"instance_id": "g1"}},
+    }
+
+    with pytest.raises(ProvenanceError) as raised:
+        _check_output_identities(proposal)
+
+    assert str(raised.value) == (
+        "refusing to emit a proposal: insufficient_evidence[0].note "
+        "contains credential-shaped data"
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("srv::password=hunter2", True),
+        ("Authorization: Bearer abc", True),
+        ("bearer abc.def", True),
+        ("api-key: xyz", True),
+        ("srv::get_token", False),
+        ("token::refresh", False),
+        ("vault-secret::read_file", False),
+        ("srv::secret:abc", True),
+        ("filesystem::read_file", False),
+        ("token bucket refill", False),
+    ],
+)
+def test_contains_credential(text, expected):
+    from toolgraph.redaction import contains_credential
+
+    assert contains_credential(text) is expected
