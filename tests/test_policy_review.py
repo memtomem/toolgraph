@@ -122,3 +122,23 @@ def test_review_plan_cli_writes_private_atomic_artifact(monkeypatch, tmp_path):
     assert json.loads(output.read_text())["candidates"][0]["automatic_change"] is False
     if os.name != "nt":
         assert output.stat().st_mode & 0o777 == 0o600
+
+
+def test_review_plan_refuses_a_graph_without_instance_id(monkeypatch):
+    _mock_inputs(monkeypatch)
+
+    def without_instance(fn, *, strict):
+        value = fn()
+        value["graph_state"] = {"instance_id": None, "generation": 0}
+        return value
+
+    monkeypatch.setattr(
+        "toolgraph.policy_review.queries.with_graph_state", without_instance
+    )
+
+    with pytest.raises(PolicyReviewPlanError) as raised:
+        build_policy_review_plan(report=Path("trace.json"), agent="planner")
+
+    assert str(raised.value) == (
+        "graph has no instance id — run init-schema before planning"
+    )

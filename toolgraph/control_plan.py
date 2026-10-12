@@ -14,7 +14,7 @@ import json
 import re
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from toolgraph.artifacts import rfc3339_offset_error, sha256_bytes
 from toolgraph.graph import driver, queries, selector
@@ -126,11 +126,17 @@ class Principal(_AdditiveModel):
 
     @model_validator(mode="after")
     def _qualified_unique_tools(self) -> "Principal":
-        bad = [tool for tool in self.candidate_tools if not _QUALIFIED_TOOL.fullmatch(tool)]
+        # Name positions, never the rejected strings: candidate_tools has no
+        # identifier pattern, so a malformed entry can be any text at all.
+        bad = [
+            str(index)
+            for index, tool in enumerate(self.candidate_tools)
+            if not _QUALIFIED_TOOL.fullmatch(tool)
+        ]
         if bad:
             raise ValueError(
-                "candidate_tools must use qualified 'server::tool' keys: "
-                + ", ".join(repr(tool) for tool in bad)
+                "candidate_tools must use qualified 'server::tool' keys; "
+                "invalid at index " + ", ".join(bad)
             )
         if len(set(self.candidate_tools)) != len(self.candidate_tools):
             raise ValueError("candidate_tools must be unique within one principal")
@@ -242,17 +248,17 @@ class ControlPlan(_AdditiveModel):
         if len(set(node_ids)) != len(node_ids):
             raise ValueError("node ids must be unique")
         known = set(principal_ids)
-        missing = sorted(
-            {
-                principal
-                for node in self.nodes
-                for principal in node.principals
-                if principal not in known
-            }
-        )
+        # Node principal entries carry no identifier pattern; report where an
+        # undeclared reference sits rather than echoing what it says.
+        missing = [
+            f"nodes.{node_index}.principals.{index}"
+            for node_index, node in enumerate(self.nodes)
+            for index, principal in enumerate(node.principals)
+            if principal not in known
+        ]
         if missing:
             raise ValueError(
-                "nodes reference undeclared principals: " + ", ".join(missing)
+                "nodes reference undeclared principals at " + ", ".join(missing)
             )
         return self
 
@@ -316,8 +322,14 @@ def load_control_plan(raw: bytes) -> ControlPlan:
     _assert_body_free(decoded)
     try:
         return ControlPlan.model_validate(decoded)
-    except ValueError as exc:
-        raise ControlPlanError(f"invalid control plan: {exc}") from exc
+    except ValidationError as exc:
+        # Report where and why, never the offending value: the plan is
+        # operator input and its values are echoed nowhere else.
+        first = exc.errors(include_input=False)[0]
+        location = ".".join(str(part) for part in first.get("loc", ())) or "plan"
+        raise ControlPlanError(
+            f"invalid control plan at {location}: {first['msg']}"
+        ) from exc
 
 
 def _finding(code: str, *, nodes: list[str] | None = None, edges: list[int] | None = None) -> dict:

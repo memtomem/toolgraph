@@ -296,3 +296,53 @@ def test_observation_window_schema_conformance(sample_observed_jsonl, artifact_f
         record = json.loads(line)
         validator.validate(record)
 
+
+
+def test_propose_output_file_is_private_and_atomic(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    target = tmp_path / "proposal.md"
+    monkeypatch.setattr(
+        cli, "run_propose", lambda *a, **k: ({"proposed": []}, "# proposal\n")
+    )
+
+    result = CliRunner().invoke(
+        cli.app,
+        ["policy", "propose", "gov.yaml", "obs.jsonl", "--output", str(target)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert target.read_text(encoding="utf-8") == "# proposal\n"
+    if os.name != "nt":
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["proposal.md"]
+
+
+def test_propose_reports_malformed_governance_yaml_without_traceback(tmp_path):
+    governance = tmp_path / "governance.yaml"
+    governance.write_text("agents: [\n  - id: x\n bad")
+    observed = tmp_path / "observed.jsonl"
+    observed.write_text("")
+
+    result = CliRunner().invoke(
+        cli.app, ["policy", "propose", str(governance), str(observed)]
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert result.stderr.startswith("ERROR: ")
+    assert result.stdout == ""
+
+
+def test_load_export_refuses_an_oversized_file(tmp_path, monkeypatch):
+    from toolgraph import policy_propose
+
+    monkeypatch.setattr(policy_propose, "MAX_EXPORT_BYTES", 16)
+    export = tmp_path / "observed.jsonl"
+    export.write_text("x" * 17)
+
+    with pytest.raises(policy_propose.PolicyProposeError) as raised:
+        policy_propose.load_export(export)
+
+    assert str(raised.value) == f"refusing to load {export}: exceeds the 16-byte limit"

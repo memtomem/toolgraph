@@ -60,6 +60,13 @@ def build_policy_review_plan(
         return verdict
 
     compiled = queries.with_graph_state(fetch, strict=True)
+    # The plan schema requires a non-empty instance id; a graph without
+    # GraphMeta would otherwise produce a schema-invalid artifact.
+    instance_id = compiled["graph_state"].get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        raise PolicyReviewPlanError(
+            "graph has no instance id — run init-schema before planning"
+        )
     rejected = {
         row.get("tool_key") or row["candidate"]: row
         for row in compiled["rejected"]
