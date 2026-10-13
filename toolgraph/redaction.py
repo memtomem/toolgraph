@@ -18,12 +18,12 @@ _AUTHORIZATION = re.compile(
 # list, so a name added for redaction is also refused in artifact identities,
 # review notes and control plans.
 CREDENTIAL_KEYWORDS = r"api[-_]?key|access[-_]?token|token|password|secret|credential"
-# Userinfo with a password: scheme://user:password@host. Two shapes:
-# - a user part that may itself contain '@' (an email as the username), kept
-#   inside the authority so an '@' after '?' or '#' is not read as userinfo;
-# - a user part without ':' or '@' whose password may hold any character but
-#   '/' and '@' (an unencoded '?' in a password is still a leaked password).
-CREDENTIAL_URI = re.compile(r"://(?:[^/?#\s]+:[^/?#\s]+|[^/\s:@]+:[^/\s@]+)@")
+# Userinfo with a password: scheme://user:password@host. Deliberately broader
+# than RFC 3986: the user part may contain '@' (an email as the username) and
+# the password may contain an unencoded '?' or '#', both of which still leak a
+# password. The cost is refusing the rare URL whose query holds an '@' after a
+# port (https://user@host:443?x=a@b), which errs toward refusing.
+CREDENTIAL_URI = re.compile(r"://[^/\s]+:[^/\s]+@")
 CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGNORECASE)
 
 # A ':' followed by another ':' is the tool-key separator (`token::refresh`),

@@ -525,7 +525,10 @@ def test_redact_text_keeps_tool_keys_intact(key):
         ("https://u:p@host/a", True),
         ("https://me@corp.example:p@host/a", True),
         ("https://u:p?x@host/a", True),
-        ("https://user@host:443?x=a@b", False),
+        ("https://me@corp.example:p?x@host", True),
+        ("https://me@corp.example:p#x@host", True),
+        # Refused on purpose: an '@' in the query after a port reads as userinfo.
+        ("https://user@host:443?x=a@b", True),
         ("https://user@host:443/p@q", False),
         ("https://user@host:8080", False),
         ("http://[::1]:8080/x", False),
