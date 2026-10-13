@@ -26,11 +26,12 @@ CREDENTIAL_KEYWORDS = r"api[-_]?key|access[-_]?token|token|password|secret|crede
 CREDENTIAL_URI = re.compile(r"://[^/\s]+:[^/\s]+@")
 CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGNORECASE)
 
-# A ':' followed by another ':' is the tool-key separator (`token::refresh`),
-# not an assignment, so a diagnostic naming a tool keeps its key intact.
+# Scrubbing errs toward hiding: unlike the refusal check below, a '::' is not
+# exempt, so `token::refresh` in a diagnostic reads `token=<redacted>`. A value
+# such as `password::hunter2` in free error text must not survive.
 _CREDENTIAL = re.compile(
     rf"(?i)({CREDENTIAL_KEYWORDS})"
-    r"(['\"]?\s*(?:=|:(?!:))\s*['\"]?)([^\s,}\]]+)"
+    r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
 )
 
 
