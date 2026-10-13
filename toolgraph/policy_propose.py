@@ -12,9 +12,11 @@ from typing import Any
 
 import yaml
 
+from toolgraph.artifact_safety import validate_identity
 from toolgraph.graph import driver, queries, selector
 from toolgraph.graph.selector import PROFILES
 from toolgraph.manifest.parser import Governance, governance_digest, load_governance
+from toolgraph.redaction import contains_credential, redact_text
 
 
 class PolicyProposeError(Exception):
@@ -651,11 +653,63 @@ def run_propose(
     if revalidate_current:
         _revalidate_additions(proposal, bracket_result["ranked"])
     proposal["provenance"] = provenance
+    _check_output_identities(proposal)
     rendered = render(
-        proposal, window_label, min_would_block, envelope=envelope,
+        proposal, redact_text(window_label), min_would_block, envelope=envelope,
         provenance_note=_provenance_note(provenance),
     )
     return proposal, rendered
+
+
+_PROPOSAL_BUCKETS = (
+    "additions",
+    "removals",
+    "conflicts",
+    "not_grant_shaped",
+    "insufficient_evidence",
+)
+
+
+def _refuse_credential(value: str) -> None:
+    # The artifact identity contract (credential URIs and queries) plus the
+    # assignment and header forms an observation row can also carry.
+    validate_identity(value)
+    if contains_credential(value):
+        raise ValueError("credential-shaped data")
+
+
+def _check_output_identities(proposal: dict[str, Any]) -> None:
+    """Refuse credential-shaped identities before either output is produced.
+
+    Rows come from three places: the export (agent, ref), the manifest (grants
+    and agents) and the live graph (ambiguous-grant matches inside ``note``).
+    Identities are refused rather than redacted, because a redacted
+    ``server::tool`` would be a different grant than the one proposed. The
+    error names the position only, never the value.
+    """
+    for bucket in _PROPOSAL_BUCKETS:
+        for index, row in enumerate(proposal[bucket]):
+            for field, value in row.items():
+                if not isinstance(value, str):
+                    continue
+                try:
+                    _refuse_credential(value)
+                except ValueError:
+                    raise ProvenanceError(
+                        f"refusing to emit a proposal: {bucket}[{index}].{field} "
+                        "contains credential-shaped data"
+                    ) from None
+    provenance = proposal.get("provenance") or {}
+    for side in ("observed_state", "current_state"):
+        instance = (provenance.get(side) or {}).get("instance_id")
+        if isinstance(instance, str):
+            try:
+                _refuse_credential(instance)
+            except ValueError:
+                raise ProvenanceError(
+                    f"refusing to emit a proposal: provenance.{side}.instance_id "
+                    "contains credential-shaped data"
+                ) from None
 
 
 def _proposal_provenance(
