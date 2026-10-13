@@ -142,6 +142,12 @@ bash scripts/demo.sh
 bash scripts/demo-public.sh
 ```
 
+`.env` selects Neo4j. Do not also run `toolgraph init` in the same directory
+unless both say the same thing: when `TOOLGRAPH_BACKEND` or `TOOLGRAPH_DB_PATH`
+disagrees with `.toolgraph/config.json`, commands stop with a configuration
+error instead of picking one silently. Pass `--config` to choose the file.
+Only the CLI reads `.env`; importing `toolgraph` as a library does not.
+
 The compose file is development-only, uses a known password, and binds Neo4j
 to loopback. It is not an authenticated production deployment. The demo
 scripts themselves use disposable Ladybug databases and never reset your
@@ -173,7 +179,7 @@ uv run toolgraph check-access helper "memtomem-stm::langchain__search_docs_by_la
 Or step by step:
 
 ```bash
-uv run toolgraph check                                   # verify Neo4j connectivity
+uv run toolgraph check                                   # verify the configured backend (read-only)
 uv run toolgraph init-schema                             # uniqueness constraints
 uv run toolgraph crawl --servers examples/servers.yaml   # crawl -> load factual graph
 uv run toolgraph ingest-manifest --governance examples/governance.yaml

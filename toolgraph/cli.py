@@ -130,12 +130,12 @@ def main(
 ) -> None:
     """Configure Toolgraph before running a command."""
     del version
+    config.load_dotenv_file()
     if config_path is not None:
         try:
             config.configure(config_path)
         except RuntimeError as exc:
             raise typer.BadParameter(str(exc), param_hint="--config") from None
-        driver.close_driver()
 
 
 @example_app.command("init")
@@ -177,7 +177,9 @@ def example_init(
 @_reports_backend_outage
 def check() -> None:
     """Verify the configured graph backend."""
-    driver.verify_connectivity()
+    # Read-only: a mistyped db_path must fail, not leave a new empty database
+    # behind and report "OK".
+    driver.verify_connectivity(read_only=True)
     if driver.backend_name() == "ladybug":
         typer.echo(f"OK: backend=ladybug path={config.settings.db_path}")
     else:
@@ -201,7 +203,10 @@ def init_backend(
     state_dir = state_dir.expanduser().resolve()
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
-    previous = config.settings
+    # Look at the singleton without building it: building it from ambient
+    # sources would refuse an env/config conflict, and init is how an
+    # operator writes the config that resolves one.
+    previous = vars(config).get("settings")
     db_existed = db_path.exists()
     config.settings = config.Settings(backend=normalized, db_path=db_path)
     driver.close_driver()
@@ -216,7 +221,10 @@ def init_backend(
         )
         atomic_write_private(runtime_path, payload)
     except Exception as exc:
-        config.settings = previous
+        if previous is None:
+            vars(config).pop("settings", None)
+        else:
+            config.settings = previous
         driver.close_driver()
         # Clean up only a database this invocation plausibly created.
         # BACKEND_LOCKED means another process owns it — it may have created
