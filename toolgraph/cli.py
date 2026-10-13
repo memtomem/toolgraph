@@ -18,7 +18,7 @@ import yaml
 from toolgraph import __version__
 from toolgraph import config
 from toolgraph.artifact_safety import redact
-from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
+from toolgraph.artifacts import atomic_write_private, canonical_json_bytes, sha256_prefixed
 from toolgraph.control_plan import (
     MAX_PLAN_BYTES,
     ControlPlanError,
@@ -83,6 +83,12 @@ app.add_typer(policy_app, name="policy")
 app.add_typer(example_app, name="example")
 
 
+def _fail(exc: BaseException) -> NoReturn:
+    """Report *exc* on stderr with credentials scrubbed, and exit 1."""
+    typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+    raise typer.Exit(code=1) from exc
+
+
 def _reports_backend_outage(fn):
     """Convert a typed backend outage into the CLI's single-line ERROR contract.
 
@@ -98,8 +104,7 @@ def _reports_backend_outage(fn):
         try:
             return fn(*args, **kwargs)
         except (config.RuntimeConfigurationError, driver.BackendConfigurationError) as exc:
-            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-            raise typer.Exit(code=1) from None
+            _fail(exc)
         except driver.BackendUnavailableError as exc:
             typer.echo(f"ERROR: backend unavailable: {redact_text(exc)}", err=True)
             raise typer.Exit(code=1) from None
@@ -514,9 +519,7 @@ def unsafe_tools(
     A typo'd agent prints AGENT_NOT_FOUND on stderr and exits 1 — not
     silently empty. Stdout carries only the JSON (ADR-0003).
     """
-    if not queries.agent_exists(agent):
-        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph", err=True)
-        raise typer.Exit(code=1)
+    _require_agent(agent)
     rows = queries.unsafe_callable_tools(agent)
     if not all:
         rows = [r for r in rows if r.get("classification") == "violation"]
@@ -654,10 +657,8 @@ def audit_report(
 
 
 def _selector_profile(profile: str) -> str:
-    if profile not in selector.PROFILES:
-        raise typer.BadParameter(
-            f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
-        )
+    if problem := selector.profile_error(profile):
+        raise typer.BadParameter(problem)
     return profile
 
 
@@ -769,21 +770,15 @@ def preflight(
         if out is None:
             typer.echo(payload, nl=False)
             return
-        digest = atomic_write_private(out, payload.encode("utf-8"))
+        atomic_write_private(out, payload.encode("utf-8"))
     except (RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-        raise typer.Exit(code=1) from exc
+        _fail(exc)
     typer.echo(
         json.dumps(
             {
                 "kind": artifact["kind"],
                 "output": str(out),
-                # Prefixed form: SyncMill's artifact_digest contract is
-                # ^sha256:[0-9a-f]{64}$, so this value is copyable as-is.
-                # `policy compile` deliberately keeps bare hex — memtomem-stm
-                # asserts len(bundle_digest) == 64. The two formats answer to
-                # different consumers; do not unify them.
-                "artifact_digest": f"sha256:{digest}",
+                "artifact_digest": sha256_prefixed(payload.encode("utf-8")),
                 "run_id": artifact["run_id"],
                 "graph_generation": artifact["graph_generation"],
                 "agent": artifact["agent"],
@@ -812,7 +807,6 @@ def control_preflight(
 ) -> None:
     """Validate and evaluate one bounded orchestration control plan."""
     _selector_profile(profile)
-    digest: str | None = None
     try:
         # Bounded read: MAX_PLAN_BYTES must limit memory, not just validation
         # cost, and a stat-then-read pair would be a TOCTOU.
@@ -825,10 +819,9 @@ def control_preflight(
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
-            digest = atomic_write_private(out, payload)
+            atomic_write_private(out, payload)
     except (ControlPlanError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-        raise typer.Exit(code=1) from exc
+        _fail(exc)
     if out is None:
         typer.echo(payload.decode(), nl=False)
         return
@@ -837,9 +830,7 @@ def control_preflight(
             {
                 "kind": artifact["kind"],
                 "output": str(out),
-                # Prefixed to match the plan_digest inside the artifact and
-                # SyncMill's ^sha256:[0-9a-f]{64}$ contract.
-                "artifact_digest": f"sha256:{digest}",
+                "artifact_digest": sha256_prefixed(payload),
                 "plan_digest": artifact["plan_digest"],
                 "run_id": artifact["run_id"],
                 "graph_state": artifact["graph_state"],
@@ -871,8 +862,7 @@ def policy_compile(
         payload = canonical_json_bytes(artifact)
         digest = atomic_write_private(output, payload)
     except (PolicyBundleError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-        raise typer.Exit(code=1) from exc
+        _fail(exc)
     typer.echo(
         json.dumps(
             {
@@ -916,19 +906,16 @@ def policy_review_plan(
             profile=profile,
             annotations=annotations,
         )
-        digest = atomic_write_private(output, canonical_json_bytes(artifact))
+        payload = canonical_json_bytes(artifact)
+        atomic_write_private(output, payload)
     except (PolicyReviewPlanError, RuntimeError, OSError, ValueError) as exc:
-        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-        raise typer.Exit(code=1) from exc
+        _fail(exc)
     typer.echo(
         json.dumps(
             {
                 "kind": artifact["kind"],
                 "output": str(output),
-                # Prefixed like preflight/control-preflight: artifact_digest
-                # follows SyncMill's ^sha256:[0-9a-f]{64}$ contract; bare hex
-                # is reserved for bundle_digest (memtomem-stm).
-                "artifact_digest": f"sha256:{digest}",
+                "artifact_digest": sha256_prefixed(payload),
                 "graph_state": artifact["graph_state"],
                 "agent": artifact["agent"],
                 "profile": artifact["profile"],
@@ -979,8 +966,7 @@ def policy_propose(
             revalidate_current=revalidate_current,
         )
     except (PolicyProposeError, ValueError, OSError, yaml.YAMLError) as exc:
-        typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-        raise typer.Exit(code=1) from exc
+        _fail(exc)
 
     if json_output:
         typer.echo(json.dumps(proposal, indent=2))
@@ -988,16 +974,10 @@ def policy_propose(
         try:
             atomic_write_private(output, rendered.encode("utf-8"))
         except OSError as exc:
-            typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-            raise typer.Exit(code=1) from None
+            _fail(exc)
         typer.echo(f"Wrote proposal to {output}")
     else:
         typer.echo(rendered, nl=False)
-
-
-def _review_candidate_failure(exc: ReviewCandidateError) -> NoReturn:
-    typer.echo(f"ERROR: {redact_text(exc)}", err=True)
-    raise typer.Exit(code=1)
 
 
 @review_candidates_app.command("list")
@@ -1022,7 +1002,7 @@ def review_candidates_list(
             status=status.value if status is not None else None,
         )
     except ReviewCandidateError as exc:
-        _review_candidate_failure(exc)
+        _fail(exc)
     typer.echo(json.dumps(payload, indent=2))
 
 
@@ -1068,7 +1048,7 @@ def review_candidates_annotate(
             annotations_path=annotations,
         )
     except ReviewCandidateError as exc:
-        _review_candidate_failure(exc)
+        _fail(exc)
     typer.echo(json.dumps(payload, indent=2))
 
 

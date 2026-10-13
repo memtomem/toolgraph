@@ -16,9 +16,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from toolgraph.artifacts import rfc3339_offset_error, sha256_bytes
+from toolgraph.artifacts import rfc3339_offset_error, sha256_prefixed
 from toolgraph.graph import driver, queries, selector
-from toolgraph.artifact_safety import _CREDENTIAL_QUERY, _CREDENTIAL_URI, safe_artifact
+from toolgraph.artifact_safety import safe_artifact
+from toolgraph.redaction import CREDENTIAL_QUERY, CREDENTIAL_URI
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
@@ -285,9 +286,9 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
             _assert_body_free(child, path=(*path, str(index)))
         return
     if isinstance(value, str):
-        if _CREDENTIAL_URI.search(value):
+        if CREDENTIAL_URI.search(value):
             raise ControlPlanError("control plan contains a credential-bearing URI")
-        if _CREDENTIAL_QUERY.search(value):
+        if CREDENTIAL_QUERY.search(value):
             raise ControlPlanError("control plan contains a credential-bearing query")
         if _ABSOLUTE_PATH.match(value):
             raise ControlPlanError("control plan contains an absolute filesystem path")
@@ -601,10 +602,8 @@ def build_control_preflight(
     session_factory: Any | None = None,
 ) -> dict:
     """Evaluate a valid control plan as one advisory, graph-state-bound artifact."""
-    if profile not in selector.PROFILES:
-        raise ControlPlanError(
-            f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
-        )
+    if problem := selector.profile_error(profile):
+        raise ControlPlanError(problem)
     if created_at is not None:
         problem = rfc3339_offset_error(created_at)
         if problem:
@@ -662,7 +661,7 @@ def build_control_preflight(
         "created_at": timestamp.isoformat(),
         "mode": "advisory",
         "profile": profile,
-        "plan_digest": f"sha256:{sha256_bytes(raw_plan)}",
+        "plan_digest": sha256_prefixed(raw_plan),
         "graph_state": graph_state,
         "decision": "advisory_warn" if warned else "advisory_allow",
         "evaluations": safe_artifact(compiled["evaluations"]),

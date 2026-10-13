@@ -238,6 +238,8 @@ def test_invalid_event_chain_and_unknown_candidate_fail_closed(tmp_path):
     [
         ("reviewer", "operator\npassword=secret"),
         ("note", "token=do-not-echo"),
+        ("note", "secret=do-not-echo"),
+        ("note", "access_token=do-not-echo"),
     ],
 )
 def test_externally_authored_sidecar_metadata_is_revalidated(
@@ -324,8 +326,28 @@ def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
         )
 
     assert sidecar.read_bytes() == before
-    assert list(sidecar.parent.glob(f".{sidecar.name}.*.tmp")) == []
+    assert [p for p in sidecar.parent.iterdir() if p.name.startswith(f".{sidecar.name}.")] == []
 
+
+def test_nothing_after_the_replace_can_fail_a_persisted_event(tmp_path, monkeypatch):
+    """Once the sidecar is replaced the event exists; reporting failure invites a duplicate."""
+    source = _source(tmp_path)
+    sidecar = default_annotations_path(source)
+    real_chmod = os.chmod
+
+    def chmod_fails_on_the_published_sidecar(target, mode, *args, **kwargs):
+        if Path(target) == sidecar:
+            raise OSError(errno.EIO, "injected chmod failure")
+        return real_chmod(target, mode, *args, **kwargs)
+
+    monkeypatch.setattr("toolgraph.artifacts.os.chmod", chmod_fails_on_the_published_sidecar)
+    annotate_candidate(
+        source, CANDIDATE_ID, disposition="accepted", reviewer="operator",
+        recorded_at=_at(6),
+    )
+
+    assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 def test_atomic_write_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
     source = _source(tmp_path)
@@ -405,7 +427,7 @@ def test_source_race_is_detected_before_sidecar_replace(tmp_path, monkeypatch):
     # The pre-replace race check hashes the report bytes again inside the
     # writer lock; simulate a concurrent rewrite by making that second hash
     # disagree with the digest captured at load time.
-    real_sha = review_module._sha256
+    real_sha = review_module.sha256_prefixed
     calls = 0
 
     def raced_sha(raw):
@@ -415,7 +437,7 @@ def test_source_race_is_detected_before_sidecar_replace(tmp_path, monkeypatch):
             return "sha256:" + "0" * 64
         return real_sha(raw)
 
-    monkeypatch.setattr(review_module, "_sha256", raced_sha)
+    monkeypatch.setattr(review_module, "sha256_prefixed", raced_sha)
     with pytest.raises(ReviewCandidateError, match="changed while"):
         annotate_candidate(
             source,

@@ -234,7 +234,16 @@ def test_identity_preservation_and_evidence_redaction():
     assert artifact["rejected"][0]["paths"][0].startswith("https://user:")
 
 
-@pytest.mark.parametrize("identity", ["https://u:p@host/a", "s::t?token=secret"])
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "https://u:p@host/a",
+        "s::t?token=secret",
+        "https://me@corp.example:p@host/a",
+        "s::t?access_token=secret",
+        "s::t?x=1&credential=secret",
+    ],
+)
 def test_credentials_rejected_before_graph_access(monkeypatch, identity):
     monkeypatch.setattr(
         queries, "with_graph_state", lambda *a, **kw: pytest.fail("graph accessed")

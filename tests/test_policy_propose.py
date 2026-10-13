@@ -494,12 +494,60 @@ def test_output_identity_check_names_the_position_not_the_value():
         ("srv::secret:abc", True),
         ("filesystem::read_file", False),
         ("token bucket refill", False),
+        ("credential=abc", True),
     ],
 )
 def test_contains_credential(text, expected):
     from toolgraph.redaction import contains_credential
 
     assert contains_credential(text) is expected
+
+
+@pytest.mark.parametrize(
+    "keyword", ["api_key", "api-key", "access_token", "token", "password", "secret", "credential"]
+)
+def test_redact_text_scrubs_every_credential_keyword(keyword):
+    from toolgraph.redaction import redact_text
+
+    assert redact_text(f"{keyword}=hunter2") == f"{keyword}=<redacted>"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "request failed: password::hunter2",
+        "token:::hunter2",
+        # A newly added name must not swallow the next one as its value.
+        "credential=password =hunter2",
+        "credential=token :hunter2",
+    ],
+)
+def test_redact_text_never_leaves_a_value_readable(text):
+    """Scrubbing errs toward hiding; only the refusal check treats '::' as a tool key."""
+    from toolgraph.redaction import redact_text
+
+    assert "hunter2" not in redact_text(text)
+
+
+@pytest.mark.parametrize(
+    ("uri", "credential"),
+    [
+        ("https://u:p@host/a", True),
+        ("https://me@corp.example:p@host/a", True),
+        ("https://u:p?x@host/a", True),
+        ("https://me@corp.example:p?x@host", True),
+        ("https://me@corp.example:p#x@host", True),
+        # Refused on purpose: an '@' in the query after a port reads as userinfo.
+        ("https://user@host:443?x=a@b", True),
+        ("https://user@host:443/p@q", False),
+        ("https://user@host:8080", False),
+        ("http://[::1]:8080/x", False),
+    ],
+)
+def test_credential_uri_shapes(uri, credential):
+    from toolgraph.redaction import CREDENTIAL_URI
+
+    assert bool(CREDENTIAL_URI.search(uri)) is credential
 
 
 # Pure-logic contract, ported from the tests of the removed offline example

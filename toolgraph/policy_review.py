@@ -39,8 +39,8 @@ def build_policy_review_plan(
         raise PolicyReviewPlanError(problem)
     if not agent.strip():
         raise PolicyReviewPlanError("agent must not be empty")
-    if profile not in selector.PROFILES:
-        raise PolicyReviewPlanError(f"unknown profile {profile!r}")
+    if problem := selector.profile_error(profile):
+        raise PolicyReviewPlanError(problem)
     try:
         reviewed = list_candidates(
             report, annotations_path=annotations, status="accepted"

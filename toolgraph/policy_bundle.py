@@ -68,10 +68,8 @@ def build_policy_bundle(
     validate_identity(agent)
     if not agent.strip():
         raise PolicyBundleError("agent must not be empty")
-    if profile not in selector.PROFILES:
-        raise PolicyBundleError(
-            f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
-        )
+    if problem := selector.profile_error(profile):
+        raise PolicyBundleError(problem)
     if created_at is not None:
         problem = rfc3339_offset_error(created_at)
         if problem:

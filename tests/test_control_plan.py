@@ -100,6 +100,8 @@ def test_valid_plan_is_body_free_and_structurally_clean():
         (("producer", "note"), "\\\\server\\share\\workspace"),
         (("producer", "note"), "https://user:secret@example.test/resource"),
         (("producer", "note"), "https://example.test/resource?token=secret"),
+        (("producer", "note"), "https://me@corp.example:secret@example.test/resource"),
+        (("producer", "note"), "https://example.test/resource?access_token=secret"),
     ],
 )
 def test_body_free_scanner_rejects_sensitive_shape(path, value):

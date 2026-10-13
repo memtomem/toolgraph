@@ -55,6 +55,16 @@ def sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def sha256_prefixed(payload: bytes) -> str:
+    """``sha256:<hex>``, the form SyncMill's ``^sha256:[0-9a-f]{64}$`` contract requires.
+
+    Used for ``artifact_digest`` and ``plan_digest``. ``bundle_digest`` stays
+    bare hex (``sha256_bytes``) because memtomem-stm asserts its length is 64.
+    The two formats answer to different consumers; do not unify them.
+    """
+    return f"sha256:{sha256_bytes(payload)}"
+
+
 def fsync_parent_dir(path: Path) -> None:
     """Make an atomic rename durable on filesystems that support dir fsync.
 
@@ -84,8 +94,21 @@ def fsync_parent_dir(path: Path) -> None:
             raise
 
 
-def atomic_write_private(path: Path, payload: bytes) -> str:
-    """Write 0600 bytes via fsync + atomic replace; return exact digest."""
+def atomic_write_private(
+    path: Path,
+    payload: bytes,
+    *,
+    warning_category: type[Warning] = ArtifactDurabilityWarning,
+    warning_message: str = (
+        "artifact was replaced, but parent-directory fsync failed; the"
+        " file is published but crash durability is uncertain"
+    ),
+) -> str:
+    """Write 0600 bytes via fsync + atomic replace; return exact digest.
+
+    A caller with its own durability warning passes it, so its consumers keep
+    filtering on the type they already know.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
     try:
@@ -100,9 +123,11 @@ def atomic_write_private(path: Path, payload: bytes) -> str:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # The temporary file is already 0600 and the replace keeps its inode.
+        # Nothing may fail after this point: the payload is published, and an
+        # error would invite a retry (a duplicate review annotation event).
         os.replace(temporary, path)
         temporary = None
-        os.chmod(path, 0o600)
         try:
             fsync_parent_dir(path)
         except OSError:
@@ -110,12 +135,7 @@ def atomic_write_private(path: Path, payload: bytes) -> str:
             # caller reports. Failing the whole write here would report ERROR
             # for a correct published file; surface only the narrower
             # crash-durability uncertainty.
-            warnings.warn(
-                "artifact was replaced, but parent-directory fsync failed; the"
-                " file is published but crash durability is uncertain",
-                ArtifactDurabilityWarning,
-                stacklevel=2,
-            )
+            warnings.warn(warning_message, warning_category, stacklevel=2)
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)
