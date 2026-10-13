@@ -14,7 +14,7 @@ import re
 import threading
 from typing import Any
 
-from neo4j import Driver, GraphDatabase, Session
+from neo4j import READ_ACCESS, Driver, GraphDatabase, Session
 from neo4j.exceptions import (
     ConnectionAcquisitionTimeoutError,
     DatabaseUnavailable,
@@ -205,6 +205,20 @@ def get_driver() -> Driver:
     return _driver
 
 
+# Ladybug's only signal for a file that is not one of its databases. Measured
+# on 0.18.2 and 0.18.3 for garbage and zero-filled files; an empty file opens.
+_NOT_A_DATABASE = "not a valid Lbug database file"
+
+
+def _not_a_database(path: Path) -> BackendConfigurationError:
+    # Not retryable: waiting does not turn a foreign or corrupt file into a
+    # database, so this must not read as an outage.
+    return BackendConfigurationError(
+        f"BACKEND_CORRUPT: {path} is not a valid Ladybug database file; "
+        "check file integrity and format"
+    )
+
+
 def _get_ladybug_database() -> Any:
     global _ladybug_database
     if _ladybug_database is not None:
@@ -229,6 +243,8 @@ def _get_ladybug_database() -> Any:
                 raise BackendLockedError(
                     f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
                 ) from exc
+            if _NOT_A_DATABASE in message:
+                raise _not_a_database(path) from exc
             raise
         return _ladybug_database
 
@@ -279,12 +295,18 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
     Ladybug deliberately serializes all acquisitions through this helper across
     threads for the entire context, including any graph-state retry backoff.
     It is intended for diagnostics and previews, not parallel request serving.
-    The Neo4j branch uses the ordinary session/access mode: read-only here is a
-    caller query contract, not database-enforced write protection or READ routing.
+    The Neo4j branch opens the session in READ access mode, so the server
+    rejects an auto-commit write instead of relying on callers to issue only
+    reads. It is an access mode, not access control: ``execute_write``
+    overrides it, and it does not replace a read-only database role.
     """
     if backend_name() != "ladybug":
-        with session() as current:
-            yield current
+        with _translating_backend_errors():
+            with get_driver().session(
+                database=config.settings.neo4j_database,
+                default_access_mode=READ_ACCESS,
+            ) as current:
+                yield current
         return
     path = Path(config.settings.db_path)
     if not path.is_file():
@@ -306,6 +328,11 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
                     raise BackendLockedError(f"BACKEND_LOCKED: Ladybug database {path} already has an owner") from exc
                 if not path.is_file():
                     raise BackendUnavailableError(f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist") from exc
+                if _NOT_A_DATABASE in str(exc):
+                    raise _not_a_database(path) from exc
+                # Unclassified open failures stay retryable: they may be
+                # transient (I/O, resources), and a typed outage is still
+                # handled by every caller.
                 raise BackendUnavailableError("BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file integrity and format") from exc
         try:
             current = LadybugSession(database)

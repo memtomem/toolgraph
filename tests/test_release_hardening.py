@@ -162,11 +162,14 @@ def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "_explicit_config_path", None)
     monkeypatch.setattr(config, "settings", config.settings)
 
+    # check opens read-only and never creates the database, so make it first.
+    created = CliRunner().invoke(app, ["--config", str(runtime), "init-schema"])
+    assert created.exit_code == 0, created.output
     result = CliRunner().invoke(app, ["--config", str(runtime), "check"])
 
     assert result.exit_code == 0, result.output
-    assert "backend=ladybug" in result.output
-    assert str(db_path) in result.output
+    assert result.stdout == f"OK: backend=ladybug path={db_path}\n"
+    assert not (tmp_path / "shared.lbug").exists()
 
 
 def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_path):

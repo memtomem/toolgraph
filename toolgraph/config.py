@@ -1,4 +1,9 @@
-"""Runtime settings, sourced from the environment (and an optional .env file)."""
+"""Runtime settings, sourced from the environment and a runtime config file.
+
+The CLI also loads a ``.env`` file from the working directory before it
+resolves settings (``load_dotenv_file``). Importing this module does not:
+a library caller decides its own environment.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +15,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
-
 _explicit_config_path: Path | None = None
+
+
+def load_dotenv_file() -> None:
+    """Load ``./.env`` without overriding variables already set (CLI only)."""
+    load_dotenv(dotenv_path=Path.cwd() / ".env", override=False)
 
 
 def runtime_config_path() -> Path:
@@ -33,6 +41,7 @@ def check_config_health() -> dict[str, Any]:
             "permissions": None,
             "healthy": False,
             "detail": f"configuration file not found at {path}",
+            "backend_source": backend_source(),
         }
 
     permissions_ok = True
@@ -60,6 +69,7 @@ def check_config_health() -> dict[str, Any]:
         "permissions": perms_octal,
         "healthy": healthy,
         "detail": detail,
+        "backend_source": backend_source(),
     }
 
 
@@ -89,6 +99,59 @@ def _runtime_config() -> dict:
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise RuntimeConfigurationError(f"unsupported Toolgraph runtime config at {path}")
     return value
+
+
+def backend_source() -> str:
+    """Which input decides the backend: config-flag, env, config-file or default."""
+    if _explicit_config_path is not None:
+        return "config-flag"
+    if os.getenv("TOOLGRAPH_BACKEND"):
+        return "env"
+    try:
+        if "backend" in _runtime_config():
+            return "config-file"
+    except RuntimeConfigurationError:
+        return "config-file"
+    return "default"
+
+
+def _same_path(left: str, right: str) -> bool:
+    return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+
+
+def ambient_conflict() -> str | None:
+    """Describe a disagreement between the runtime config file and the env.
+
+    Without ``--config``, ``TOOLGRAPH_BACKEND`` / ``TOOLGRAPH_DB_PATH`` used to
+    win over the file ``toolgraph init`` wrote, silently. A command then ran
+    against a different database than the one the operator initialized.
+    Agreement, or only one source being set, is not a conflict.
+    """
+    if _explicit_config_path is not None:
+        return None
+    runtime = _runtime_config()
+    problems = []
+    env_backend = os.getenv("TOOLGRAPH_BACKEND")
+    file_backend = runtime.get("backend")
+    if (
+        env_backend
+        and file_backend
+        # driver.backend_name() normalizes the same way, so "LADYBUG" and
+        # " ladybug " select the same backend and are not a conflict.
+        and env_backend.lower().strip() != str(file_backend).lower().strip()
+    ):
+        problems.append(f"TOOLGRAPH_BACKEND={env_backend} but the config file says {file_backend}")
+    env_db = os.getenv("TOOLGRAPH_DB_PATH")
+    file_db = runtime.get("db_path")
+    if env_db and file_db and not _same_path(env_db, str(file_db)):
+        problems.append(f"TOOLGRAPH_DB_PATH={env_db} but the config file says {file_db}")
+    if not problems:
+        return None
+    return (
+        f"conflicting backend configuration ({runtime_config_path()}): "
+        + "; ".join(problems)
+        + ". Pass --config to choose the file, or unset the variable."
+    )
 
 
 def _backend_default() -> str:
@@ -129,6 +192,12 @@ class Settings:
 
 def __getattr__(name: str):
     if name == "settings":
+        # The implicit singleton is the only settings object built from
+        # ambient sources, so it is where a conflict between them is refused.
+        # Settings(...) built with explicit fields is the caller's choice.
+        conflict = ambient_conflict()
+        if conflict:
+            raise RuntimeConfigurationError(conflict)
         value = Settings()
         globals()[name] = value
         return value
@@ -148,3 +217,7 @@ def configure(config_path: Path) -> None:
     except Exception:
         _explicit_config_path = previous
         raise
+    # A cached connection still points at the previous database.
+    from toolgraph.graph import driver
+
+    driver.close_driver()

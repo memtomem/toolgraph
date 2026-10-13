@@ -93,6 +93,9 @@ permission cannot pass the physical-schema check; grant that permission through
 the database administrator. The check does not fall back to version-only
 validation when catalog access fails. Ladybug diagnostic/preview reads serialize
 across threads for the full session, including retry backoff, to protect handle
-lifetime. This helper is not intended for parallel request serving. Neo4j uses
-ordinary session routing; callers issue only reads, without driver-enforced
-write protection.
+lifetime. This helper is not intended for parallel request serving. Neo4j preview and
+diagnostic sessions open in READ access mode, so the server rejects an
+auto-commit write issued through them (verified on Neo4j 5.26 over `bolt://`).
+That is an access mode, not access control: it does not replace a read-only
+database role, and a transaction function run with `execute_write` overrides
+it.

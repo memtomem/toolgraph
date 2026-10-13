@@ -4,6 +4,46 @@ All notable changes to Toolgraph are documented here.
 
 ## Unreleased
 
+### Changed
+
+These change which database a command runs against, or whether it runs at
+all. Each one replaces a silent wrong choice with an explicit error.
+
+- **An environment variable can no longer silently override `toolgraph
+  init`'s config.** Without `--config`, `TOOLGRAPH_BACKEND` and
+  `TOOLGRAPH_DB_PATH` used to win over `.toolgraph/config.json` (or the file
+  `TOOLGRAPH_CONFIG` names). Copying `.env.example` (which sets
+  `TOOLGRAPH_BACKEND=neo4j`) into a directory where `toolgraph init` had
+  written a Ladybug config sent every command to Neo4j with no warning. When
+  the two disagree on the backend or on the resolved database path, commands
+  now stop with `ERROR: conflicting backend configuration (...)`. To migrate,
+  pass `--config <file>` to choose the file, or unset the variable. Agreeing
+  values, or only one of the two being set, behave as before. `--help`,
+  `toolgraph init` and `toolgraph example init` are not blocked, so `init` can
+  still be used to rewrite the file. `toolgraph doctor` reports which input
+  decides the backend as `backend_source`.
+- **Only the CLI reads `./.env`.** Importing `toolgraph` as a library used to
+  load `.env` from the current directory into `os.environ`. The CLI, including
+  `toolgraph serve`, still does; a program that embeds Toolgraph and relied on
+  that should call `toolgraph.config.load_dotenv_file()` or set its own
+  environment.
+- **`toolgraph check` no longer creates a database.** It opens the configured
+  Ladybug file read-only, so a mistyped `db_path` exits 1 with
+  `BACKEND_UNAVAILABLE ... does not exist` instead of creating an empty
+  database and printing `OK`. Run `toolgraph init` or `init-schema` first.
+- A file that is not a Ladybug database is now a non-retryable
+  `BACKEND_CORRUPT` configuration error. Previously the read-only open path
+  (previews, `doctor`, `check`) reported it as a retryable
+  `BACKEND_UNAVAILABLE` outage, and the writable path let Ladybug's raw
+  `RuntimeError` escape.
+- Neo4j preview and diagnostic sessions (`ingest-manifest --dry-run`,
+  `doctor`) now open in READ access mode, so the server rejects an
+  auto-commit write issued through them (verified on Neo4j 5.26 over
+  `bolt://`) instead of relying on the caller to issue only reads. This is
+  an access mode, not access control; it does not replace a read-only role.
+- `config.configure()` closes the cached backend connection, so a library
+  caller switching configs no longer keeps talking to the previous database.
+
 ### Added
 
 - `toolgraph example init` now writes a `README.md` into the generated
