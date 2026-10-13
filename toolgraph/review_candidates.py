@@ -20,6 +20,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
+from toolgraph.redaction import CREDENTIAL_KEYWORDS, CREDENTIAL_URI
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows CI/users
     import msvcrt
@@ -42,10 +43,7 @@ DISPOSITIONS = frozenset({"open", "accepted", "dismissed"})
 _ITEM_NAMESPACE = uuid.uuid5(
     uuid.NAMESPACE_URL, "https://syncmill.dev/review-items/tracegraph"
 )
-_CREDENTIAL = re.compile(
-    r"://[^/\s]+:[^/\s]+@|\b(?:password|token|api[_-]?key|credential)\s*=",
-    re.IGNORECASE,
-)
+_CREDENTIAL_ASSIGNED = re.compile(rf"\b(?:{CREDENTIAL_KEYWORDS})\s*=", re.IGNORECASE)
 
 
 class ReviewCandidateError(ValueError):
@@ -85,7 +83,7 @@ def _normalized_note(value: str | None) -> str | None:
         raise ValueError(
             "note must be a non-empty single line of at most 500 characters"
         )
-    if _CREDENTIAL.search(note):
+    if CREDENTIAL_URI.search(note) or _CREDENTIAL_ASSIGNED.search(note):
         raise ValueError("note must not contain credentials")
     return note
 

@@ -14,9 +14,23 @@ _AUTHORIZATION = re.compile(
     r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
     r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
 )
+# The names every credential detector treats as a secret when assigned. One
+# list, so a name added for redaction is also refused in artifact identities,
+# review notes and control plans.
+CREDENTIAL_KEYWORDS = r"api[-_]?key|access[-_]?token|token|password|secret|credential"
+# Userinfo with a password: scheme://user:password@host. Two shapes:
+# - a user part that may itself contain '@' (an email as the username), kept
+#   inside the authority so an '@' after '?' or '#' is not read as userinfo;
+# - a user part without ':' or '@' whose password may hold any character but
+#   '/' and '@' (an unencoded '?' in a password is still a leaked password).
+CREDENTIAL_URI = re.compile(r"://(?:[^/?#\s]+:[^/?#\s]+|[^/\s:@]+:[^/\s@]+)@")
+CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGNORECASE)
+
+# A ':' followed by another ':' is the tool-key separator (`token::refresh`),
+# not an assignment, so a diagnostic naming a tool keeps its key intact.
 _CREDENTIAL = re.compile(
-    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)"
-    r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
+    rf"(?i)({CREDENTIAL_KEYWORDS})"
+    r"(['\"]?\s*(?:=|:(?!:))\s*['\"]?)([^\s,}\]]+)"
 )
 
 
@@ -79,7 +93,7 @@ _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+")
 # key separator (`token::refresh`, `vault-secret::read_file`), not an
 # assignment. Used only where a match refuses the value outright.
 _CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)"
+    rf"(?i)({CREDENTIAL_KEYWORDS})"
     r"['\"]?\s*(?:=|:(?!:))"
 )
 

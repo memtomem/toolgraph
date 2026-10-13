@@ -238,6 +238,8 @@ def test_invalid_event_chain_and_unknown_candidate_fail_closed(tmp_path):
     [
         ("reviewer", "operator\npassword=secret"),
         ("note", "token=do-not-echo"),
+        ("note", "secret=do-not-echo"),
+        ("note", "access_token=do-not-echo"),
     ],
 )
 def test_externally_authored_sidecar_metadata_is_revalidated(

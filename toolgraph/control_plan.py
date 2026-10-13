@@ -18,7 +18,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from toolgraph.artifacts import rfc3339_offset_error, sha256_prefixed
 from toolgraph.graph import driver, queries, selector
-from toolgraph.artifact_safety import _CREDENTIAL_QUERY, _CREDENTIAL_URI, safe_artifact
+from toolgraph.artifact_safety import safe_artifact
+from toolgraph.redaction import CREDENTIAL_QUERY, CREDENTIAL_URI
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
@@ -285,9 +286,9 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
             _assert_body_free(child, path=(*path, str(index)))
         return
     if isinstance(value, str):
-        if _CREDENTIAL_URI.search(value):
+        if CREDENTIAL_URI.search(value):
             raise ControlPlanError("control plan contains a credential-bearing URI")
-        if _CREDENTIAL_QUERY.search(value):
+        if CREDENTIAL_QUERY.search(value):
             raise ControlPlanError("control plan contains a credential-bearing query")
         if _ABSOLUTE_PATH.match(value):
             raise ControlPlanError("control plan contains an absolute filesystem path")

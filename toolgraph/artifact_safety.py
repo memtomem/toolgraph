@@ -3,6 +3,8 @@
 import re
 from urllib.parse import urlsplit, urlunsplit
 
+from toolgraph.redaction import CREDENTIAL_QUERY, CREDENTIAL_URI
+
 _URI = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s)]+")
 
 
@@ -37,14 +39,8 @@ def redact(value, *, _depth: int = 0):
     return value
 
 
-_CREDENTIAL_URI = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@")
-_CREDENTIAL_QUERY = re.compile(
-    r"[?&](?:api[_-]?key|password|secret|token)=[^&#\s]+", re.IGNORECASE
-)
-
-
 def validate_identity(value: str) -> None:
-    if _CREDENTIAL_URI.search(value) or _CREDENTIAL_QUERY.search(value):
+    if CREDENTIAL_URI.search(value) or CREDENTIAL_QUERY.search(value):
         raise ValueError("artifact identity contains credential-shaped data")
 
 
