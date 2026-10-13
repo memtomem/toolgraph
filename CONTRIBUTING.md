@@ -22,10 +22,20 @@ uv sync --group dev --extra ladybug
 # Lint (same command CI runs)
 uv run ruff check .
 
-# Tests — these use a real Neo4j through testcontainers, so a running
-# Docker daemon is required. There is no Cypher mocking.
+# Tests — the Neo4j half uses a real Neo4j through testcontainers, so a
+# running Docker daemon is required. There is no Cypher mocking.
 uv run pytest
+
+# Without Docker: everything not marked `neo4j` (CI runs both halves)
+make test-unit
 ```
+
+Tests are marked `neo4j` automatically when they request the `graph` or
+`neo4j_container` fixture. A test that pulls those in through
+`request.getfixturevalue` must carry `@pytest.mark.neo4j` itself;
+`make test-unit` sets `TOOLGRAPH_TEST_NO_DOCKER`, so a missing marker fails
+there instead of silently starting Docker. Neither check sees a container
+started anywhere else, so start one only through `neo4j_container`.
 
 `ruff` is deliberately held below 0.16: the repository has no `[tool.ruff]`
 configuration yet, and 0.16's changed defaults surface a large batch of

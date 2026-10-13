@@ -19,7 +19,11 @@ jobs:
       - run: uv sync --frozen --group dev --extra ladybug
       - run: uv run ruff check .
 
-  test:
+  # The suite is split on the `neo4j` marker, which conftest applies to every
+  # test depending on the shared neo4j_container fixture. test-unit sets
+  # TOOLGRAPH_TEST_NO_DOCKER, so a test that reaches that fixture without the
+  # marker fails here instead of quietly starting Docker in the unit half.
+  test-unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,8 +33,23 @@ jobs:
       - run: uv sync --frozen --group dev --extra ladybug
       - name: Require the optional local backend
         run: uv run python -c "import ladybug"
-      - name: Run full suite against real Neo4j
-        run: uv run pytest -q
+      - name: Run the tests that need no Docker
+        env:
+          TOOLGRAPH_TEST_NO_DOCKER: "1"
+        run: uv run pytest -q -m "not neo4j"
+
+  test-neo4j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - name: Require the optional local backend
+        run: uv run python -c "import ladybug"
+      - name: Run the tests against real Neo4j
+        run: uv run pytest -q -m neo4j
 
   artifact-smoke:
     strategy:
@@ -174,7 +193,8 @@ jobs:
   ci-required:
     needs:
       - lint
-      - test
+      - test-unit
+      - test-neo4j
       - artifact-smoke
       - minimum-mcp
       - audit-runtime

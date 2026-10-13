@@ -1,6 +1,6 @@
 # toolgraph dev shortcuts. Run `make` (or `make help`) to list targets.
 .DEFAULT_GOAL := help
-.PHONY: help install up down clean init crawl ingest demo demo-public smoke-policy-gateway serve check reset test lint fmt
+.PHONY: help install up down clean init crawl ingest demo demo-public smoke-policy-gateway serve check reset test test-unit test-neo4j lint fmt
 
 SERVERS ?= examples/servers.yaml
 GOVERNANCE ?= examples/governance.yaml
@@ -55,6 +55,12 @@ smoke-policy-gateway: ## Run Toolgraph -> STM policy-bundle smoke
 
 test: ## Run the test suite (real Neo4j via testcontainers)
 	uv run pytest -q
+
+test-unit: ## Run the tests that need no Docker (fails if an unmarked test reaches neo4j_container)
+	TOOLGRAPH_TEST_NO_DOCKER=1 uv run pytest -q -m "not neo4j"
+
+test-neo4j: ## Run only the tests that start the Neo4j container
+	uv run pytest -q -m neo4j
 
 lint: ## Lint with ruff
 	uv run ruff check .

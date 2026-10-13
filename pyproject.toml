@@ -112,3 +112,6 @@ exclude = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "neo4j: starts the Neo4j testcontainer (needs Docker); deselect with -m 'not neo4j'",
+]
