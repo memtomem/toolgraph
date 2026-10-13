@@ -78,6 +78,14 @@ class ToolRecord(BaseModel):
     open_world_hint: bool | None = None
 
 
+TOOL_HINT_FIELDS = (
+    "read_only_hint",
+    "destructive_hint",
+    "idempotent_hint",
+    "open_world_hint",
+)
+
+
 class ResourceRecord(BaseModel):
     uri: str
     name: str | None = None

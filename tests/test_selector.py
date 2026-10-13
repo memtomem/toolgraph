@@ -307,6 +307,40 @@ def test_unknown_profile_raises(graph):
         selector.eligible_tools("planner", CANDIDATES, profile="production")
 
 
+@pytest.mark.parametrize("profile", ["production", "", ["strict"], None])
+def test_profile_error_names_the_valid_profiles(profile):
+    problem = selector.profile_error(profile)
+    assert problem is not None and "expected one of ['explore', 'review', 'strict']" in problem
+
+
+def test_schema_profile_enums_match_the_selector():
+    """Each artifact schema lists the profiles by hand; this keeps them in step."""
+    from pathlib import Path
+
+    def enums(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("profile"), dict) and "enum" in node["profile"]:
+                yield node["profile"]["enum"]
+            for child in node.values():
+                yield from enums(child)
+        elif isinstance(node, list):
+            for child in node:
+                yield from enums(child)
+
+    contracts = Path(__file__).resolve().parents[1] / "contracts"
+    found = [
+        (path.name, sorted(enum))
+        for path in sorted(contracts.glob("*.schema.json"))
+        for enum in enums(json.loads(path.read_text()))
+    ]
+    assert [name for name, _ in found] == [
+        "control-preflight.schema.json", "observation-window.schema.json",
+        "policy-bundle.schema.json", "policy-review-plan.schema.json",
+        "preflight.schema.json",
+    ]
+    assert all(enum == sorted(selector.PROFILES) for _, enum in found), found
+
+
 # --- selection_explain ------------------------------------------------------
 
 

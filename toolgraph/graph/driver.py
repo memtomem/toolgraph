@@ -23,6 +23,7 @@ from neo4j.exceptions import (
 )
 
 from toolgraph import config
+from toolgraph.models import TOOL_HINT_FIELDS
 
 _driver: Driver | None = None
 _ladybug_database: Any | None = None
@@ -130,12 +131,7 @@ def _ladybug_query(query: str) -> str:
     translated = _DATETIME_CALL.sub("current_timestamp()", query)
     translated = _TYPE_CALL.sub(r"label(\1)", translated)
     translated = _LABELS_HEAD.sub(r"label(\1)", translated)
-    for field in (
-        "read_only_hint",
-        "destructive_hint",
-        "idempotent_hint",
-        "open_world_hint",
-    ):
+    for field in TOOL_HINT_FIELDS:
         translated = re.sub(
             rf"\btool\.{field}\s*=\s*t\.{field}\b",
             f"tool.{field}=CAST(t.{field} AS BOOLEAN)",

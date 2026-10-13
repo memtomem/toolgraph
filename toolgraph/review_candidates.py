@@ -10,19 +10,16 @@ from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import functools
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Iterator, Literal
 import uuid
-import warnings
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from toolgraph.artifacts import fsync_parent_dir
+from toolgraph.artifacts import atomic_write_private, sha256_prefixed
 
 if os.name == "nt":  # pragma: no cover - exercised on Windows CI/users
     import msvcrt
@@ -208,10 +205,6 @@ def _safe_validation_error(kind: str, exc: ValidationError) -> ReviewCandidateEr
     return ReviewCandidateError(f"invalid {kind} at {location}: {first['msg']}")
 
 
-def _sha256(raw: bytes) -> str:
-    return f"sha256:{hashlib.sha256(raw).hexdigest()}"
-
-
 # Reports and sidecars are operator-provided files; nothing else in this
 # module bounds them, so a runaway file would otherwise be read whole.
 MAX_REPORT_BYTES = 50_000_000
@@ -275,7 +268,7 @@ def load_report(path: str | Path) -> LoadedReviewReport:
     if len(ids) != len(set(ids)):
         raise ReviewCandidateError("review-candidate report contains a duplicate candidate")
     return LoadedReviewReport(
-        source_report_digest=_sha256(raw),
+        source_report_digest=sha256_prefixed(raw),
         candidates=tuple(candidates),
     )
 
@@ -460,42 +453,10 @@ def _writer_lock(path: Path) -> Iterator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
-def _save_atomic(annotations: AnnotationReport, path: Path) -> None:
-    payload = json.dumps(
-        annotations.model_dump(mode="json"), indent=2, sort_keys=True
-    ) + "\n"
-    temporary: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            newline="\n",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temporary = handle.name
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-        try:
-            fsync_parent_dir(path)
-        except OSError:
-            # The event is already atomically visible.  Reporting total failure
-            # would invite a retry that appends a duplicate event; surface the
-            # narrower durability uncertainty while returning persisted state.
-            warnings.warn(
-                "review annotations were replaced, but parent-directory fsync "
-                "failed; the event is persisted but crash durability is uncertain",
-                ReviewCandidateDurabilityWarning,
-                stacklevel=2,
-            )
-    except BaseException:
-        if temporary is not None:
-            Path(temporary).unlink(missing_ok=True)
-        raise
+def _annotation_bytes(annotations: AnnotationReport) -> bytes:
+    return (
+        json.dumps(annotations.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
 
 
 def annotate_candidate(
@@ -568,10 +529,21 @@ def annotate_candidate(
         # digest comparison over the raw bytes is sufficient — any content
         # change alters the digest — and skips re-validating the whole report.
         current_raw = _read_capped(report_file, "review-candidate report")
-        if _sha256(current_raw) != report.source_report_digest:
+        if sha256_prefixed(current_raw) != report.source_report_digest:
             raise ReviewCandidateError("source report changed while annotation was being written")
         try:
-            _save_atomic(updated, annotation_file)
+            # The event is already atomically visible if only the directory
+            # fsync fails. Reporting total failure would invite a retry that
+            # appends a duplicate event, so the writer warns instead.
+            atomic_write_private(
+                annotation_file,
+                _annotation_bytes(updated),
+                warning_category=ReviewCandidateDurabilityWarning,
+                warning_message=(
+                    "review annotations were replaced, but parent-directory fsync "
+                    "failed; the event is persisted but crash durability is uncertain"
+                ),
+            )
         except OSError as exc:
             detail = exc.strerror or type(exc).__name__
             raise ReviewCandidateError(f"cannot write review annotations: {detail}") from exc

@@ -24,6 +24,7 @@ from __future__ import annotations
 from toolgraph.errors import ContractError
 from toolgraph.graph.driver import session
 from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
+from toolgraph.models import TOOL_HINT_FIELDS
 
 # Hard-filter rule sets (ADR-0005). Reasons are checked in _REASON_PRECEDENCE
 # order; the first applicable reason that the profile rejects wins. These are
@@ -55,6 +56,16 @@ PROFILES: dict[str, frozenset[str]] = {
     ),
     "explore": frozenset({"TOOL_NOT_FOUND", "AMBIGUOUS_TOOL", "NOT_GRANTED", "DRIFTED"}),
 }
+
+
+def profile_error(profile: object) -> str | None:
+    """Why *profile* names no selector profile, or None if it names one.
+
+    Returned rather than raised so each caller keeps its own error type.
+    """
+    if isinstance(profile, str) and profile in PROFILES:
+        return None
+    return f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
 
 DEFAULT_PROFILE = "strict"
 
@@ -194,10 +205,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
             "is_drifted": None,
             "is_unmapped": None,
             "has_unbacked_edges": None,
-            "read_only_hint": None,
-            "destructive_hint": None,
-            "idempotent_hint": None,
-            "open_world_hint": None,
+            **dict.fromkeys(TOOL_HINT_FIELDS),
         }
         if not keys:
             row["verdict"] = "TOOL_NOT_FOUND"
@@ -225,12 +233,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
             row["is_drifted"] = f["is_drifted"]
             row["is_unmapped"] = f["is_unmapped"]
             row["has_unbacked_edges"] = f["has_unbacked_edges"]
-            for hint in (
-                "read_only_hint",
-                "destructive_hint",
-                "idempotent_hint",
-                "open_world_hint",
-            ):
+            for hint in TOOL_HINT_FIELDS:
                 row[hint] = f[hint]
             if not f["permitted"]:
                 row["verdict"] = "NOT_GRANTED"
@@ -274,10 +277,8 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
     ``rank_features`` once and filter its output, instead of paying the full
     graph evaluation twice inside the generation-retry bracket.
     """
-    if profile not in PROFILES:
-        raise ContractError(
-            f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
-        )
+    if problem := profile_error(profile):
+        raise ContractError(problem)
     agent = ranked["agent"]
     if not ranked["agent_found"]:
         return {
@@ -336,10 +337,8 @@ def eligible_tools(
     reasons — the graph paths that prove it. A learned consumer may rerank
     ``eligible`` but may never resurrect a rejected row.
     """
-    if profile not in PROFILES:
-        raise ContractError(
-            f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
-        )
+    if problem := profile_error(profile):
+        raise ContractError(problem)
     return filter_features(rank_features(agent, candidates), profile)
 
 
@@ -348,10 +347,8 @@ def selection_explain(
 ) -> dict:
     """Compact human-readable reasons for one (agent, tool) — a view over the
     same facts ``rank_features`` returns, for operators and end users."""
-    if profile not in PROFILES:
-        raise ContractError(
-            f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
-        )
+    if problem := profile_error(profile):
+        raise ContractError(problem)
     ranked = rank_features(agent, [tool])
     if not ranked["agent_found"]:
         return {
@@ -405,7 +402,7 @@ def selection_explain(
             if feature["has_unbacked_edges"]
             else "all load-bearing edges carry evidence"
         )
-        for hint in ("read_only_hint", "destructive_hint", "idempotent_hint", "open_world_hint"):
+        for hint in TOOL_HINT_FIELDS:
             if feature[hint] is not None:
                 reasons.append(
                     f"server self-claim (crawled/medium): {hint}={feature[hint]}"

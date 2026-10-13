@@ -28,10 +28,8 @@ def build_preflight(
         raise ValueError(problem)
     if not run_id:
         raise ValueError("run_id must not be empty")
-    if profile not in selector.PROFILES:
-        raise ValueError(
-            f"unknown profile {profile!r} — expected one of {sorted(selector.PROFILES)}"
-        )
+    if problem := selector.profile_error(profile):
+        raise ValueError(problem)
 
     def fetch() -> dict:
         # One graph evaluation: the filter is a pure function over the ranked
