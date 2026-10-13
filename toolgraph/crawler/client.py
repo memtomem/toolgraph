@@ -59,8 +59,7 @@ async def _list_all_tools(session) -> list[ToolRecord]:
 
     Without pagination, a server with more than one page silently drops
     tools on later pages — governance refs to them would then reject at
-    ingest and reachability analysis would miss the tools entirely (Codex
-    PR #1 review caught this).
+    ingest and reachability analysis would miss the tools entirely.
     """
     out: list[ToolRecord] = []
     cursor: str | None = None

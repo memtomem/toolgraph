@@ -161,7 +161,7 @@ def _validate_manifest(
     # passes deny-policy validation (set-based), then Phase 2 MERGE+SET on the
     # same id silently overwrites effect to whichever was processed last —
     # potentially leaving an ALLOW node that no longer matches the DENY-only
-    # classifier in _deny_evidence_for. Codex R3.5 review caught this.
+    # deny-path queries (queries._DENY_ROUTES).
     seen_policy_ids: set[str] = set()
     for p in gov.policies:
         if p.id in seen_policy_ids:
@@ -264,9 +264,9 @@ def _validate_manifest(
                 f"(agent {exc.agent!r}, tool {exc.tool!r})"
             )
             continue
-        # Classification only joins to DENY policies (_deny_evidence_for matches
-        # `Policy {effect:'DENY'}`); an exception against an ALLOW policy can
-        # never fire. Codex R3 review caught this.
+        # Classification only joins to DENY policies (queries._DENY_ROUTES
+        # match `Policy {effect:'DENY'}`); an exception against an ALLOW
+        # policy can never fire.
         if exc.policy not in deny_policies:
             warnings.append(
                 f"EXPECTED_EXCEPTION: policy {exc.policy!r} has effect=ALLOW; "
@@ -288,9 +288,6 @@ def _validate_manifest(
         #   2) the (tool, policy) pair is actually reachable — either via a
         #      governed resource the tool touches, or by direct tool-level
         #      GOVERNED_BY. Without (2) no deny row will ever fire.
-        # Closing only the "wrong resource" slice (the previous round) wasn't
-        # enough — Codex flagged that wrong-policy and ungranted-agent
-        # exceptions still survived.
         if key not in agent_grant_tools.get(exc.agent, set()):
             warnings.append(
                 f"EXPECTED_EXCEPTION: agent {exc.agent!r} has no CAN_CALL grant on tool "
@@ -368,8 +365,6 @@ def _validate_manifest(
         "resolved_governed": resolved_governed,
         "resolved_exceptions": resolved_exceptions,
         "known_agents": known_agents,
-        "known_policies": known_policies,
-        "deny_policies": deny_policies,
     }
     return warnings, notices, resolved
 
@@ -664,11 +659,7 @@ def _compute_dry_run_diff(
     ):
         db_grants[(row["agent"], row["tool"])] = {
             "granted_by": row["granted_by"],
-            "provenance": {
-                "source": row["source"],
-                "confidence": row["confidence"],
-                "evidence": row["evidence"],
-            },
+            "provenance": queries.row_provenance(row),
         }
     prop_grants = {}
     for agent, key, granted_by, prov_props in resolved["resolved_grants"]:
@@ -716,11 +707,7 @@ def _compute_dry_run_diff(
         "RETURN t.key AS tool, 'WRITES' AS mode, res.uri AS resource, "
         "r.source AS source, r.confidence AS confidence, r.evidence AS evidence"
     ):
-        db_access[(row["tool"], row["mode"], row["resource"])] = {
-            "source": row["source"],
-            "confidence": row["confidence"],
-            "evidence": row["evidence"],
-        }
+        db_access[(row["tool"], row["mode"], row["resource"])] = queries.row_provenance(row)
     prop_access = {}
     for key, mode, uri, prov_props in resolved["resolved_access"]:
         prop_access[(key, mode, uri)] = prov_props
@@ -756,11 +743,7 @@ def _compute_dry_run_diff(
         "RETURN 'tool' AS kind, t.key AS ref, p.id AS policy, "
         "r.source AS source, r.confidence AS confidence, r.evidence AS evidence"
     ):
-        db_governed[(row["kind"], row["ref"], row["policy"])] = {
-            "source": row["source"],
-            "confidence": row["confidence"],
-            "evidence": row["evidence"],
-        }
+        db_governed[(row["kind"], row["ref"], row["policy"])] = queries.row_provenance(row)
     prop_governed = {}
     for kind, key_or_uri, valid_bindings in resolved["resolved_governed"]:
         for pid, prov_props in valid_bindings:
