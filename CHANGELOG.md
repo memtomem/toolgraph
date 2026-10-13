@@ -43,6 +43,14 @@ all. Each one replaces a silent wrong choice with an explicit error.
   an access mode, not access control; it does not replace a read-only role.
 - `config.configure()` closes the cached backend connection, so a library
   caller switching configs no longer keeps talking to the previous database.
+- The `pyjwt` security floor rises from `>=2.13.0` to `>=2.15.0`. 2.13.0
+  carries 14 advisories published after it was set: PYSEC-2026-4140 through
+  PYSEC-2026-4152 and PYSEC-2026-4183. PYSEC-2026-4141 and PYSEC-2026-4183
+  are fixed in 2.15.0, PYSEC-2026-4146 lists 2.13.0 as its last affected
+  version, and the rest are fixed in 2.14.0.
+  The lock already resolved 2.15.0; the floor is what keeps an install from
+  PyPI from resolving an older one. Toolgraph does not import `pyjwt`
+  itself; it is pinned for the MCP SDK's dependency tree.
 
 ### Added
 
