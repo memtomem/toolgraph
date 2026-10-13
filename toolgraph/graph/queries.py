@@ -17,7 +17,7 @@ vs a policy id.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 import json
 import time
 
@@ -51,9 +51,6 @@ class GraphState:
     instance_id: str | None
     generation: int
     governance_digest: str | None = None
-
-    def token(self) -> dict[str, str | int | None]:
-        return asdict(self)
 
 
 def with_graph_state(
@@ -205,14 +202,18 @@ def exposed_tool_contracts() -> list[dict]:
         return result
 
 
+def _agent_present(s: Session, agent: str) -> bool:
+    return s.run(
+        "RETURN EXISTS { MATCH (:Agent {id:$agent}) } AS ok", agent=agent
+    ).single()["ok"]
+
+
 def agent_exists(agent: str) -> bool:
     """Is there an Agent node with this id? Used by the CLI + MCP surfaces to
     return a discriminated AGENT_NOT_FOUND signal instead of silently
     returning ``[]`` (which is indistinguishable from 'no unsafe tools')."""
     with session() as s:
-        return s.run(
-            "RETURN EXISTS { MATCH (:Agent {id:$agent}) } AS ok", agent=agent
-        ).single()["ok"]
+        return _agent_present(s, agent)
 
 
 def _agent_ids() -> list[str]:
@@ -236,6 +237,103 @@ def _radius_path(agent: str | None, tool: str | None, mode: str | None, resource
     return None
 
 
+# A tool reaches a DENY policy two ways: through a resource it reads or
+# writes, or through a direct GOVERNED_BY edge. Each route names its pattern,
+# the extra exception predicate, and the provenance columns it returns.
+#
+# An exception matches when ``exc IS NOT NULL``, never ``exc.reason IS NOT
+# NULL``: ``reason`` is optional on ExpectedException, so testing it would
+# misclassify a valid no-reason exception as a violation.
+#
+# Exceptions are COLLECTED, not row-multiplied: a wildcard (resource IS NULL)
+# and a resource-specific exception can both match one deny path, and
+# DISTINCT cannot collapse rows whose ``reason`` strings differ. One row per
+# path; ``_picked_exception`` lets the most specific one supply the reason.
+_DENY_ROUTES = (
+    (
+        "resource",
+        "-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})",
+        "(exc.resource IS NULL OR exc.resource = r.uri)",
+        "type(acc) AS mode, r.uri AS resource, p.id AS policy, "
+        "acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence, "
+        "gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence",
+    ),
+    (
+        "tool",
+        "-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})",
+        "exc.resource IS NULL",
+        "null AS mode, null AS resource, p.id AS policy, "
+        "g.source AS source, g.confidence AS confidence, g.evidence AS evidence",
+    ),
+)
+
+
+def _deny_paths(
+    s: Session,
+    *,
+    keys: list[str] | None = None,
+    agents: list[str] | None = None,
+    agent: str | None = None,
+):
+    """Yield ``(via, record)`` for every deny path, one query per route.
+
+    ``keys`` scopes to those tools, whether or not anyone may call them, and
+    matches exceptions for ``agent`` (any agent when None). ``agents`` scopes
+    to tools those agents hold a CAN_CALL grant on, matching each row's
+    exceptions against its own agent; records then carry ``agent``,
+    ``tool_key``, ``tool`` and ``server``.
+    """
+    if agents is not None:
+        head = "(a:Agent)-[:CAN_CALL]->(t:Tool)"
+        scope = "a.id IN $agents"
+        exc_agent = "exc.agent = a.id"
+        columns = "a.id AS agent, t.key AS tool_key, t.name AS tool, t.server AS server, "
+        order = "agent, tool, resource, tool_key, policy, mode"
+        params = {"agents": agents}
+    else:
+        head = "(t:Tool)"
+        scope = "t.key IN $keys"
+        exc_agent = "($agent IS NULL OR exc.agent = $agent)"
+        columns = "t.key AS key, "
+        order = "key, resource, policy, mode"
+        params = {"keys": keys, "agent": agent}
+    # The trailing sort keys only break ties the leading ones left to the
+    # backend. That makes the order total because ingest MERGEs each edge,
+    # so one deny path never yields two rows.
+    for via, route, exc_resource, route_columns in _DENY_ROUTES:
+        for r in s.run(
+            f"""
+            MATCH {head}{route}
+            WHERE {scope}
+            OPTIONAL MATCH (exc:ExpectedException {{policy:p.id}})
+              WHERE exc.tool_key = t.key AND {exc_agent} AND {exc_resource}
+            RETURN {columns}{route_columns},
+                   collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
+                     {{resource: exc.resource, reason: exc.reason}} END) AS exceptions
+            ORDER BY {order}
+            """,
+            **params,
+        ):
+            yield via, r
+
+
+def _deny_fields(via: str, r, tool: str, *, classify: bool) -> dict:
+    """Path, provenance and (when ``classify``) exception verdict of one path."""
+    if via == "resource":
+        path = _resource_path(tool, r["mode"], r["resource"], r["policy"])
+    else:
+        path = _tool_path(tool, r["policy"])
+    d: dict = {"path": path, "provenance": row_provenance(r)}
+    if via == "resource" and (policy_prov := _gov_prov(r)) is not None:
+        d["policy_provenance"] = policy_prov
+    if classify:
+        exception = _picked_exception(r)
+        d["classification"] = "authorized_but_governed" if exception else "violation"
+        if exception and exception.get("reason") is not None:
+            d["exception_reason"] = exception["reason"]
+    return d
+
+
 def _deny_evidence_batch(
     s: Session, keys: list[str], agent: str | None = None
 ) -> dict[str, list[dict]]:
@@ -255,99 +353,19 @@ def _deny_evidence_batch(
       ``authorized_but_governed`` based on a matching ExpectedException.
     """
     evidence: dict[str, list[dict]] = {k: [] for k in keys}
-    # Codex PR #1 review: detect exception match via `exc IS NOT NULL`, NOT via
-    # `exc.reason IS NOT NULL`. ``reason`` is optional on ExpectedException;
-    # using it as the match signal would misclassify a valid no-reason
-    # exception as a violation.
-    #
-    # Exceptions are COLLECTED, not row-multiplied: a wildcard (resource IS
-    # NULL) and a resource-specific exception can both match one deny path,
-    # and DISTINCT cannot collapse rows whose ``reason`` strings differ —
-    # which duplicated evidence rows. One row per path; the most specific
-    # exception (resource-bound over wildcard) supplies the reason.
-    for r in s.run(
-        """
-        MATCH (t:Tool)-[acc:READS|WRITES]->(r:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        WHERE t.key IN $keys
-        OPTIONAL MATCH (exc:ExpectedException {policy:p.id})
-          WHERE exc.tool_key = t.key
-            AND ($agent IS NULL OR exc.agent = $agent)
-            AND (exc.resource IS NULL OR exc.resource = r.uri)
-        WITH t.key AS key, type(acc) AS mode, r.uri AS resource, p.id AS policy,
-             acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
-             gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-               {resource: exc.resource, reason: exc.reason} END) AS exceptions
-        RETURN key, mode, resource, policy, source, confidence, evidence,
-               gov_source, gov_confidence, gov_evidence,
-               exceptions
-        ORDER BY key, resource, policy
-        """,
-        keys=keys,
-        agent=agent,
-    ):
+    for via, r in _deny_paths(s, keys=keys, agent=agent):
         key = r["key"]
-        d = {
-            "via": "resource",
-            "mode": r["mode"],
-            "resource": r["resource"],
-            "policy": r["policy"],
-            "path": _resource_path(_name(key), r["mode"], r["resource"], r["policy"]),
-            "provenance": _prov(r),
-        }
-        policy_prov = _gov_prov(r)
-        if policy_prov is not None:
-            d["policy_provenance"] = policy_prov
-        if agent is not None:
-            exception = _picked_exception(r)
-            d["classification"] = (
-                "authorized_but_governed" if exception else "violation"
-            )
-            if exception and exception.get("reason") is not None:
-                d["exception_reason"] = exception["reason"]
-        evidence[key].append(d)
-    for r in s.run(
-        """
-        MATCH (t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        WHERE t.key IN $keys
-        OPTIONAL MATCH (exc:ExpectedException {policy:p.id})
-          WHERE exc.tool_key = t.key
-            AND ($agent IS NULL OR exc.agent = $agent) AND exc.resource IS NULL
-        WITH t.key AS key, p.id AS policy,
-             g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-               {resource: exc.resource, reason: exc.reason} END) AS exceptions
-        RETURN key, policy, source, confidence, evidence,
-               exceptions
-        ORDER BY key, policy
-        """,
-        keys=keys,
-        agent=agent,
-    ):
-        key = r["key"]
-        d = {
-            "via": "tool",
-            "policy": r["policy"],
-            "path": _tool_path(_name(key), r["policy"]),
-            "provenance": _prov(r),
-        }
-        if agent is not None:
-            exception = _picked_exception(r)
-            d["classification"] = (
-                "authorized_but_governed" if exception else "violation"
-            )
-            if exception and exception.get("reason") is not None:
-                d["exception_reason"] = exception["reason"]
+        d: dict = {"via": via}
+        if via == "resource":
+            d["mode"] = r["mode"]
+            d["resource"] = r["resource"]
+        d["policy"] = r["policy"]
+        d.update(_deny_fields(via, r, _name(key), classify=agent is not None))
         evidence[key].append(d)
     return evidence
 
 
-def _deny_evidence_for(s: Session, key: str, agent: str | None = None) -> list[dict]:
-    """Single-tool view over ``_deny_evidence_batch`` (see there for row shape)."""
-    return _deny_evidence_batch(s, [key], agent=agent)[key]
-
-
-def _prov(row) -> dict:
+def row_provenance(row) -> dict:
     """Provenance fields as a sub-dict — honest pass-through.
 
     No silent defaulting: a null ``source`` stays null so a reader can tell
@@ -404,10 +422,7 @@ def check_access(agent: str, tool: str) -> dict:
     DENY" without re-aggregating row classifications.
     """
     with session() as s:
-        agent_present = s.run(
-            "RETURN EXISTS { MATCH (:Agent {id:$agent}) } AS ok", agent=agent
-        ).single()["ok"]
-        if not agent_present:
+        if not _agent_present(s, agent):
             # Three-state ``found``: True/False when tool resolution ran,
             # None when it didn't (AGENT_NOT_FOUND fires before tool lookup).
             # Hard-coding False would lie about a tool that actually exists;
@@ -458,7 +473,7 @@ def check_access(agent: str, tool: str) -> dict:
                 "found": False,
                 "verdict": "TOOL_NOT_FOUND",
             }
-        deny = _deny_evidence_for(s, key, agent=agent)
+        deny = _deny_evidence_batch(s, [key], agent=agent)[key]
 
     if not meta["permitted"]:
         verdict = "NOT_GRANTED"
@@ -514,79 +529,23 @@ def _unsafe_callable_rows(s: Session, agents: list[str]) -> list[dict]:
     """Unsafe-callable rows for every agent in ``agents``, in two queries.
 
     Batched so ``audit_report`` costs a fixed number of queries instead of
-    two per agent. Rows carry an ``agent`` key and come back ordered by
-    (agent, tool, resource) — the same order the per-agent loop produced.
+    two per agent. Rows carry an ``agent`` key. Every resource-route row comes
+    before every tool-route row; within each route rows are ordered by
+    (agent, tool, resource), with ties broken by key, policy and mode.
     """
     rows: list[dict] = []
-    # Same exception-collection rule as _deny_evidence_for: one row per
-    # deny path, the most specific matching exception wins the reason.
-    for r in s.run(
-        """
-        MATCH (a:Agent)-[:CAN_CALL]->(t:Tool)
-              -[acc:READS|WRITES]->(res:Resource)-[gov:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        WHERE a.id IN $agents
-        OPTIONAL MATCH (exc:ExpectedException {tool_key:t.key, policy:p.id})
-          WHERE exc.agent = a.id AND (exc.resource IS NULL OR exc.resource = res.uri)
-        WITH a.id AS agent, t.key AS tool_key, t.name AS tool, t.server AS server,
-             type(acc) AS mode, res.uri AS resource, p.id AS policy,
-             acc.source AS source, acc.confidence AS confidence, acc.evidence AS evidence,
-             gov.source AS gov_source, gov.confidence AS gov_confidence, gov.evidence AS gov_evidence,
-             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-               {resource: exc.resource, reason: exc.reason} END) AS exceptions
-        RETURN agent, tool_key, tool, server, 'resource' AS via, mode, resource, policy,
-               source, confidence, evidence, gov_source, gov_confidence, gov_evidence,
-               exceptions
-        ORDER BY agent, tool, resource
-        """,
-        agents=agents,
-    ):
-        d = dict(r)
-        d["path"] = _resource_path(d["tool"], d["mode"], d["resource"], d["policy"])
-        d["provenance"] = _prov(r)
-        exception = _picked_exception(r)
-        policy_prov = _gov_prov(r)
-        if policy_prov is not None:
-            d["policy_provenance"] = policy_prov
-        d["classification"] = (
-            "authorized_but_governed" if exception else "violation"
-        )
-        d["exception_reason"] = exception.get("reason") if exception else None
-        for k in ("source", "confidence", "evidence",
-                  "gov_source", "gov_confidence", "gov_evidence",
-                  "exceptions"):
-            d.pop(k, None)
-        if d.get("exception_reason") is None:
-            d.pop("exception_reason", None)
-        rows.append(d)
-    for r in s.run(
-        """
-        MATCH (a:Agent)-[:CAN_CALL]->(t:Tool)-[g:GOVERNED_BY]->(p:Policy {effect:'DENY'})
-        WHERE a.id IN $agents
-        OPTIONAL MATCH (exc:ExpectedException {tool_key:t.key, policy:p.id})
-          WHERE exc.agent = a.id AND exc.resource IS NULL
-        WITH a.id AS agent, t.key AS tool_key, t.name AS tool, t.server AS server, p.id AS policy,
-             g.source AS source, g.confidence AS confidence, g.evidence AS evidence,
-             collect(DISTINCT CASE WHEN exc IS NULL THEN NULL ELSE
-               {resource: exc.resource, reason: exc.reason} END) AS exceptions
-        RETURN agent, tool_key, tool, server, 'tool' AS via, null AS mode, null AS resource,
-               policy, source, confidence, evidence,
-               exceptions
-        ORDER BY agent, tool
-        """,
-        agents=agents,
-    ):
-        d = dict(r)
-        d["path"] = _tool_path(d["tool"], d["policy"])
-        d["provenance"] = _prov(r)
-        exception = _picked_exception(r)
-        d["classification"] = (
-            "authorized_but_governed" if exception else "violation"
-        )
-        d["exception_reason"] = exception.get("reason") if exception else None
-        for k in ("source", "confidence", "evidence", "exceptions"):
-            d.pop(k, None)
-        if d.get("exception_reason") is None:
-            d.pop("exception_reason", None)
+    for via, r in _deny_paths(s, agents=agents):
+        d = {
+            "agent": r["agent"],
+            "tool_key": r["tool_key"],
+            "tool": r["tool"],
+            "server": r["server"],
+            "via": via,
+            "mode": r["mode"],
+            "resource": r["resource"],
+            "policy": r["policy"],
+        }
+        d.update(_deny_fields(via, r, r["tool"], classify=True))
         rows.append(d)
     return rows
 
@@ -602,8 +561,8 @@ def audit_report(include_grants: bool = False) -> dict:
     authorized_but_governed: list[dict] = []
     agents = _agent_ids()
     # One batched pass instead of two whole-graph traversals per agent.
-    # Rows regroup agent-major so the output order matches the historical
-    # per-agent loop exactly.
+    # Rows regroup agent-major so each agent's rows keep the route order
+    # ``unsafe_callable_tools`` returns for that agent alone.
     by_agent: dict[str, list[dict]] = {agent: [] for agent in agents}
     if agents:
         with session() as s:
@@ -653,10 +612,9 @@ def audit_report(include_grants: bool = False) -> dict:
 # --- Negative-truth / drift queries -------------------------------------
 #
 # Audit views that surface what the graph DOESN'T say but probably should.
-# Codex review of the gate exhibit noted that an advisory analyzer that only
-# answers positive reachability questions can look more authoritative than it
-# is; these queries make the unspecified, the unsupported, and the stale
-# parts of the graph visible.
+# An advisory analyzer that only answers positive reachability questions can
+# look more authoritative than it is; these queries make the unspecified, the
+# unsupported, and the stale parts of the graph visible.
 
 
 def unmapped_tools(only_granted: bool = True) -> list[dict]:
@@ -866,7 +824,7 @@ def annotation_contradictions() -> list[dict]:
                         r["exposes_evidence"]
                     ),
                     "authored_claim": f"WRITES {r['resource']}",
-                    "authored_provenance": _prov(r),
+                    "authored_provenance": row_provenance(r),
                 }
             )
     return rows
@@ -924,7 +882,7 @@ def _blast_radius_resource(s: Session, uri: str) -> dict:
             continue  # resource exists but nothing reads/writes it
         d = dict(r)
         d["path"] = _radius_path(d["agent"], d["tool"], d["mode"], uri)
-        d["provenance"] = _prov(r)
+        d["provenance"] = row_provenance(r)
         for k in ("source", "confidence", "evidence"):
             d.pop(k, None)
         impacted.append(d)
@@ -957,7 +915,7 @@ def _blast_radius_policy(s: Session, node: str) -> dict:
             continue  # policy governs a resource, but no tool currently touches it
         d = dict(r)
         d["path"] = _radius_path(d["agent"], d["tool"], d["mode"], d["resource"])
-        d["provenance"] = _prov(r)
+        d["provenance"] = row_provenance(r)
         for k in ("source", "confidence", "evidence"):
             d.pop(k, None)
         impacted.append(d)
@@ -979,7 +937,7 @@ def _blast_radius_policy(s: Session, node: str) -> dict:
             if d["agent"]
             else None
         )
-        d["provenance"] = _prov(r)
+        d["provenance"] = row_provenance(r)
         for k in ("source", "confidence", "evidence"):
             d.pop(k, None)
         impacted.append(d)

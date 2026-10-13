@@ -75,6 +75,20 @@ UNVERIFIED_PROVENANCE = (
     "export never carried."
 )
 
+# A window bound is a moment, and this file is evidence for widening an agent's
+# authority, so the accepted grammar is stated here rather than delegated.
+#
+# The subset is deliberately narrow: `YYYY-MM-DDThh:mm:ss`, an optional
+# fractional part of one to six ASCII digits, and either `Z` or `+hh:mm` /
+# `-hh:mm`. Uppercase `T` and `Z` only, colonised offsets only. That is not all
+# of ISO-8601; it is the shape an exporter can emit unambiguously.
+#
+# `fromisoformat` alone is both looser and version-dependent. It accepts a bare
+# date, any single character as the separator, and the invalid offset "+00:60",
+# which it silently repairs to "+01:00". Worse, "24:00:00" raises on Python
+# 3.13 and normalises to the next day on 3.14, so the same export would mean
+# two different windows depending on the interpreter. Every clock component is
+# therefore range-checked here, before the parser sees it.
 _TIMESTAMP = re.compile(
     r"(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})"
     r"T(?P<hh>[0-9]{2}):(?P<mm>[0-9]{2}):(?P<ss>[0-9]{2})"
@@ -84,6 +98,17 @@ _TIMESTAMP = re.compile(
 
 
 def _instant(value: str, where: str) -> datetime:
+    """Parse a fully qualified timestamp into a comparable instant.
+
+    An explicit offset is required. Reading a naive bound as UTC would invent a
+    zone the exporter never stated, and reading it as local time would make the
+    same file mean different things on different machines. Neither is a good
+    foundation for a governance change, so a missing zone is refused.
+
+    ``-00:00`` is refused too: RFC 3339 gives it the meaning "offset unknown",
+    which is the very thing requiring an offset was meant to exclude. Write
+    ``Z`` for UTC.
+    """
     match = _TIMESTAMP.fullmatch(value)
     if not match:
         raise ProvenanceError(
@@ -116,6 +141,9 @@ def _instant(value: str, where: str) -> datetime:
     try:
         return datetime.fromisoformat(value)
     except ValueError as exc:
+        # Shape and ranges are already checked, so this is a calendar error
+        # such as February 30. It must still leave as a clean refusal: every
+        # other failure in this module does.
         raise ProvenanceError(f"{where} is not a real date: {value!r} ({exc})") from exc
 
 
@@ -132,6 +160,28 @@ def _instance_id(value: object, where: str) -> str | None:
 
 
 def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[str]) -> dict:
+    """Compare the governance digest an export declares against the manifest given.
+
+    What this establishes, and what it does not. `governance_digest()` is a
+    stable semantic hash of the validated model. An unequal digest proves the
+    export DECLARED a different manifest, which is reason enough to refuse: its
+    NOT_GRANTED rows may already have been answered, retired, or overruled by a
+    DENY. An equal digest proves only that the exporter declared this
+    manifest's digest -- copying it onto rows from any window passes. It does not
+    show the gateway enforced it, or that these rows came from that gateway.
+    A digest can also stay equal across crawls that changed which tools exist.
+
+    Here the generation and instance id are validated for shape only;
+    ``_proposal_provenance`` later compares the instance id, and the
+    generation unless revalidating against the current catalog, with the live
+    graph. The window bounds must be real instants in order, but nothing ties
+    them to when the rows were observed: they record what the file claims,
+    not what happened.
+
+    The profile is not decoration either. The same rejection means different
+    things under `review` (UNMAPPED passes) and `strict` (it does not), so a
+    proposal that cannot name the profile cannot say what its evidence proves.
+    """
     missing = [f for f in ENVELOPE_FIELDS if f not in envelope]
     if missing:
         raise ProvenanceError(
@@ -156,6 +206,8 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
             f"graph_generation must be a non-negative integer, got {generation!r}"
         )
     profile = envelope["profile"]
+    # Membership alone raises TypeError on an unhashable JSON value such as a
+    # list, which escapes the clean refusal this function promises.
     if not isinstance(profile, str) or profile not in known_profiles:
         raise ProvenanceError(
             f"unknown selector profile {profile!r} - expected one of {sorted(known_profiles)}"
@@ -168,6 +220,10 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
         if UNSAFE_IN_NAME.search(value):
             raise ProvenanceError(f"{bound} contains a control character")
         bounds[bound] = _instant(value, bound)
+    # Compare instants, not strings. Lexical ordering accepts a reversed window
+    # written across two offsets and rejects a correctly ordered one, because
+    # "2026-08-01T01:00:00+02:00" sorts after "2026-08-01T00:00:00Z" while
+    # naming an earlier moment.
     if bounds["window_start"] > bounds["window_end"]:
         raise ProvenanceError(
             f'window_start ({envelope["window_start"]}) is after '
@@ -183,6 +239,14 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
 
 
 def _count(row: dict, key: str, where: str, *, missing: int | None = 0) -> int | None:
+    """Validate a count, keeping "absent" distinguishable from "explicitly zero".
+
+    ``missing=None`` is the load-bearing case. A removal claims a grant went
+    unused, and the only thing that can support that is a row which SAYS zero.
+    Defaulting an absent ``calls`` field to 0 made silence indistinguishable
+    from an explicit zero-call observation, so an export that never mentioned a
+    count still proposed revoking the grant.
+    """
     if key not in row:
         return missing
     value = row[key]

@@ -27,7 +27,7 @@ DEFAULT_CONCURRENCY = 5
 # A failure carries its ServerSpec, not a display label: fleet reconciliation
 # must know whether the failed spec had a ``name`` override, and inferring
 # that from a label is unsound (an unnamed spec's command can collide with
-# another spec's name — Codex review of this branch caught it).
+# another spec's name).
 CrawlFailure = tuple[ServerSpec, str]
 
 

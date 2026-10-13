@@ -113,7 +113,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
     # A tool the server stopped exposing makes NO annotation claims anymore —
     # the node may be kept below (authored governance), but leaving the hints
     # would have the audit queries cite a crawled/medium claim nobody is
-    # making (ADR-0006; Codex review of this branch caught it).
+    # making (ADR-0006).
     tx.run(
         """
         MATCH (old:Tool {server:$name})

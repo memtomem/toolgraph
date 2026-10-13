@@ -51,9 +51,19 @@ all. Each one replaces a silent wrong choice with an explicit error.
   The lock already resolved 2.15.0; the floor is what keeps an install from
   PyPI from resolving an older one. Toolgraph does not import `pyjwt`
   itself; it is pinned for the MCP SDK's dependency tree.
+- Deny-path rows (`check-access` evidence, `unsafe-tools`, `audit-report`,
+  selector deny paths) now have a fixed order when rows used to tie: one
+  tool under several DENY policies, one tool name on several servers, or a
+  READS and a WRITES edge to the same resource. Ties are broken by tool key,
+  policy and mode; before, the backend chose, and Ladybug and Neo4j could
+  disagree. Rows that did not tie keep their order.
 
 ### Added
 
+- `toolgraph audit-report` JSON now carries the graph state it was read at
+  (`graph_generation`, `graph_instance_id`, `graph_state`,
+  `graph_state_verified`), as the MCP `audit_report` tool already did. The
+  Markdown format is unchanged.
 - `toolgraph example init` now writes a `README.md` into the generated
   directory. `docs/` is excluded from the sdist, so a user who installed from
   PyPI previously landed in a directory of three unexplained files with only
@@ -65,6 +75,9 @@ all. Each one replaces a silent wrong choice with an explicit error.
   reachable from the PyPI sidebar.
 
 ### Removed
+
+- `GraphState.token()`, which nothing called and which returned a different
+  set of keys than the `graph_state` token that results actually carry.
 
 - **`examples/policy_propose_from_observed.py`, the offline proposal script.**
   There is no longer a graph-free way to produce a proposal. Its replacement,

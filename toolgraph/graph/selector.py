@@ -117,14 +117,9 @@ def _risk_score(feature: dict) -> float | None:
     return 0.0
 
 
-def _resolve_all(s, refs: list[str]) -> dict[str, list[str]]:
-    """Use the same bounded resolution as ingest and single-tool queries."""
-    return resolve_tool_refs(s, refs)
-
-
 def _tool_facts(s, keys: list[str], agent: str) -> dict[str, dict]:
     """Batch per-tool facts for resolved keys: grant, drift, mapping, evidence
-    coverage, and the #14 annotation self-claims (which enrich features but
+    coverage, and the crawled annotation self-claims (which enrich features but
     never gate by themselves — they are crawled/medium claims, ADR-0006)."""
     rows = s.run(
         """
@@ -183,7 +178,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
         return {"agent": agent, "agent_found": False, "features": []}
 
     with session() as s:
-        resolved = _resolve_all(s, candidates)
+        resolved = resolve_tool_refs(s, candidates)
         unique_keys = sorted(
             {keys[0] for keys in resolved.values() if len(keys) == 1}
         )
@@ -219,7 +214,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
             # read-committed, so the two batch queries can straddle a
             # concurrent crawl/ingest (the same window check_access closes
             # with its meta-is-None branch). Report the truth signal instead
-            # of crashing the whole batch (Codex review).
+            # of crashing the whole batch.
             row["found"] = False
             row["verdict"] = "TOOL_NOT_FOUND"
         else:

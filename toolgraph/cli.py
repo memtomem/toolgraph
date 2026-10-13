@@ -647,7 +647,9 @@ def audit_report(
     ),
 ) -> None:
     """Whole-graph operational audit summary."""
-    report = queries.audit_report(include_grants=include_grants)
+    report = queries.with_graph_state(
+        lambda: queries.audit_report(include_grants=include_grants)
+    )
     if format is AuditReportFormat.markdown:
         typer.echo(_audit_report_markdown(report), nl=False)
     else:

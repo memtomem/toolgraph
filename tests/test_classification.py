@@ -212,3 +212,61 @@ def test_check_access_carries_all_authorized_signal(graph):
     res = queries.check_access("support-bot", "read_file")
     assert res["verdict"] == "DENY"
     assert res["all_authorized"] is False
+
+
+def test_deny_rows_have_a_total_order_on_both_backends(backend_graph):
+    """Ties on the old sort keys came back in whatever order the backend chose.
+
+    One tool under two direct DENY policies, and one tool name on two servers,
+    each tied on (agent, tool, resource). On this fixture Ladybug returned
+    them out of policy-id order and Neo4j happened not to. A READS and a
+    WRITES edge to one resource tie on (key, resource, policy).
+    """
+    for server in ("sample", "other"):
+        loader.load_crawl_result(
+            CrawlResult(
+                server_name=server,
+                transport="stdio",
+                tools=[ToolRecord(name="admin")],
+                resources=[ResourceRecord(uri=CSV)],
+            )
+        )
+    assert ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[
+                Policy(id="admin-deny", effect="DENY", scope="admin"),
+                Policy(id="pii-deny", effect="DENY", scope="customer-pii"),
+            ],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::admin"),
+                AccessGrant(agent="planner", tool="other::admin"),
+            ],
+            data_access=[
+                DataAccess(tool="sample::admin", resource=CSV, mode="WRITES"),
+                DataAccess(tool="sample::admin", resource=CSV, mode="READS"),
+            ],
+            governed_by={
+                CSV: ["pii-deny"],
+                "sample::admin": ["pii-deny", "admin-deny"],
+                "other::admin": ["pii-deny", "admin-deny"],
+            },
+        )
+    ).warnings == []
+
+    rows = queries.unsafe_callable_tools("planner")
+    assert [(r["tool_key"], r["mode"], r["policy"]) for r in rows] == [
+        ("sample::admin", "READS", "pii-deny"),
+        ("sample::admin", "WRITES", "pii-deny"),
+        ("other::admin", None, "admin-deny"),
+        ("other::admin", None, "pii-deny"),
+        ("sample::admin", None, "admin-deny"),
+        ("sample::admin", None, "pii-deny"),
+    ]
+    evidence = queries.check_access("planner", "sample::admin")["deny_evidence"]
+    assert [(d.get("mode"), d["policy"]) for d in evidence] == [
+        ("READS", "pii-deny"),
+        ("WRITES", "pii-deny"),
+        (None, "admin-deny"),
+        (None, "pii-deny"),
+    ]
