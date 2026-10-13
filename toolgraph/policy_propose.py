@@ -231,10 +231,6 @@ def load_export(path: Path) -> tuple[dict | None, list[dict]]:
     return envelope, _load_rows(path, body)
 
 
-def load_observations(path: Path) -> list[dict]:
-    return load_export(path)[1]
-
-
 def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()

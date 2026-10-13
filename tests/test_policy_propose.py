@@ -10,6 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from toolgraph import cli
+from toolgraph import policy_propose as pp
 from toolgraph.graph import driver, schema
 from toolgraph.manifest.parser import governance_digest, load_governance
 from toolgraph.policy_propose import (
@@ -156,6 +157,15 @@ def test_ambiguous_bare_grant_protection_regression(backend_graph, tmp_path):
         assert len(res["insufficient_evidence"]) == 1
         assert res["insufficient_evidence"][0]["reason"] == "AMBIGUOUS_GRANT"
 
+
+
+def test_bare_grant_adopts_a_single_live_resolution(backend_graph):
+    schema.init_schema()
+    with driver.session() as s:
+        s.run("CREATE (m:MCPServer {name: 'alpha'}) CREATE (t:Tool {key: 'alpha::read_file', name: 'read_file'}) CREATE (m)-[:EXPOSES]->(t)")
+        resolved, ambiguous = resolve_grants_from_graph(s, [{"agent": "bot", "tool": "read_file"}])
+    assert resolved == {("bot", "alpha::read_file"): "read_file"}
+    assert ambiguous == []
 
 def test_run_propose_composite_token_validation(backend_graph, sample_gov_path, sample_observed_jsonl):
     schema.init_schema()
@@ -490,3 +500,385 @@ def test_contains_credential(text, expected):
     from toolgraph.redaction import contains_credential
 
     assert contains_credential(text) is expected
+
+
+# Pure-logic contract, ported from the tests of the removed offline example
+# (examples/policy_propose_from_observed.py). Its loader, envelope checks and
+# proposal rules were copied into this module, so these drive the copy that
+# ships. None of them needs a graph.
+
+GOV = {
+    "agents": ["bot"],
+    "grants": [{"agent": "bot", "tool": "alpha::read_file", "granted_by": "team"}],
+}
+GRANTED = {("bot", "alpha::read_file"): "alpha::read_file"}
+
+
+def _row(agent, ref, reasons, *, calls=9, complete=True, qualified=True):
+    return {
+        "agent": agent, "ref": ref, "has_tool_key": qualified,
+        "decision": "rejected" if reasons else "eligible",
+        "calls": calls, "would_block_calls": calls if reasons else 0,
+        "reasons": reasons, "reasons_complete": complete,
+    }
+
+
+def _propose(rows, gov=GOV, granted=GRANTED):
+    return propose(gov, rows, 3, granted=granted, ambiguous_grants=[])
+
+
+def _rows_from(tmp_path, *lines):
+    path = tmp_path / "observed.jsonl"
+    path.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+    return pp.load_export(path)[1]
+
+
+def test_ungranted_and_unmapped_is_not_a_grant():
+    p = _propose([_row("bot", "alpha::edit_file", ["NOT_GRANTED", "UNMAPPED"])])
+    assert p["additions"] == []
+    assert "a grant alone" in p["not_grant_shaped"][0]["note"]
+
+
+def test_a_grant_does_not_cross_servers(backend_graph):
+    """`alpha::read_file` and `beta::read_file` are different tools.
+
+    Resolved through the graph, because resolution is where a grant could leak
+    onto the other server: both servers expose the name here.
+    """
+    schema.init_schema()
+    with driver.session() as s:
+        for server in ("alpha", "beta"):
+            s.run(
+                "CREATE (m:MCPServer {name: $server}) "
+                "CREATE (t:Tool {key: $server + '::read_file', name: 'read_file'}) "
+                "CREATE (m)-[:EXPOSES]->(t)",
+                server=server,
+            )
+        granted, ambiguous = resolve_grants_from_graph(s, GOV["grants"])
+    assert granted == GRANTED and ambiguous == []
+
+    p = _propose([_row("bot", "beta::read_file", ["NOT_GRANTED"])], granted=granted)
+    assert [r["tool"] for r in p["additions"]] == ["beta::read_file"]
+
+    zero = _propose([_row("bot", "beta::read_file", [], calls=0)], granted=granted)
+    assert zero["removals"] == []
+
+
+def test_removal_needs_an_explicit_zero_call_row():
+    """Silence about a grant is not evidence that it is unused."""
+    p = _propose([_row("bot", "alpha::other", ["NOT_GRANTED"])])
+    assert p["removals"] == []
+
+    observed = _propose([_row("bot", "alpha::read_file", [], calls=0)])
+    assert observed["removals"] == [{"agent": "bot", "tool": "alpha::read_file"}]
+
+
+def test_legacy_single_reason_export_is_never_proposed_from():
+    p = _propose([_row("bot", "alpha::move_file", ["NOT_GRANTED"], complete=False)])
+    assert p["additions"] == []
+    assert [r["tool"] for r in p["insufficient_evidence"]] == ["alpha::move_file"]
+
+
+def test_candidate_only_row_is_report_only():
+    p = _propose([_row("bot", "read_file", ["NOT_GRANTED"], qualified=False)])
+    assert p["additions"] == []
+    assert "canonical tool_key" in p["insufficient_evidence"][0]["note"]
+
+
+def test_candidate_only_row_cannot_drive_a_removal():
+    """The ref in a candidate-only row is what the agent asked for, not a resolved tool."""
+    p = _propose([_row("bot", "alpha::read_file", [], calls=0, qualified=False)])
+    assert p["removals"] == []
+
+
+def test_unknown_agent_is_refused():
+    with pytest.raises(pp.PolicyProposeError, match="unknown agents"):
+        _propose([_row("ghost", "alpha::read_file", ["NOT_GRANTED"])])
+
+
+def test_bare_tool_key_is_malformed_not_canonical(tmp_path):
+    line = json.dumps({"agent": "bot", "decision": "rejected", "tool_key": "read_file",
+                       "calls": 9, "would_block_calls": 9,
+                       "reject_reasons": ["NOT_GRANTED"]})
+    with pytest.raises(ValueError, match="server::tool"):
+        _rows_from(tmp_path, line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        '{"agent": "bot", "decision": "maybe", "tool_key": "a::b"}',
+        '{"agent": "bot", "decision": "rejected", "tool_key": "a::b", "calls": -1}',
+        '{"agent": "bot", "decision": "rejected", "tool_key": "a::b", "calls": 1,'
+        ' "would_block_calls": 5}',
+        '{"agent": "bot", "decision": "rejected", "tool_key": "a::b",'
+        ' "reject_reasons": ["NOPE"]}',
+        '{"agent": "bot", "decision": "rejected", "tool_key": "a::b"}',
+        '{"agent": "bo\\u0000t", "decision": "eligible", "tool_key": "a::b"}',
+    ],
+    ids=["bad-decision", "negative", "would-block-exceeds", "unknown-reason",
+         "rejected-without-reason", "control-char"],
+)
+def test_malformed_rows_are_refused(tmp_path, line):
+    with pytest.raises(ValueError):
+        _rows_from(tmp_path, line)
+
+
+def test_duplicate_rows_are_refused(tmp_path):
+    row = json.dumps({"agent": "bot", "decision": "eligible", "tool_key": "a::b", "calls": 1})
+    with pytest.raises(ValueError, match="duplicate"):
+        _rows_from(tmp_path, row, row)
+
+
+def test_absent_calls_is_not_an_explicit_zero(tmp_path):
+    """Silence about a count must not read as an observed zero."""
+    granted = {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file"}
+
+    silent = _rows_from(tmp_path, json.dumps(granted))
+    assert _propose(silent)["removals"] == []
+
+    stated = _rows_from(tmp_path, json.dumps({**granted, "calls": 0}))
+    assert _propose(stated)["removals"] == [{"agent": "bot", "tool": "alpha::read_file"}]
+
+
+def test_would_block_without_a_calls_count_is_refused(tmp_path):
+    """Blocked calls with no total is an incomplete window, not weak evidence."""
+    line = json.dumps({"agent": "bot", "decision": "rejected",
+                       "tool_key": "alpha::write_file", "would_block_calls": 7,
+                       "reject_reasons": ["NOT_GRANTED"]})
+    with pytest.raises(ValueError, match="without a 'calls' count"):
+        _rows_from(tmp_path, line)
+
+
+def test_unstated_calls_never_count_as_usage(tmp_path):
+    rows = _rows_from(tmp_path, json.dumps(
+        {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file"}
+    ))
+    assert rows[0]["calls"] is None
+
+
+def test_rendered_entries_are_yaml_not_string_interpolation():
+    import yaml
+
+    hostile = pp.render(
+        {"additions": [{"agent": "bot", "tool": 'a::b", extra: "x',
+                        "would_block_calls": 9, "reason": "NOT_GRANTED"}],
+         "removals": [], "conflicts": [], "not_grant_shaped": [],
+         "insufficient_evidence": []},
+        "test", 3,
+    )
+    entry = next(line for line in hostile.splitlines() if line.startswith("  - "))
+    parsed = yaml.safe_load(entry[len("  - "):].split("  #")[0])
+    assert parsed["tool"] == 'a::b", extra: "x'
+    assert set(parsed) == {"agent", "tool", "granted_by"}
+    # A fragment, not a section: declarative ingest would drop everything a
+    # replacement `grants:` key omitted.
+    assert "\ngrants:" not in hostile
+
+
+def test_an_unbound_report_leads_with_the_provenance_limitation():
+    report = pp.render(_propose([_row("bot", "alpha::write_file", ["NOT_GRANTED"])]),
+                       "2026-08", 3)
+    assert "UNVERIFIED PROVENANCE" in report
+    assert report.index("UNVERIFIED PROVENANCE") < report.index("```yaml")
+
+
+def test_a_bound_report_states_what_it_is_bound_to():
+    proposal = _propose([_row("bot", "alpha::write_file", ["NOT_GRANTED"])])
+    bound = pp.render(proposal, "2026-08", 3, ENVELOPE)
+    assert "DECLARED DIGEST MATCHES" in bound
+    assert "UNVERIFIED PROVENANCE" not in bound
+    assert ENVELOPE["governance_digest"] in bound
+    # A non-strict window must say so: absence from these rows is not permission.
+    assert "`review` profile" in bound
+    # The report must not claim more than the digest comparison establishes.
+    assert "(declared)" in bound
+
+    unbound = pp.render(proposal, "2026-08", 3, None)
+    assert "UNVERIFIED PROVENANCE" in unbound
+    assert "DECLARED DIGEST MATCHES" not in unbound
+
+
+def test_an_export_without_an_envelope_is_refused_by_default(sample_gov_path, tmp_path):
+    """Refused before the graph is read, unless provenance is waived explicitly."""
+    observed = tmp_path / "bare.jsonl"
+    observed.write_text(json.dumps(
+        {"agent": "public-bot", "decision": "eligible",
+         "tool_key": "filesystem::read_file", "calls": 1}
+    ) + "\n", encoding="utf-8")
+    with patch.object(pp.queries, "with_graph_state") as read:
+        with pytest.raises(pp.ProvenanceError, match="carries no envelope"):
+            run_propose(sample_gov_path, observed)
+    read.assert_not_called()
+
+
+ENVELOPE = {
+    "governance_digest": "a" * 64,
+    "graph_generation": 7,
+    "profile": "review",
+    "window_start": "2026-08-01T00:00:00Z",
+    "window_end": "2026-08-31T23:59:59Z",
+}
+PROFILES = {"strict", "review", "explore"}
+
+
+def _win(start, end):
+    return {**ENVELOPE, "window_start": start, "window_end": end}
+
+
+def _verify(envelope, digest=ENVELOPE["governance_digest"]):
+    return pp.verify_envelope(envelope, digest, PROFILES)
+
+
+def _export(tmp_path, envelope, *rows):
+    path = tmp_path / "observed.jsonl"
+    lines = [] if envelope is None else [json.dumps({"envelope": envelope})]
+    lines += [json.dumps(r) for r in rows]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_window_recorded_against_other_governance_is_refused():
+    """The digest is what separates evidence from a replay of an older manifest."""
+    with pytest.raises(pp.ProvenanceError, match="different governance"):
+        _verify(ENVELOPE, "b" * 64)
+
+    bound = _verify(ENVELOPE)
+    assert bound["graph_generation"] == 7
+    assert bound["profile"] == "review"
+
+
+@pytest.mark.parametrize(
+    "field, value, match",
+    [
+        ("governance_digest", "not-hex", "64 lowercase hex"),
+        ("graph_generation", -1, "non-negative integer"),
+        ("graph_generation", True, "non-negative integer"),
+        ("profile", "paranoid", "unknown selector profile"),
+        ("window_start", "", "non-empty string"),
+    ],
+    ids=["bad-digest", "negative-generation", "bool-generation",
+         "unknown-profile", "empty-bound"],
+)
+def test_malformed_envelopes_are_refused(field, value, match):
+    with pytest.raises(pp.ProvenanceError, match=match):
+        _verify({**ENVELOPE, field: value})
+
+
+def test_an_incomplete_envelope_binds_nothing():
+    """Half an envelope is refused rather than half-trusted."""
+    for field in pp.ENVELOPE_FIELDS:
+        partial = {k: v for k, v in ENVELOPE.items() if k != field}
+        with pytest.raises(pp.ProvenanceError, match="missing"):
+            _verify(partial)
+
+
+def test_a_backwards_window_is_refused():
+    with pytest.raises(pp.ProvenanceError, match="is after"):
+        _verify(_win("2026-09-01T00:00:00Z", "2026-08-01T00:00:00Z"))
+
+
+def test_window_bounds_are_compared_as_instants_not_strings():
+    """"2026-08-01T01:00:00+02:00" sorts after "...00:00:00Z" but names an earlier moment."""
+    ok = _win("2026-08-01T01:00:00+02:00", "2026-08-01T00:00:00Z")
+    assert _verify(ok)["window_start"] == "2026-08-01T01:00:00+02:00"
+
+    with pytest.raises(pp.ProvenanceError, match="is after"):
+        _verify(_win("2026-08-01T00:00:00-02:00", "2026-08-01T01:00:00Z"))
+
+
+def test_a_window_bound_that_is_not_a_timestamp_is_refused():
+    with pytest.raises(pp.ProvenanceError, match="must be a timestamp"):
+        _verify(_win("last tuesday", "2026-08-31T00:00:00Z"))
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-09-09",
+        "2026-09-09X00:00:00+00:00",
+        "2026-08-01T00:00:00",
+        "2026-08-01T00:00:00+00:60",
+    ],
+    ids=["date-only", "wrong-separator", "no-offset", "out-of-range-offset"],
+)
+def test_ambiguous_or_repaired_timestamps_are_refused(bound):
+    """`fromisoformat` takes a bare date, any separator, and repairs "+00:60"."""
+    with pytest.raises(pp.ProvenanceError, match="offset|must be a timestamp"):
+        _verify(_win(bound, "2026-08-31T00:00:00Z"))
+
+
+@pytest.mark.parametrize(
+    "bound",
+    [
+        "2026-02-30T00:00:00Z",
+        "2026-08-01T24:00:00Z",
+        "2026-08-01T00:60:00Z",
+        "2026-08-01T00:00:60Z",
+        "2026-08-01T00:00:00-00:00",
+        "2026-08-01t00:00:00z",
+        "2026-08-01T00:00:00.1234567Z",
+    ],
+    ids=["impossible-date", "hour-24", "minute-60", "second-60",
+         "minus-zero-offset", "lowercase", "too-many-fractions"],
+)
+def test_every_rejected_bound_leaves_as_a_clean_refusal(bound):
+    """Never a bare ValueError: "24:00:00" parses differently on 3.13 and 3.14,
+    and "-00:00" is RFC 3339 for "offset unknown"."""
+    with pytest.raises(pp.ProvenanceError):
+        _verify(_win(bound, "2026-08-31T00:00:00Z"))
+
+
+def test_fully_qualified_timestamps_are_accepted():
+    for start in ("2026-08-01T00:00:00Z", "2026-08-01T00:00:00.123456Z",
+                  "2026-08-01T02:00:00+02:00"):
+        assert _verify(_win(start, "2026-08-31T00:00:00Z"))["window_start"] == start
+
+
+@pytest.mark.parametrize("bad", [[], {}, 3], ids=["list", "dict", "int"])
+def test_a_non_string_profile_is_refused_cleanly(bad):
+    """Bare membership raises TypeError on an unhashable value."""
+    with pytest.raises(pp.ProvenanceError, match="unknown selector profile"):
+        _verify({**ENVELOPE, "profile": bad})
+
+
+def test_the_envelope_is_split_off_and_rows_keep_their_line_numbers(tmp_path):
+    """An envelope must not be parsed as an observation, nor shift error lines."""
+    good = {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file",
+            "calls": 3}
+    envelope, rows = pp.load_export(_export(tmp_path, ENVELOPE, good))
+    assert envelope == ENVELOPE
+    assert [r["agent"] for r in rows] == ["bot"]
+
+    # The bad row is on file line 3; the message must say 3, not 2.
+    bad = {"agent": "bot", "decision": "nonsense", "tool_key": "alpha::write_file"}
+    with pytest.raises(ValueError, match=r":3: decision must be"):
+        pp.load_export(_export(tmp_path, ENVELOPE, good, bad))
+
+
+def test_an_envelope_line_may_not_smuggle_observation_fields(tmp_path):
+    path = tmp_path / "observed.jsonl"
+    path.write_text(
+        json.dumps({"envelope": ENVELOPE, "agent": "bot", "decision": "eligible"}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(pp.ProvenanceError, match="own rows"):
+        pp.load_export(path)
+
+
+def test_an_export_without_an_envelope_still_parses(tmp_path):
+    """The loader stays usable; refusing is run_propose's decision, not the parser's."""
+    envelope, rows = pp.load_export(_export(
+        tmp_path, None,
+        {"agent": "bot", "decision": "eligible", "tool_key": "alpha::read_file", "calls": 3},
+    ))
+    assert envelope is None
+    assert len(rows) == 1
+
+
+def test_min_would_block_must_be_positive(sample_gov_path, sample_observed_jsonl):
+    result = CliRunner().invoke(cli.app, [
+        "policy", "propose", str(sample_gov_path), str(sample_observed_jsonl),
+        "--min-would-block", "0",
+    ])
+    assert result.exit_code == 2
