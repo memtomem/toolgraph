@@ -15,8 +15,9 @@ _AUTHORIZATION = re.compile(
     r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
 )
 # The names every credential detector treats as a secret when assigned. One
-# list, so a name added for redaction is also refused in artifact identities,
-# review notes and control plans.
+# list, so a name refused in one place is refused in artifact identities,
+# review notes and control plans alike. Scrubbing (_CREDENTIAL below) keeps the
+# same names but applies them in two passes.
 CREDENTIAL_KEYWORDS = r"api[-_]?key|access[-_]?token|token|password|secret|credential"
 # Userinfo with a password: scheme://user:password@host. Deliberately broader
 # than RFC 3986: the user part may contain '@' (an email as the username) and
@@ -29,10 +30,17 @@ CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGN
 # Scrubbing errs toward hiding: unlike the refusal check below, a '::' is not
 # exempt, so `token::refresh` in a diagnostic reads `token=<redacted>`. A value
 # such as `password::hunter2` in free error text must not survive.
+#
+# Two passes, not one alternation over CREDENTIAL_KEYWORDS. A single pass lets
+# a newly added name swallow the next one as its value: `credential=password
+# =hunter2` would leave `=hunter2` readable. The first pass is the original
+# rule unchanged; the second only replaces text that is still visible, so the
+# result never shows more than the original rule alone would.
+_SCRUB_VALUE = r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
 _CREDENTIAL = re.compile(
-    rf"(?i)({CREDENTIAL_KEYWORDS})"
-    r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
+    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)" + _SCRUB_VALUE
 )
+_CREDENTIAL_ADDED = re.compile(r"(?i)(credential)" + _SCRUB_VALUE)
 
 
 def _url_origin(value: str, fallback: str) -> str:
@@ -120,4 +128,5 @@ def redact_text(value: object) -> str:
     text = _URI.sub(lambda match: _diagnostic_uri_origin(match.group(0)), text)
     text = _AUTHORIZATION.sub("Authorization=<redacted>", text)
     text = _BEARER.sub(lambda match: f"{match.group(1)} <redacted>", text)
-    return _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    text = _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)
+    return _CREDENTIAL_ADDED.sub(lambda match: f"{match.group(1)}=<redacted>", text)

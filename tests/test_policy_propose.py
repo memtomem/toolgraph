@@ -512,8 +512,17 @@ def test_redact_text_scrubs_every_credential_keyword(keyword):
     assert redact_text(f"{keyword}=hunter2") == f"{keyword}=<redacted>"
 
 
-@pytest.mark.parametrize("text", ["request failed: password::hunter2", "token:::hunter2"])
-def test_redact_text_does_not_exempt_a_double_colon(text):
+@pytest.mark.parametrize(
+    "text",
+    [
+        "request failed: password::hunter2",
+        "token:::hunter2",
+        # A newly added name must not swallow the next one as its value.
+        "credential=password =hunter2",
+        "credential=token :hunter2",
+    ],
+)
+def test_redact_text_never_leaves_a_value_readable(text):
     """Scrubbing errs toward hiding; only the refusal check treats '::' as a tool key."""
     from toolgraph.redaction import redact_text
 
