@@ -633,16 +633,11 @@ def run_propose(
 
     try:
         bracket_result = queries.with_graph_state(fetch_bracketed, strict=True)
-    except RuntimeError as exc:
-        if str(exc) in {
-            "graph state changed during every read attempt",
-            "graph generation changed during every read attempt",
-        }:
-            raise StateChurnError(
-                "graph state churn during observation proposal: "
-                "concurrent graph modifications exhausted 5 read attempts"
-            ) from exc
-        raise
+    except queries.GraphStateChurnError as exc:
+        raise StateChurnError(
+            "graph state churn during observation proposal: concurrent graph "
+            f"modifications exhausted {queries._GENERATION_RETRIES} read attempts"
+        ) from exc
 
     provenance = _proposal_provenance(
         envelope, bracket_result["state"], expected_digest=expected_digest,

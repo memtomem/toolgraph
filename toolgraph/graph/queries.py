@@ -40,6 +40,10 @@ def _bracket_backoff(attempt: int) -> None:
         time.sleep(_RETRY_BACKOFF_SECONDS * (2**attempt))
 
 
+class GraphStateChurnError(RuntimeError):
+    """A strict bracket found the graph state moving on every retry."""
+
+
 @dataclass(frozen=True)
 class GraphState:
     """Collision-safe identity for one concrete graph state."""
@@ -52,45 +56,6 @@ class GraphState:
         return asdict(self)
 
 
-def with_generation(fetch: Callable[[], dict], *, strict: bool = False) -> dict:
-    """Return ``fetch`` with a generation that brackets the graph reads.
-
-    Neo4j is read-committed rather than snapshot-isolated.  Reading the
-    generation before and after the query and retrying on a change prevents a
-    result from being labelled with a generation that committed midway
-    through it.
-
-    Persisted artifact producers pass ``strict=True`` and fail rather than
-    write a mislabelled artifact. A live query still returns its data after
-    retry exhaustion, because an answer under churn beats an error, but it
-    comes back with ``graph_generation: None`` and
-    ``graph_state_verified: False``. Stamping the generation read AFTERWARDS
-    labelled the result with a state it was never read at, and the MCP tools
-    tell callers to cache per generation -- so a verdict from before a
-    permission change could be cached under the very generation that changed
-    it.
-
-    Null does not enforce anything by itself: ``None`` is a usable dict key and
-    two unverified responses compare equal on it. What changes is that the
-    response no longer ASSERTS a state it never had, and says so in a field a
-    consumer can act on. The obligation to skip the cache is the consumer's;
-    ADR-0004 states it.
-    """
-    for attempt in range(_GENERATION_RETRIES):
-        before = graph_generation()
-        result = fetch()
-        if graph_generation() == before:
-            return {
-                **result,
-                "graph_generation": before,
-                "graph_state_verified": True,
-            }
-        _bracket_backoff(attempt)
-    if strict:
-        raise RuntimeError("graph generation changed during every read attempt")
-    return {**result, "graph_generation": None, "graph_state_verified": False}
-
-
 def with_graph_state(
     fetch: Callable[[], dict],
     *,
@@ -99,9 +64,19 @@ def with_graph_state(
 ) -> dict:
     """Return ``fetch`` bracketed by the collision-safe graph state token.
 
-    Same contract as ``with_generation``: an unbracketed read comes back with
-    every state field null and ``graph_state_verified: False`` rather than
-    carrying a token it was not read under.
+    Neo4j is read-committed rather than snapshot-isolated. Reading the state
+    before and after the query and retrying on a change prevents a result
+    from being labelled with a state that committed midway through it.
+
+    Persisted artifact producers pass ``strict=True`` and get a
+    ``GraphStateChurnError`` rather than write a mislabelled artifact. A live
+    query still returns its data after retry exhaustion, because an answer
+    under churn beats an error, but every state field comes back null with
+    ``graph_state_verified: False``. Stamping the state read afterwards would
+    label the result with a state it was never read at, and callers cache per
+    state, so a verdict from before a permission change could be cached under
+    the very state that changed it. Null does not enforce anything by itself:
+    the obligation to skip the cache is the consumer's (ADR-0004).
     """
     read_state = state_reader if state_reader is not None else graph_state
     for attempt in range(_GENERATION_RETRIES):
@@ -118,7 +93,7 @@ def with_graph_state(
             }
         _bracket_backoff(attempt)
     if strict:
-        raise RuntimeError("graph state changed during every read attempt")
+        raise GraphStateChurnError("graph state changed during every read attempt")
     return {
         **result,
         "graph_generation": None,
