@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from toolgraph import config
 from toolgraph.graph import driver, schema
 
 
+@pytest.mark.neo4j  # reaches the container through getfixturevalue
 def test_graph_fixture_ignores_ambient_ladybug_configuration(
     tmp_path, monkeypatch, request
 ):

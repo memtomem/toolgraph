@@ -624,6 +624,7 @@ toolgraph/
 
 ```bash
 uv run pytest          # uses a real Neo4j via testcontainers (no Cypher mocking)
+make test-unit         # the tests that need no Docker (-m "not neo4j")
 ```
 
 ## Scope (MVP)
