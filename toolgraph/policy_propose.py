@@ -191,8 +191,20 @@ def _count(row: dict, key: str, where: str, *, missing: int | None = 0) -> int |
     return value
 
 
+# Observation exports are operator-supplied; bound the read like every other
+# file input so a runaway export cannot be pulled into memory whole.
+MAX_EXPORT_BYTES = 50_000_000
+
+
 def load_export(path: Path) -> tuple[dict | None, list[dict]]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    # One open descriptor: a stat-then-read pair is a TOCTOU.
+    with path.open("rb") as handle:
+        raw = handle.read(MAX_EXPORT_BYTES + 1)
+    if len(raw) > MAX_EXPORT_BYTES:
+        raise PolicyProposeError(
+            f"refusing to load {path}: exceeds the {MAX_EXPORT_BYTES}-byte limit"
+        )
+    lines = raw.decode("utf-8").splitlines()
     envelope: dict | None = None
     body: list[tuple[int, str]] = []
     for lineno, line in enumerate(lines, 1):

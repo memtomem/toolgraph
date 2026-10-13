@@ -257,3 +257,71 @@ def test_unsafe_tools_known_agent_stdout_is_json_only(violating):
     assert result.exit_code == 0
     json.loads(result.stdout)  # the whole stream parses
     assert result.stderr == ""
+
+
+def test_check_never_prints_neo4j_credentials(monkeypatch):
+    from toolgraph import config
+    from toolgraph.graph import driver
+
+    monkeypatch.setattr(
+        config,
+        "settings",
+        config.Settings(
+            backend="neo4j",
+            neo4j_uri="neo4j+s://neo4j:hunter2@db.example:7687?token=abc",
+        ),
+    )
+    monkeypatch.setattr(driver, "verify_connectivity", lambda **_: None)
+
+    result = CliRunner().invoke(cli.app, ["check"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.strip() == "OK: backend=neo4j uri=neo4j+s://db.example:7687"
+
+
+def test_init_reports_unusable_state_dir_without_traceback(tmp_path):
+    pytest.importorskip("ladybug")
+    blocker = tmp_path / "a-file"
+    blocker.write_text("")
+
+    result = CliRunner().invoke(
+        cli.app, ["init", "--state-dir", str(blocker / "state")]
+    )
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert result.stderr.startswith(f"ERROR: cannot initialize {blocker / 'state'}: ")
+    assert not (blocker / "state").exists()
+
+
+def test_init_warns_when_a_partial_database_cannot_be_removed(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from toolgraph.graph import schema
+
+    state_dir = tmp_path / "state"
+    db_path = state_dir / "toolgraph.lbug"
+
+    def half_created():
+        state_dir.mkdir(parents=True, exist_ok=True)
+        db_path.write_bytes(b"partial")
+        raise RuntimeError("schema failed")
+
+    real_unlink = Path.unlink
+
+    def refuse(self, *args, **kwargs):
+        if self == db_path:
+            raise PermissionError(13, "Permission denied")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(schema, "init_schema", half_created)
+    monkeypatch.setattr(Path, "unlink", refuse)
+
+    result = CliRunner().invoke(cli.app, ["init", "--state-dir", str(state_dir)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)
+    assert result.stderr.splitlines() == [
+        f"WARNING: could not remove partial database {db_path}: Permission denied"
+    ]
+    assert db_path.exists()

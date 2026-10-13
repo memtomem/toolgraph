@@ -13,6 +13,7 @@ import sys
 from typing import NoReturn
 
 import typer
+import yaml
 
 from toolgraph import __version__
 from toolgraph import config
@@ -180,7 +181,7 @@ def check() -> None:
     if driver.backend_name() == "ladybug":
         typer.echo(f"OK: backend=ladybug path={config.settings.db_path}")
     else:
-        typer.echo(f"OK: backend=neo4j uri={config.settings.neo4j_uri}")
+        typer.echo(f"OK: backend=neo4j uri={redact_text(config.settings.neo4j_uri)}")
 
 
 @app.command("init")
@@ -226,7 +227,22 @@ def init_backend(
                 if leftover.is_dir():
                     shutil.rmtree(leftover, ignore_errors=True)
                 else:
-                    leftover.unlink(missing_ok=True)
+                    # An unreachable parent raises NotADirectoryError, not
+                    # FileNotFoundError; a cleanup failure must not replace
+                    # the error that brought us here, but it must be said.
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except NotADirectoryError:
+                        pass
+                    except OSError as cleanup_error:
+                        typer.echo(
+                            f"WARNING: could not remove partial database {leftover}: "
+                            f"{redact_text(cleanup_error.strerror or cleanup_error)}",
+                            err=True,
+                        )
+        if isinstance(exc, OSError):
+            typer.echo(f"ERROR: cannot initialize {state_dir}: {redact_text(exc)}", err=True)
+            raise typer.Exit(code=1) from None
         raise
     typer.echo(f"Initialized backend={normalized} config={runtime_path}")
 
@@ -304,8 +320,9 @@ def crawl(
     schema.init_schema()
     for result in results:
         warnings = loader.load_crawl_result(result)
+        version = f" v{result.server_version}" if result.server_version else ""
         typer.echo(
-            f"  [ok] {result.server_name} v{result.server_version} "
+            f"  [ok] {result.server_name}{version} "
             f"({len(result.tools)} tools, {len(result.resources)} resources)"
         )
         for w in warnings:
@@ -953,7 +970,7 @@ def policy_propose(
             unverified_provenance=unverified_provenance,
             revalidate_current=revalidate_current,
         )
-    except (PolicyProposeError, ValueError, OSError) as exc:
+    except (PolicyProposeError, ValueError, OSError, yaml.YAMLError) as exc:
         typer.echo(f"ERROR: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -961,7 +978,7 @@ def policy_propose(
         typer.echo(json.dumps(proposal, indent=2))
     elif output is not None:
         try:
-            output.write_text(rendered, encoding="utf-8")
+            atomic_write_private(output, rendered.encode("utf-8"))
         except OSError as exc:
             typer.echo(f"ERROR: {redact_text(exc)}", err=True)
             raise typer.Exit(code=1) from None

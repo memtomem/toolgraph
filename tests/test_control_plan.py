@@ -404,8 +404,9 @@ def test_control_plan_transitive_exposure_and_redaction(monkeypatch, artifact_fo
     serialized = json.dumps(res)
     assert "supersecret123" not in serialized
     assert "password123" not in serialized
-    assert "<redacted:credential>" in exp["read_resource"] or "token=" not in exp["read_resource"]
-    assert "<redacted:credential>" in exp["write_resource"] or "password" not in exp["write_resource"]
+    # Userinfo and query are dropped; scheme, host and path survive.
+    assert exp["read_resource"] == "https://api.test/data"
+    assert exp["write_resource"] == "https://storage.test/vault"
 
     # 4. v1 schema validation
     schema_path = ROOT / "contracts" / "control-preflight.schema.json"
@@ -552,3 +553,42 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
     assert len(witness) == 32
     assert "... (69 intermediate nodes) ..." in witness[16]
 
+
+
+def test_invalid_plan_error_names_the_field_but_not_its_value():
+    document = _document()
+    document["nodes"][0]["id"] = 12345678901234567890
+
+    with pytest.raises(ControlPlanError) as raised:
+        load_control_plan(_raw(document))
+
+    assert str(raised.value) == (
+        "invalid control plan at nodes.0.id: Input should be a valid string"
+    )
+
+
+def test_unqualified_candidate_error_names_the_index_not_the_value():
+    document = _document()
+    document["principals"][0]["candidate_tools"].append("Bearer TOPSECRET123")
+    index = len(document["principals"][0]["candidate_tools"]) - 1
+
+    with pytest.raises(ControlPlanError) as raised:
+        load_control_plan(_raw(document))
+
+    assert str(raised.value) == (
+        "invalid control plan at principals.0: Value error, candidate_tools "
+        f"must use qualified 'server::tool' keys; invalid at index {index}"
+    )
+
+
+def test_undeclared_principal_error_names_the_position_not_the_value():
+    document = _document()
+    document["nodes"][1]["principals"][1] = "Bearer TOPSECRET123"
+
+    with pytest.raises(ControlPlanError) as raised:
+        load_control_plan(_raw(document))
+
+    assert str(raised.value) == (
+        "invalid control plan at plan: Value error, nodes reference "
+        "undeclared principals at nodes.1.principals.1"
+    )
