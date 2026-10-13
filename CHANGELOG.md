@@ -64,6 +64,19 @@ all. Each one replaces a silent wrong choice with an explicit error.
 - A `Documentation` URL in the project metadata, so the beginner guide is
   reachable from the PyPI sidebar.
 
+### Removed
+
+- **`examples/policy_propose_from_observed.py`, the offline proposal script.**
+  There is no longer a graph-free way to produce a proposal. Its replacement,
+  `toolgraph policy propose` (new in this release), applies the same row and
+  proposal rules but resolves grants against the live graph, and checks the
+  envelope against it too: an envelope the script accepted is refused when it
+  lacks a graph instance id, or when its generation, digest or instance
+  differs from the live graph. Re-export from the current graph, or pass
+  `--revalidate-current` (a moved generation) or `--unverified-provenance`
+  (missing identity) to proceed. The script was repository-only and never
+  shipped in the distribution. Its tests now drive `toolgraph.policy_propose`.
+
 ### Fixed
 
 - The packaged quickstart governance manifest now carries `provenance` on

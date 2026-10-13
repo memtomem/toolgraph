@@ -22,11 +22,9 @@ from there.
 | `servers-policy-gateway.yaml` + `governance-policy-gateway.yaml` | Manual policy-gateway walkthrough against `policy_gateway_server.py` | Nothing external; runs offline |
 | `governance-syncmill-smoke.yaml` | `scripts/ecosystem_smoke.py` and `scripts/gate_e_operational.py` | Those harnesses supply their own crawl input |
 | `policy_gateway_server.py` | The pair above, and `scripts/policy_bundle_gateway_smoke.py`, which writes its own `servers.yaml` at run time | Nothing external |
-| `policy_propose_from_observed.py` | Run directly; reads a governance file plus a window of observed gateway usage you supply | No fixed pair. `--self-test` runs it standalone |
 
 Not every file has a partner: the two harness entries above bring their own
-crawl input, and the proposal script takes whatever governance and observation
-files you point it at.
+crawl input.
 
 `governance-*.yaml` files are operator assertions, not crawled facts. The
 richer ones carry per-edge `provenance` with an evidence pointer;
