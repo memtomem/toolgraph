@@ -142,3 +142,51 @@ def test_review_plan_refuses_a_graph_without_instance_id(monkeypatch):
     assert str(raised.value) == (
         "graph has no instance id — run init-schema before planning"
     )
+
+
+def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
+    from tests.test_policy_review import _mock_inputs
+    from toolgraph import cli
+    from typer.testing import CliRunner
+
+    _mock_inputs(monkeypatch)
+    monkeypatch.setattr(
+        "toolgraph.policy_review.selector.eligible_tools",
+        lambda *a, **k: {
+            "agent_found": True,
+            "eligible": [],
+            "rejected": [
+                {
+                    "tool_key": "github::merge",
+                    "reason": "DENY_VIOLATION",
+                    "paths": [
+                        {
+                            "resource": "https://user:secret@host/r?token=secret#secret",
+                            "provenance": {
+                                "evidence": "https://user:secret@host/r?token=secret"
+                            },
+                            "exception_reason": "see https://host/r?token=secret",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    output = tmp_path / "review.json"
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "policy",
+            "review-plan",
+            "trace.json",
+            "--agent",
+            "planner",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "secret" not in output.read_text()
+    assert (
+        json.loads(output.read_text())["candidates"][0]["tool_key"] == "github::merge"
+    )

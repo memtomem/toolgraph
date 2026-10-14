@@ -118,7 +118,8 @@ def _normalize_bindings(items: list) -> list[GovernedByBinding]:
     Three input shapes can land here:
     - ``str`` — bare policy id (backward-compat YAML shape; or list[str]
       injected via Pydantic ``model_copy(update=...)`` which BYPASSES
-      validators; test_review_fixes.py:223 hits exactly this path).
+      validators; tests/test_manifest.py::test_failed_ingest_does_not_mutate_graph
+      hits exactly this path).
     - ``dict`` — raw object from ``model_copy(update=...)`` that wasn't
       re-validated; coerce via ``model_validate``.
     - ``GovernedByBinding`` — already-validated object from the YAML parser.

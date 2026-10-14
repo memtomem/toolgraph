@@ -21,6 +21,7 @@ from toolgraph.policy_bundle import (
     build_policy_bundle,
     tool_contract_digest,
 )
+from toolgraph.preflight import build_preflight
 
 NOW = datetime(2026, 7, 14, tzinfo=timezone.utc)
 ROOT = Path(__file__).parent.parent
@@ -349,3 +350,179 @@ def test_real_graph_bundle_carries_ingested_governance_digest(graph):
         "alpha::read",
         "alpha::write",
     }
+
+
+class Reader:
+    def __init__(self, size):
+        self.keys = [f"s::t{i:05}" for i in range(size)]
+        self.calls = []
+        self.generation = 1
+
+    def state(self):
+        return queries.GraphState("injected", self.generation, "a" * 64)
+
+    def exposed_tool_contracts(self):
+        return [
+            {"tool_key": k, "server": "s", "name": k.split("::")[1]}
+            for k in reversed(self.keys)
+        ]
+
+    def evaluate(self, agent, candidates, profile):
+        self.calls.append(list(candidates))
+        return {
+            "agent_found": True,
+            "filtered": {"eligible": candidates, "rejected": []},
+            "features": [{"tool_key": k, "risk_score": 0} for k in candidates],
+        }
+
+
+@pytest.mark.parametrize("size", [0, 4095, 4096, 4097])
+def test_injected_reader_chunks_without_runtime(monkeypatch, size):
+    monkeypatch.setattr(
+        queries, "graph_state", lambda: pytest.fail("global state accessed")
+    )
+    reader = Reader(size)
+    bundle = build_policy_bundle(agent="a", store=reader)
+    assert [r["tool_key"] for r in bundle["tools"]] == reader.keys
+    assert [len(c) for c in reader.calls] == ([size] if size <= 4096 else [4096, 1])
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["missing", "duplicate", "conflict", "feature_missing", "feature_duplicate"],
+)
+def test_compiler_rejects_incomplete_evaluation(failure):
+    reader = Reader(2)
+    evaluate = reader.evaluate
+
+    def broken(*args):
+        result = evaluate(*args)
+        if failure == "missing":
+            result["filtered"]["eligible"] = []
+        if failure == "duplicate":
+            result["filtered"]["eligible"] = reader.keys * 2
+        if failure == "conflict":
+            result["filtered"]["rejected"] = [
+                {"tool_key": reader.keys[0], "reason": "DENY_VIOLATION"}
+            ]
+        if failure == "feature_missing":
+            result["features"] = []
+        if failure == "feature_duplicate":
+            result["features"] *= 2
+        return result
+
+    reader.evaluate = broken
+    with pytest.raises(PolicyBundleError):
+        build_policy_bundle(agent="a", store=reader)
+
+
+@pytest.mark.parametrize("always", [False, True])
+def test_chunk_state_change_retries_whole_catalog(monkeypatch, always):
+    reader = Reader(4097)
+    evaluate = reader.evaluate
+
+    def changing(*args):
+        result = evaluate(*args)
+        if len(reader.calls) == 2 or (always and len(reader.calls) % 2 == 0):
+            reader.generation += 1
+        return result
+
+    reader.evaluate = changing
+    monkeypatch.setattr(queries, "_bracket_backoff", lambda _: None)
+    if always:
+        with pytest.raises(RuntimeError, match="every read attempt"):
+            build_policy_bundle(agent="a", store=reader)
+        assert len(reader.calls) == 10
+    else:
+        assert (
+            build_policy_bundle(agent="a", store=reader)["graph_state"]["generation"]
+            == 2
+        )
+        assert reader.calls[:2] == reader.calls[2:]
+
+
+def test_uri_identities_keep_opposite_decisions_in_export(backend_graph, tmp_path):
+    from toolgraph.models import AccessGrant, Policy
+    from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
+
+    agent = "https://id.test/a?role=one#part"
+    keys = ["s::https://id.test/t?role=one#part", "s::https://id.test/t?role=two#part"]
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="s", tools=[ToolRecord(name=k.split("::", 1)[1]) for k in keys]
+        )
+    )
+    assert ingest_governance(
+        Governance(
+            agents=[agent],
+            policies=[Policy(id="p", effect="DENY")],
+            grants=[AccessGrant(agent=agent, tool=k) for k in keys],
+            governed_by={keys[1]: ["p"]},
+        )
+    ).applied
+    bundle = build_policy_bundle(agent=agent, profile="review")
+    assert bundle["agent"] == agent
+    assert {r["tool_key"]: r["decision"] for r in bundle["tools"]} == {
+        keys[0]: "eligible",
+        keys[1]: "rejected",
+    }
+    doc = build_preflight(
+        agent=agent,
+        candidates=keys,
+        profile="review",
+        run_id=agent,
+        include_features=True,
+    )
+    assert doc["run_id"] == agent and doc["eligible"] == [keys[0]]
+    assert doc["rejected"][0]["tool_key"] == keys[1]
+    output = tmp_path / "artifact.json"
+    atomic_write_private(output, canonical_json_bytes(doc))
+    assert json.loads(output.read_text()) == doc
+
+
+def test_legacy_reader_fallback():
+    class Legacy:
+        def state(self):
+            return queries.GraphState("legacy", 1, "a" * 64)
+
+        def exposed_tool_contracts(self):
+            return [{"tool_key": "s::t"}]
+
+        def eligible_tools(self, *args):
+            return {"agent_found": True, "eligible": ["s::t"], "rejected": []}
+
+        def rank_features(self, *args):
+            return {
+                "agent_found": True,
+                "features": [{"tool_key": "s::t", "risk_score": 0}],
+            }
+
+    assert (
+        build_policy_bundle(agent="a", store=Legacy())["tools"][0]["decision"]
+        == "eligible"
+    )
+
+
+def test_empty_catalog_unknown_agent_fails():
+    reader = Reader(0)
+    reader.evaluate = lambda *args: {"agent_found": False}
+    with pytest.raises(PolicyBundleError, match="not found"):
+        build_policy_bundle(agent="missing", store=reader)
+
+
+def test_generation_exhaustion_preserves_existing_output(monkeypatch, tmp_path):
+    from toolgraph import cli
+    from typer.testing import CliRunner
+
+    output = tmp_path / "bundle.json"
+    output.write_bytes(b"previous artifact")
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("graph state changed during every read attempt")
+
+    monkeypatch.setattr("toolgraph.policy_bundle.queries.with_graph_state", fail)
+    result = CliRunner().invoke(
+        cli.app, ["policy", "compile", "--agent", "a", "--output", str(output)]
+    )
+    assert result.exit_code == 1
+    assert output.read_bytes() == b"previous artifact"

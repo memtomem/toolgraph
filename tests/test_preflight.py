@@ -12,6 +12,11 @@ from typer.testing import CliRunner
 
 from toolgraph import cli
 from toolgraph.preflight import build_preflight, redact
+from datetime import timedelta, tzinfo
+from jsonschema import Draft202012Validator
+import pytest
+from toolgraph.graph import queries
+from toolgraph.policy_review import build_policy_review_plan
 
 
 NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
@@ -212,3 +217,74 @@ def test_cli_atomic_replace_failure_cleans_temporary(monkeypatch, tmp_path):
     assert result.exit_code == 1
     assert not out.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+class NoOffset(tzinfo):
+    def utcoffset(self, dt):
+        return None
+
+
+@pytest.mark.parametrize(
+    "offset",
+    [
+        None,
+        NoOffset(),
+        timezone(timedelta(seconds=30)),
+        timezone.utc,
+        timezone(timedelta(hours=5, minutes=30)),
+    ],
+)
+@pytest.mark.parametrize("producer", ["preflight", "review"])
+def test_timestamp_contract_before_io(
+    monkeypatch, artifact_format_checker, offset, producer
+):
+    from tests.test_preflight import _bracket
+
+    now = datetime(2026, 9, 7, tzinfo=offset)
+    invalid = (
+        offset is None
+        or isinstance(offset, NoOffset)
+        or offset.utcoffset(None).total_seconds() % 60 != 0
+    )
+    if invalid:
+        monkeypatch.setattr(
+            queries, "with_graph_state", lambda *a, **kw: pytest.fail("graph accessed")
+        )
+        with pytest.raises((ValueError, RuntimeError), match="created_at"):
+            if producer == "preflight":
+                build_preflight(
+                    agent="a",
+                    candidates=[],
+                    profile="review",
+                    run_id="r",
+                    created_at=now,
+                )
+            else:
+                build_policy_review_plan(
+                    report=Path("nonexistent"), agent="a", created_at=now
+                )
+    elif producer == "preflight":
+        _bracket(
+            monkeypatch,
+            {"agent": "a", "agent_found": True, "eligible": [], "rejected": []},
+        )
+        doc = build_preflight(
+            agent="a", candidates=[], profile="review", run_id="r", created_at=now
+        )
+        schema_doc = json.loads(Path("contracts/preflight.schema.json").read_text())
+        Draft202012Validator(
+            schema_doc, format_checker=artifact_format_checker
+        ).validate(doc)
+    else:
+        from tests.test_policy_review import _mock_inputs
+
+        _mock_inputs(monkeypatch)
+        doc = build_policy_review_plan(
+            report=Path("trace.json"), agent="planner", created_at=now
+        )
+        schema_doc = json.loads(
+            Path("contracts/policy-review-plan.schema.json").read_text()
+        )
+        Draft202012Validator(
+            schema_doc, format_checker=artifact_format_checker
+        ).validate(doc)

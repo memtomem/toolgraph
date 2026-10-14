@@ -21,6 +21,13 @@ from toolgraph.models import (
     ToolRecord,
 )
 from toolgraph.policy_bundle import build_policy_bundle
+from contextlib import contextmanager
+import hashlib
+import json
+from pathlib import Path
+import threading
+from toolgraph.manifest.ingest import dry_run_ingest
+from tests import test_negative_truth as negative, test_selector as selection
 
 SECRET = "file:///secret.txt"
 
@@ -206,3 +213,159 @@ def test_init_schema_does_not_skip_the_version_gate_on_an_outage(monkeypatch):
     with pytest.raises(driver.BackendUnavailableError):
         schema.init_schema()
     assert len(statements) == 1  # the version read; no DDL ran
+
+
+@pytest.fixture
+def embedded_path(tmp_path, monkeypatch):
+    path = tmp_path / 'missing-parent' / 'probe.lbug'
+    monkeypatch.setattr(config, 'settings', config.Settings(backend='ladybug', db_path=path))
+    monkeypatch.setenv('TOOLGRAPH_CONFIG', str(tmp_path / 'no-config.json'))
+    driver.close_driver()
+    yield path
+    driver.close_driver()
+
+
+@pytest.mark.parametrize('json_output', [False, True])
+def test_uninitialized_ladybug_dry_run_is_controlled_and_unchanged(embedded_path, tmp_path, json_output):
+    import ladybug
+    embedded_path.parent.mkdir()
+    ladybug.Database(embedded_path).close()
+    before = hashlib.sha256(embedded_path.read_bytes()).hexdigest()
+    gov = tmp_path / 'gov.yaml'
+    gov.write_text('agents: [bot]\n')
+    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(gov), '--dry-run'] + (['--json'] if json_output else []))
+    assert result.exit_code == 1, result.output
+    assert 'init-schema' in result.stderr
+    assert 'Traceback' not in result.output
+    assert driver._ladybug_database is None
+    assert hashlib.sha256(embedded_path.read_bytes()).hexdigest() == before
+
+
+def test_owned_readonly_sessions_never_use_writable_acquisition(embedded_path, monkeypatch):
+    schema.init_schema()
+    assert ingest_governance(Governance(agents=['bot'])).applied
+    state = queries.graph_state()
+    driver.close_driver()
+    before = embedded_path.read_bytes()
+
+    @contextmanager
+    def forbidden():
+        raise AssertionError('reader reopened a writable database')
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(driver, 'session', forbidden)
+    monkeypatch.setattr(queries, 'session', forbidden)
+    result = CliRunner().invoke(cli.app, ['doctor', '--json'])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)['healthy']
+    report = dry_run_ingest(Governance())
+    assert report.graph_state == {'instance_id': state.instance_id, 'generation': state.generation}
+    assert report.agents_deleted == ['bot']
+    assert embedded_path.read_bytes() == before
+    assert driver._ladybug_database is None
+
+
+def test_readonly_native_open_cannot_recreate_a_disappearing_file(embedded_path, monkeypatch):
+    import ladybug
+    schema.init_schema()
+    driver.close_driver()
+    original = ladybug.Database
+
+    def disappear(path, **kwargs):
+        assert kwargs['read_only'] is True
+        Path(path).unlink()
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(ladybug, 'Database', disappear)
+    with pytest.raises(driver.BackendUnavailableError):
+        with driver.acquire_readonly_session():
+            pytest.fail('must refuse missing database')
+    assert not embedded_path.exists()
+
+
+def test_borrowed_readonly_handle_survives_concurrent_shutdown(embedded_path):
+    schema.init_schema()
+    attempted = threading.Event()
+    completed = threading.Event()
+
+    def close():
+        attempted.set()
+        driver.close_driver()
+        completed.set()
+
+    worker = threading.Thread(target=close, daemon=True)
+    try:
+        with driver.acquire_readonly_session() as session:
+            worker.start()
+            assert attempted.wait(2)
+            assert not completed.wait(0.05)
+            assert session.run('RETURN 1 AS ok').single()['ok'] == 1
+            with driver.acquire_readonly_session() as nested:
+                assert nested.run('RETURN 1 AS ok').single()['ok'] == 1
+        worker.join(2)
+        assert completed.is_set()
+        assert driver._ladybug_database is None
+    finally:
+        worker.join(2)
+
+
+@pytest.mark.parametrize('backend', ['neo4j', 'ladybug'])
+def test_catalog_failure_is_not_reported_as_missing_schema(monkeypatch, backend):
+    monkeypatch.setattr(schema, 'backend_name', lambda: backend)
+    monkeypatch.setattr(schema, '_stored_backend_schema_version', lambda s: schema.BACKEND_SCHEMA_VERSION)
+
+    class DeniedCatalog:
+        def run(self, *_args):
+            raise RuntimeError('permission denied')
+
+    with pytest.raises(driver.BackendConfigurationError, match='catalog read permissions') as error:
+        schema.check_backend_schema_version(DeniedCatalog())
+    assert 'init-schema' not in str(error.value)
+
+
+@pytest.mark.parametrize('native', [False, True])
+def test_catalog_outage_preserves_backend_unavailable(monkeypatch, native):
+    from neo4j.exceptions import ServiceUnavailable
+
+    monkeypatch.setattr(schema, 'backend_name', lambda: 'neo4j')
+    monkeypatch.setattr(schema, '_stored_backend_schema_version', lambda s: schema.BACKEND_SCHEMA_VERSION)
+
+    class OfflineCatalog:
+        def run(self, *_args):
+            raise (ServiceUnavailable if native else driver.BackendUnavailableError)('offline')
+
+    with pytest.raises(driver.BackendUnavailableError):
+        schema.check_backend_schema_version(OfflineCatalog())
+
+
+def test_corrupt_ladybug_dry_run_is_controlled(embedded_path, tmp_path):
+    embedded_path.parent.mkdir()
+    embedded_path.write_bytes(b'not a database')
+    path = tmp_path / 'governance.yaml'
+    path.write_text('agents: [bot]\n')
+    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path), '--dry-run'])
+    assert result.exit_code == 1
+    assert 'file integrity and format' in result.stderr
+    assert 'Traceback' not in result.output
+    assert embedded_path.read_bytes() == b'not a database'
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        selection.test_rank_features_unknown_agent_aborts_selection,
+        selection.test_strict_passes_only_clean_allow,
+        selection.test_review_passes_exceptions_and_unmapped_but_not_violations,
+        selection.test_explore_rejects_only_resolution_grant_and_drift,
+        negative.test_audit_report_matches_the_per_agent_composition_exactly,
+        negative.test_batched_audit_never_leaks_one_agents_exception_to_another,
+    ],
+)
+def test_shared_backend_semantics(backend_graph, case):
+    case(backend_graph)
+
+
+@pytest.mark.parametrize("profile", ["strict", "review", "explore"])
+def test_ambiguity_and_drift_on_both_backends(backend_graph, profile):
+    selection.test_ambiguous_bare_name_is_never_auto_selected(backend_graph, profile)
+    selection.test_drifted_tools_are_rejected_in_every_profile(backend_graph, profile)

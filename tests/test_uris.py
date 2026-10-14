@@ -18,6 +18,18 @@ from __future__ import annotations
 import pytest
 
 from toolgraph.uris import normalize_resource_uri
+from toolgraph.graph import loader, queries
+from toolgraph.manifest.ingest import ingest_governance
+from toolgraph.models import (
+    AccessGrant,
+    CrawlResult,
+    DataAccess,
+    Governance,
+    Policy,
+    ResourceRecord,
+    ToolRecord,
+)
+from toolgraph.uris import is_resource_ref
 
 GOLDEN = [
     # authority-only URL gains a trailing slash
@@ -78,3 +90,86 @@ def test_custom_non_url_identifier_falls_through_silently():
         _warnings.simplefilter("error")
         # Not URL-shaped: stays verbatim with no warning, by design.
         assert normalize_resource_uri("§custom-id§") == "§custom-id§"
+
+
+def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name=server,
+            transport="stdio",
+            tools=[ToolRecord(name=n) for n in tool_names],
+            resources=[ResourceRecord(uri=u) for u in (resources or [])],
+        )
+    )
+
+
+def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
+    """IPv6 URL authorities contain ``::``. The resource/tool discriminator
+    must only reserve the leading ``server::tool`` shape for tool refs."""
+    uri = "http://[::1]/secret"
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_url")],
+            resources=[ResourceRecord(uri=uri)],
+        )
+    )
+
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="secret-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_url")],
+            data_access=[
+                DataAccess(tool="sample::read_url", resource=uri, mode="READS")
+            ],
+            governed_by={uri: ["secret-deny"]},
+        )
+    ).warnings
+
+    assert warnings == []
+    assert queries.check_access("planner", "sample::read_url")["verdict"] == "DENY"
+
+
+def test_resource_uri_normalized_across_crawl_and_manifest(graph):
+    # Crawl stores the normalized URI ('https://svc.example.com/'); the manifest
+    # is authored without the trailing slash. They must resolve to one node.
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="api",
+            transport="stdio",
+            tools=[ToolRecord(name="call")],
+            resources=[ResourceRecord(uri="https://svc.example.com")],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["bot"],
+            policies=[Policy(id="deny", effect="DENY")],
+            grants=[AccessGrant(agent="bot", tool="api::call")],
+            data_access=[DataAccess(tool="api::call", resource="https://svc.example.com", mode="READS")],
+            governed_by={"https://svc.example.com": ["deny"]},
+        )
+    )
+    assert queries.check_access("bot", "call")["verdict"] == "DENY"
+
+
+def test_non_hierarchical_uri_treated_as_resource(graph):
+    assert is_resource_ref("memory:secret")
+    assert is_resource_ref("urn:x")
+    assert is_resource_ref("file:/tmp/a")
+    assert not is_resource_ref("sample::read_file")
+    assert not is_resource_ref("read_file")
+
+    _load("sample", ["read_file"])
+    ingest_governance(
+        Governance(
+            agents=["bot"],
+            policies=[Policy(id="deny", effect="DENY")],
+            grants=[AccessGrant(agent="bot", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource="memory:secret", mode="READS")],
+            governed_by={"memory:secret": ["deny"]},
+        )
+    )
+    assert queries.check_access("bot", "read_file")["verdict"] == "DENY"
