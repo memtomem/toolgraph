@@ -72,6 +72,7 @@ executing inside the privileged job. Pass values through `env:`.
    uv lock --check
    uv sync --frozen --group dev --extra ladybug
    uv run ruff check .
+   uv run ruff format --check .
    uv run pytest -q
    scripts/audit-dependencies.sh runtime
    scripts/audit-dependencies.sh extras

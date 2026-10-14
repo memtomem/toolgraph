@@ -1,0 +1,5 @@
+# Formatting-only commits, skipped by `git blame --ignore-revs-file` and by
+# GitHub's blame view. Locally: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: apply ruff format to the Python sources (#138)
+dad72f022928e3f58ac3f338f22eb3a2b0a3108c

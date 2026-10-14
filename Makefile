@@ -62,8 +62,9 @@ test-unit: ## Run the tests that need no Docker (fails if an unmarked test reach
 test-neo4j: ## Run only the tests that start the Neo4j container
 	uv run pytest -q -m neo4j
 
-lint: ## Lint with ruff
+lint: ## Lint and check formatting with ruff (what CI runs)
 	uv run ruff check .
+	uv run ruff format --check .
 
 fmt: ## Auto-format with ruff
 	uv run ruff format .

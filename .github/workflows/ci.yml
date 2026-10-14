@@ -18,6 +18,7 @@ jobs:
           version: "latest"
       - run: uv sync --frozen --group dev --extra ladybug
       - run: uv run ruff check .
+      - run: uv run ruff format --check .
 
   # The suite is split on the `neo4j` marker, which conftest applies to every
   # test depending on the shared neo4j_container fixture. test-unit sets

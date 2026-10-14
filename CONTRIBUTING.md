@@ -19,8 +19,9 @@ cd toolgraph
 # Requires Python 3.12+ and uv
 uv sync --group dev --extra ladybug
 
-# Lint (same command CI runs)
+# Lint and format check (same commands CI runs)
 uv run ruff check .
+uv run ruff format --check .
 
 # Tests — the Neo4j half uses a real Neo4j through testcontainers, so a
 # running Docker daemon is required. There is no Cypher mocking.
