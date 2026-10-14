@@ -1,9 +1,10 @@
 name: Dependency audit
 
-# ci.yml audits the lock only when something is pushed, so an advisory
-# published against an unchanged lock surfaced nowhere until the next push.
-# This runs the same three audits weekly against main. It is a separate
-# workflow so ci.yml's required-check aggregation does not change.
+# The lock is audited by ci.yml on pull requests and pushes to main, and by
+# the release build, but never on a schedule: an advisory published against
+# a lock nobody is changing waited for the next of those events. This runs the
+# same three audits weekly against main. It is a separate workflow so ci.yml's
+# required-check aggregation does not change.
 #
 # A red run means "the audit failed", which is not always "a vulnerability
 # was found": `uv export --locked`, package installation and the advisory
