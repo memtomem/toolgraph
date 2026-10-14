@@ -74,7 +74,7 @@ def fsync_parent_dir(path: Path) -> None:
     caller can decide whether it is fatal (the rename itself already
     published the file).
     """
-    if os.name == "nt":  # pragma: no cover - Windows has no directory fd
+    if os.name == "nt":  # Windows has no directory fd
         return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:

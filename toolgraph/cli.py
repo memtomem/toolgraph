@@ -305,7 +305,7 @@ def crawl(
     path = servers or config.settings.servers_config
     try:
         specs = load_servers_config(path)
-    except Exception as exc:  # noqa: BLE001 - config errors share one CLI contract
+    except Exception as exc:  # config errors share one CLI contract
         typer.echo(f"Invalid servers config at {path}: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from None
     dupes = duplicate_name_overrides(specs)
@@ -387,7 +387,7 @@ def ingest_manifest(
     path = governance or config.settings.governance_config
     try:
         gov = load_governance(path)
-    except Exception as exc:  # noqa: BLE001 - config errors share one CLI contract
+    except Exception as exc:  # config errors share one CLI contract
         typer.echo(f"Invalid governance config at {path}: {redact_text(exc)}", err=True)
         raise typer.Exit(code=1) from None
     if dry_run:

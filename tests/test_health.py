@@ -170,9 +170,12 @@ def test_doctor_missing_ladybug_does_not_create_files(embedded_path, json_output
     result = CliRunner().invoke(cli.app, ['doctor'] + (['--json'] if json_output else []))
     assert result.exit_code == 1, result.output
     assert not embedded_path.parent.exists()
-    assert 'does not exist' in result.stdout
     assert 'Traceback' not in result.output
     if json_output:
         report = json.loads(result.stdout)
         assert not report['healthy']
-        assert next(c for c in report['checks'] if c['name'] == 'Connectivity')['status'] == 'FAIL'
+        connectivity = next(c for c in report['checks'] if c['name'] == 'Connectivity')
+        assert connectivity['status'] == 'FAIL'
+        assert 'does not exist' in connectivity['message']
+    else:
+        assert 'does not exist' in result.stdout

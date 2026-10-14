@@ -64,7 +64,7 @@ async def open_session(spec: ServerSpec) -> AsyncIterator[ClientSession]:
                 sse_client(spec.url, headers=spec.headers or None)
             )
 
-        else:  # pragma: no cover - guarded by the Literal type
+        else:  # guarded by the Literal type
             raise ValueError(f"unknown transport {spec.transport!r}")
 
         session = await stack.enter_async_context(ClientSession(read, write))

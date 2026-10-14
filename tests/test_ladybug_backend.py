@@ -27,7 +27,6 @@ import json
 from pathlib import Path
 import threading
 from toolgraph.manifest.ingest import dry_run_ingest
-from tests import test_negative_truth as negative, test_selector as selection
 
 SECRET = "file:///secret.txt"
 
@@ -241,7 +240,7 @@ def test_owned_readonly_sessions_never_use_writable_acquisition(embedded_path, m
     @contextmanager
     def forbidden():
         raise AssertionError('reader reopened a writable database')
-        yield  # pragma: no cover
+        yield  # unreachable; makes forbidden() a generator for @contextmanager
 
     monkeypatch.setattr(driver, 'session', forbidden)
     monkeypatch.setattr(queries, 'session', forbidden)
@@ -338,24 +337,3 @@ def test_corrupt_ladybug_dry_run_is_controlled(embedded_path, tmp_path):
     assert 'file integrity and format' in result.stderr
     assert 'Traceback' not in result.output
     assert embedded_path.read_bytes() == b'not a database'
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        selection.test_rank_features_unknown_agent_aborts_selection,
-        selection.test_strict_passes_only_clean_allow,
-        selection.test_review_passes_exceptions_and_unmapped_but_not_violations,
-        selection.test_explore_rejects_only_resolution_grant_and_drift,
-        negative.test_audit_report_matches_the_per_agent_composition_exactly,
-        negative.test_batched_audit_never_leaks_one_agents_exception_to_another,
-    ],
-)
-def test_shared_backend_semantics(backend_graph, case):
-    case(backend_graph)
-
-
-@pytest.mark.parametrize("profile", ["strict", "review", "explore"])
-def test_ambiguity_and_drift_on_both_backends(backend_graph, profile):
-    selection.test_ambiguous_bare_name_is_never_auto_selected(backend_graph, profile)
-    selection.test_drifted_tools_are_rejected_in_every_profile(backend_graph, profile)

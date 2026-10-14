@@ -17,7 +17,7 @@ from toolgraph.graph import loader
 from toolgraph.models import ServerSpec
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
-from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH  # noqa: E402
+from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH
 from pydantic import ValidationError
 from toolgraph.crawler.crawl import load_servers_config
 from toolgraph.crawler.crawl import crawl_all
@@ -182,7 +182,7 @@ async def test_crawl_forwards_headers(mode, transport, path):
 
         # Same server, same URL, headers omitted: the crawl must not succeed.
         anonymous = ServerSpec(name="sample-auth", transport=transport, url=url)
-        with pytest.raises(Exception):  # noqa: B017, PT011
+        with pytest.raises(Exception):  # noqa: B017
             await crawl_server(anonymous)
 
         # And it must have failed because the SERVER refused it, not because

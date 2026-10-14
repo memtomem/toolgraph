@@ -221,7 +221,7 @@ def _get_ladybug_database() -> Any:
         return _ladybug_database
     try:
         import ladybug as lb
-    except ImportError as exc:  # pragma: no cover - environment dependent
+    except ImportError as exc:  # environment dependent
         raise BackendConfigurationError(
             "backend=ladybug requires the 'ladybug' extra: "
             "install with `uv sync --extra ladybug` or `pip install toolgraph[ladybug]`"

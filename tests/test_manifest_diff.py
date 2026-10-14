@@ -20,6 +20,8 @@ from toolgraph.models import (
 )
 import json
 
+from tests._helpers import graph_content
+
 
 def _seed_sample_crawl() -> None:
     loader.load_crawl_result(
@@ -110,7 +112,7 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
     )
     rep = ingest_governance(base_gov)
     assert rep.applied
-    base_gen = queries.graph_generation()
+    before = graph_content()
 
     # Proposed new manifest:
     # - Agent: agent-b removed, agent-c added
@@ -153,8 +155,8 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
     assert diff.applied
     assert diff.warnings == []
 
-    # Database must remain 100% untouched
-    assert queries.graph_generation() == base_gen
+    # Every node, edge and property, GraphMeta included, must be untouched
+    assert graph_content() == before
 
     # Check diff output
     assert diff.agents_created == ["agent-c"]
@@ -300,10 +302,10 @@ def test_nullable_exceptions_and_empty_bindings_match_real_ingest(backend_graph)
             )
 
     def dry_unchanged(manifest):
-        before = snapshot()
+        before = graph_content()
         diff = dry_run_ingest(manifest)
         assert diff.applied, diff.warnings
-        assert snapshot() == before
+        assert graph_content() == before
         return diff
 
     first = gov('before')

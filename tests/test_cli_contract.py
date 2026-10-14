@@ -391,14 +391,16 @@ def test_cli_unsafe_tools_default_filters_to_violations(graph):
     )
     runner = CliRunner()
 
-    default = runner.invoke(cli.app, ["unsafe-tools", "planner"])
-    assert default.exit_code == 0
-    assert "write_file" in default.output           # violation
-    assert "authorized_but_governed" not in default.output
+    def classified(*args):
+        result = runner.invoke(cli.app, ["unsafe-tools", "planner", *args])
+        assert result.exit_code == 0, result.output
+        return {(row["tool_key"], row["classification"]) for row in json.loads(result.stdout)}
 
-    full = runner.invoke(cli.app, ["unsafe-tools", "planner", "--all"])
-    assert "authorized_but_governed" in full.output
-    assert "write_file" in full.output
+    assert classified() == {("sample::write_file", "violation")}
+    assert classified("--all") == {
+        ("sample::write_file", "violation"),
+        ("sample::read_file", "authorized_but_governed"),
+    }
 
 
 def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(graph):
@@ -417,13 +419,13 @@ def test_cli_unbacked_edges_default_excludes_can_call(graph):
     seed_basic(graph)
     runner = CliRunner()
 
-    default = runner.invoke(cli.app, ["unbacked-edges"])
-    assert default.exit_code == 0
-    assert "CAN_CALL" not in default.output
+    def edge_types(*args):
+        result = runner.invoke(cli.app, ["unbacked-edges", *args])
+        assert result.exit_code == 0, result.output
+        return {row["edge_type"] for row in json.loads(result.stdout)}
 
-    wider = runner.invoke(cli.app, ["unbacked-edges", "--include-grants"])
-    assert wider.exit_code == 0
-    assert "CAN_CALL" in wider.output
+    assert edge_types() == {"READS", "GOVERNED_BY"}
+    assert edge_types("--include-grants") == {"READS", "GOVERNED_BY", "CAN_CALL"}
 
 
 def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(graph, tmp_path):

@@ -39,7 +39,7 @@ async def _crawl_one(
             return await asyncio.wait_for(crawl_server(spec), timeout), None
         except TimeoutError:  # a hanging server must not block the crawl
             return None, (spec, f"timeout after {timeout}s")
-        except Exception as exc:  # noqa: BLE001 - one bad server must not abort the crawl
+        except Exception as exc:  # one bad server must not abort the crawl
             return None, (spec, f"{type(exc).__name__}: {redact_text(exc)}")
 
 

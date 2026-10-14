@@ -37,7 +37,7 @@ def build() -> MCPServer:
         @server.tool(
             annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True)
         )
-        def read_note(note_id: str, format: str = "text") -> str:  # noqa: A002
+        def read_note(note_id: str, format: str = "text") -> str:
             """Read a deterministic demo note using the v2 contract."""
             _record("read_note")
             return f"note:{note_id}:{format}"
