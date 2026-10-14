@@ -73,9 +73,7 @@ def _serve(mode: str):
     try:
         while time.time() < deadline:
             if proc.poll() is not None:
-                raise RuntimeError(
-                    f"sample {mode} server exited early with code {proc.returncode}"
-                )
+                raise RuntimeError(f"sample {mode} server exited early with code {proc.returncode}")
             try:
                 with socket.create_connection(("127.0.0.1", port), timeout=0.5):
                     break
@@ -151,9 +149,7 @@ async def test_crawl_sse(sse_url):
 
 def _rejection_count(port: int) -> int:
     """Ask the fixture how many requests it has turned away for a bad token."""
-    with urllib.request.urlopen(
-        f"http://127.0.0.1:{port}{RECEIPT_PATH}", timeout=5
-    ) as response:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{RECEIPT_PATH}", timeout=5) as response:
         return int(response.read())
 
 
@@ -247,7 +243,7 @@ async def test_list_all_tools_drains_paginated_results():
     session = _PagedSession(
         tool_pages=[
             ([_FakeTool("a"), _FakeTool("b")], "1"),  # page 0 -> next_cursor=1
-            ([_FakeTool("c")], None),                  # page 1 -> done
+            ([_FakeTool("c")], None),  # page 1 -> done
         ],
         resource_pages=[],
     )
@@ -297,9 +293,12 @@ async def test_list_all_resources_drains_paginated_results():
     )
     resources = await _list_all_resources(session)
     assert [r.uri for r in resources] == [
-        "file:///a", "file:///b", "file:///c",
+        "file:///a",
+        "file:///b",
+        "file:///c",
     ]
     assert session.resource_calls == [None, "1"]
+
 
 class _RunawayCursorSession:
     """Server that returns a fresh continuation cursor on every page."""

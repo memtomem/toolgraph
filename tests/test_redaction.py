@@ -8,9 +8,7 @@ from toolgraph.redaction import endpoint_label, persisted_endpoint, redact_text
 
 
 def test_endpoint_labels_never_include_args_or_url_secrets():
-    stdio = ServerSpec(
-        command="/usr/local/bin/python", args=["server.py", "--token=super-secret"]
-    )
+    stdio = ServerSpec(command="/usr/local/bin/python", args=["server.py", "--token=super-secret"])
     http = ServerSpec(
         transport="streamable-http",
         url="https://alice:secret@example.test:8443/mcp?token=super-secret#fragment",

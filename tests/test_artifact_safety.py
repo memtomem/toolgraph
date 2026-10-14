@@ -49,9 +49,7 @@ def test_identity_preservation_and_evidence_redaction():
     ],
 )
 def test_credentials_rejected_before_graph_access(monkeypatch, identity):
-    monkeypatch.setattr(
-        queries, "with_graph_state", lambda *a, **kw: pytest.fail("graph accessed")
-    )
+    monkeypatch.setattr(queries, "with_graph_state", lambda *a, **kw: pytest.fail("graph accessed"))
     with pytest.raises(ValueError, match="credential"):
         build_preflight(agent="a", candidates=[identity], profile="review", run_id="r")
     with pytest.raises(ValueError, match="credential"):

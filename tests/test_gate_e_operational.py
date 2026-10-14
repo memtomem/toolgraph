@@ -21,11 +21,13 @@ def test_provider_scope_is_explicit_and_non_gating() -> None:
     assert gate_e.REQUIRED_PROVIDERS == ("codex", "claude", "kimi")
     assert gate_e.provider_scope() == {
         "required": ["codex", "claude", "kimi"],
-        "excluded": [{
-            "provider": "agy",
-            "classification": "compatibility_only",
-            "reason": "not_syncmill_agent_runner",
-        }],
+        "excluded": [
+            {
+                "provider": "agy",
+                "classification": "compatibility_only",
+                "reason": "not_syncmill_agent_runner",
+            }
+        ],
     }
 
 
@@ -47,26 +49,33 @@ def test_provider_versions_never_probes_antigravity(monkeypatch: pytest.MonkeyPa
 @pytest.mark.parametrize(
     ("observed", "expected"),
     [
-        ([
-            {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
-            {"tool_key": "gate_e::always_fail", "outcome": "failed"},
-        ], True),
+        (
+            [
+                {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
+                {"tool_key": "gate_e::always_fail", "outcome": "failed"},
+            ],
+            True,
+        ),
         ([], False),
         ([{"tool_key": "gate_e::always_ok", "outcome": "succeeded"}], False),
-        ([
-            {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
-            {"tool_key": "gate_e::always_fail", "outcome": "failed"},
-            {"tool_key": "gate_e::always_fail", "outcome": "failed"},
-        ], False),
-        ([
-            {"tool_key": "gate_e::always_fail", "outcome": "failed"},
-            {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
-        ], False),
+        (
+            [
+                {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
+                {"tool_key": "gate_e::always_fail", "outcome": "failed"},
+                {"tool_key": "gate_e::always_fail", "outcome": "failed"},
+            ],
+            False,
+        ),
+        (
+            [
+                {"tool_key": "gate_e::always_fail", "outcome": "failed"},
+                {"tool_key": "gate_e::always_ok", "outcome": "succeeded"},
+            ],
+            False,
+        ),
     ],
 )
-def test_exact_outcome_contract(
-    observed: list[dict[str, str]], expected: bool
-) -> None:
+def test_exact_outcome_contract(observed: list[dict[str, str]], expected: bool) -> None:
     assert gate_e._has_exact_outcomes(observed) is expected
 
 

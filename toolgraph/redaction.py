@@ -37,9 +37,7 @@ CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGN
 # rule unchanged; the second only replaces text that is still visible, so the
 # result never shows more than the original rule alone would.
 _SCRUB_VALUE = r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
-_CREDENTIAL = re.compile(
-    r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)" + _SCRUB_VALUE
-)
+_CREDENTIAL = re.compile(r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)" + _SCRUB_VALUE)
 _CREDENTIAL_ADDED = re.compile(r"(?i)(credential)" + _SCRUB_VALUE)
 
 
@@ -116,9 +114,7 @@ def contains_credential(text: str) -> bool:
     mistaking a ``server::tool`` separator for an assignment.
     """
     return bool(
-        _CREDENTIAL_ASSIGNMENT.search(text)
-        or _AUTHORIZATION.search(text)
-        or _BEARER.search(text)
+        _CREDENTIAL_ASSIGNMENT.search(text) or _AUTHORIZATION.search(text) or _BEARER.search(text)
     )
 
 

@@ -31,10 +31,7 @@ def rfc3339_offset_error(created_at: datetime) -> str | None:
             " RFC 3339 timestamp with a UTC offset"
         )
     if offset % timedelta(minutes=1):
-        return (
-            f"created_at offset {offset} has sub-minute resolution — RFC 3339"
-            " offsets are ±HH:MM"
-        )
+        return f"created_at offset {offset} has sub-minute resolution — RFC 3339 offsets are ±HH:MM"
     return None
 
 

@@ -26,6 +26,7 @@ from toolgraph.graph import driver
 from toolgraph.graph import schema
 from tests._helpers import CSV, crawl_sample, seed_basic
 
+
 def _seed(graph) -> None:
     loader.load_crawl_result(
         CrawlResult(
@@ -67,17 +68,20 @@ def test_no_exceptions_means_every_reach_is_violation(graph):
 
 def test_matching_exception_marks_row_authorized_but_governed(graph):
     _seed(graph)
-    assert ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner",
-                tool="sample::read_file",
-                policy="pii-deny",
-                resource=CSV,
-                reason="planner is the PII data owner; reads are by design",
+    assert (
+        ingest_governance(
+            _gov(
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="planner is the PII data owner; reads are by design",
+                )
             )
-        )
-    ).warnings == []
+        ).warnings
+        == []
+    )
     by_tool = {r["tool"]: r for r in queries.unsafe_callable_tools("planner")}
     assert by_tool["read_file"]["classification"] == "authorized_but_governed"
     assert by_tool["read_file"]["exception_reason"].startswith("planner is the PII")
@@ -88,34 +92,40 @@ def test_matching_exception_marks_row_authorized_but_governed(graph):
 
 def test_exception_with_no_resource_covers_every_resource(graph):
     _seed(graph)
-    assert ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner",
-                tool="sample::write_file",
-                policy="pii-deny",
-                # resource omitted -> matches any resource under this policy
-                reason="planner is on-call; emergency writes are authorized",
+    assert (
+        ingest_governance(
+            _gov(
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::write_file",
+                    policy="pii-deny",
+                    # resource omitted -> matches any resource under this policy
+                    reason="planner is on-call; emergency writes are authorized",
+                )
             )
-        )
-    ).warnings == []
+        ).warnings
+        == []
+    )
     by_tool = {r["tool"]: r for r in queries.unsafe_callable_tools("planner")}
     assert by_tool["write_file"]["classification"] == "authorized_but_governed"
 
 
 def test_check_access_evidence_carries_classification_when_agent_known(graph):
     _seed(graph)
-    assert ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner",
-                tool="sample::read_file",
-                policy="pii-deny",
-                resource=CSV,
-                reason="by design",
+    assert (
+        ingest_governance(
+            _gov(
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                )
             )
-        )
-    ).warnings == []
+        ).warnings
+        == []
+    )
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"  # verdict semantics unchanged
     [ev] = res["deny_evidence"]
@@ -131,11 +141,7 @@ def test_check_access_evidence_carries_classification_when_agent_known(graph):
 def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
     _seed(graph)
     warnings = ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner", tool="sample::nope", policy="pii-deny", reason="x"
-            )
-        )
+        _gov(ExpectedException(agent="planner", tool="sample::nope", policy="pii-deny", reason="x"))
     ).warnings
     assert any("nope" in w for w in warnings)
     warnings = ingest_governance(
@@ -154,17 +160,20 @@ def test_exception_with_no_reason_still_classifies_authorized(graph):
     exception is valid and must still classify the row as
     authorized_but_governed. The match signal is now `exc IS NOT NULL`."""
     _seed(graph)
-    assert ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner",
-                tool="sample::read_file",
-                policy="pii-deny",
-                resource=CSV,
-                # reason intentionally omitted
+    assert (
+        ingest_governance(
+            _gov(
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    # reason intentionally omitted
+                )
             )
-        )
-    ).warnings == []
+        ).warnings
+        == []
+    )
     rows = queries.unsafe_callable_tools("planner")
     by_tool = {r["tool"]: r for r in rows}
     assert by_tool["read_file"]["classification"] == "authorized_but_governed"
@@ -186,24 +195,27 @@ def test_check_access_carries_all_authorized_signal(graph):
     by-design'. Without it they'd have to aggregate per-row classification."""
     _seed(graph)
     # Every reach for planner is covered by an exception -> all_authorized=True
-    assert ingest_governance(
-        _gov(
-            ExpectedException(
-                agent="planner",
-                tool="sample::read_file",
-                policy="pii-deny",
-                resource=CSV,
-                reason="by design",
-            ),
-            ExpectedException(
-                agent="planner",
-                tool="sample::write_file",
-                policy="pii-deny",
-                resource=CSV,
-                reason="by design",
-            ),
-        )
-    ).warnings == []
+    assert (
+        ingest_governance(
+            _gov(
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                ),
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::write_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                ),
+            )
+        ).warnings
+        == []
+    )
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"
     assert res["all_authorized"] is True
@@ -231,28 +243,31 @@ def test_deny_rows_have_a_total_order_on_both_backends(backend_graph):
                 resources=[ResourceRecord(uri=CSV)],
             )
         )
-    assert ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[
-                Policy(id="admin-deny", effect="DENY", scope="admin"),
-                Policy(id="pii-deny", effect="DENY", scope="customer-pii"),
-            ],
-            grants=[
-                AccessGrant(agent="planner", tool="sample::admin"),
-                AccessGrant(agent="planner", tool="other::admin"),
-            ],
-            data_access=[
-                DataAccess(tool="sample::admin", resource=CSV, mode="WRITES"),
-                DataAccess(tool="sample::admin", resource=CSV, mode="READS"),
-            ],
-            governed_by={
-                CSV: ["pii-deny"],
-                "sample::admin": ["pii-deny", "admin-deny"],
-                "other::admin": ["pii-deny", "admin-deny"],
-            },
-        )
-    ).warnings == []
+    assert (
+        ingest_governance(
+            Governance(
+                agents=["planner"],
+                policies=[
+                    Policy(id="admin-deny", effect="DENY", scope="admin"),
+                    Policy(id="pii-deny", effect="DENY", scope="customer-pii"),
+                ],
+                grants=[
+                    AccessGrant(agent="planner", tool="sample::admin"),
+                    AccessGrant(agent="planner", tool="other::admin"),
+                ],
+                data_access=[
+                    DataAccess(tool="sample::admin", resource=CSV, mode="WRITES"),
+                    DataAccess(tool="sample::admin", resource=CSV, mode="READS"),
+                ],
+                governed_by={
+                    CSV: ["pii-deny"],
+                    "sample::admin": ["pii-deny", "admin-deny"],
+                    "other::admin": ["pii-deny", "admin-deny"],
+                },
+            )
+        ).warnings
+        == []
+    )
 
     rows = queries.unsafe_callable_tools("planner")
     assert [(r["tool_key"], r["mode"], r["policy"]) for r in rows] == [
@@ -281,12 +296,17 @@ def _governance_with_both_exceptions() -> Governance:
         governed_by={CSV: ["pii-deny"]},
         expected_exceptions=[
             ExpectedException(
-                agent="planner", tool="sample::read_file", policy="pii-deny",
+                agent="planner",
+                tool="sample::read_file",
+                policy="pii-deny",
                 reason="wildcard: legacy blanket sign-off",
             ),
             ExpectedException(
-                agent="planner", tool="sample::read_file", policy="pii-deny",
-                resource=CSV, reason="specific: DPA ticket COMP-42",
+                agent="planner",
+                tool="sample::read_file",
+                policy="pii-deny",
+                resource=CSV,
+                reason="specific: DPA ticket COMP-42",
             ),
         ],
     )
@@ -399,9 +419,7 @@ def test_exception_with_wrong_policy_warns(graph):
         )
     ).warnings
     assert warnings
-    assert any(
-        "other-deny" in w and "not governed_by" in w for w in warnings
-    )
+    assert any("other-deny" in w and "not governed_by" in w for w in warnings)
 
 
 def test_wildcard_exception_with_no_reachable_path_warns(graph):
@@ -500,17 +518,14 @@ def test_colliding_exception_tuples_and_legacy_reingest(backend_graph):
     from toolgraph.models import AccessGrant, ExpectedException, Policy
 
     for server in ("s", "b|s"):
-        loader.load_crawl_result(
-            CrawlResult(server_name=server, tools=[ToolRecord(name="t")])
-        )
+        loader.load_crawl_result(CrawlResult(server_name=server, tools=[ToolRecord(name="t")]))
     pairs = [("a|b", "s::t"), ("a", "b|s::t")]
     gov = Governance(
         policies=[Policy(id="p", effect="DENY")],
         grants=[AccessGrant(agent=a, tool=k) for a, k in pairs],
         governed_by={k: ["p"] for _, k in pairs},
         expected_exceptions=[
-            ExpectedException(agent=a, tool=k, policy="p", reason="first")
-            for a, k in pairs
+            ExpectedException(agent=a, tool=k, policy="p", reason="first") for a, k in pairs
         ]
         + [ExpectedException(agent="a", tool="b|s::t", policy="p", reason="last")],
     )

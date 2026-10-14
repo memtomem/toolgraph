@@ -26,9 +26,7 @@ _MAX_REDACT_DEPTH = 100
 def redact(value, *, _depth: int = 0):
     """Recursively scrub strings that may contain resource URI credentials."""
     if _depth > _MAX_REDACT_DEPTH:
-        raise ValueError(
-            f"artifact nesting exceeds the {_MAX_REDACT_DEPTH}-level redaction limit"
-        )
+        raise ValueError(f"artifact nesting exceeds the {_MAX_REDACT_DEPTH}-level redaction limit")
     if isinstance(value, dict):
         return {key: redact(item, _depth=_depth + 1) for key, item in value.items()}
     if isinstance(value, list):

@@ -107,15 +107,21 @@ def _seed() -> None:
             ],
             data_access=[
                 DataAccess(
-                    tool="alpha::git_status", resource=REPO, mode="READS",
+                    tool="alpha::git_status",
+                    resource=REPO,
+                    mode="READS",
                     provenance=EVIDENCE,
                 ),
                 DataAccess(
-                    tool="alpha::read_file", resource=SECRETS, mode="READS",
+                    tool="alpha::read_file",
+                    resource=SECRETS,
+                    mode="READS",
                     provenance=EVIDENCE,
                 ),
                 DataAccess(
-                    tool="alpha::export_data", resource=EXPORT, mode="WRITES",
+                    tool="alpha::export_data",
+                    resource=EXPORT,
+                    mode="WRITES",
                     provenance=EVIDENCE,
                 ),
             ],
@@ -157,14 +163,14 @@ def _seed() -> None:
 
 
 CANDIDATES = [
-    "alpha::git_status",     # clean ALLOW
-    "read_file",             # AMBIGUOUS_TOOL (alpha + beta)
-    "alpha::read_file",      # DENY_VIOLATION
-    "alpha::export_data",    # DENY_GOVERNED
-    "alpha::ghost_tool",     # DRIFTED
-    "alpha::free_tool",      # UNMAPPED
-    "alpha::loose_tool",     # NOT_GRANTED
-    "alpha::no_such_tool",   # TOOL_NOT_FOUND
+    "alpha::git_status",  # clean ALLOW
+    "read_file",  # AMBIGUOUS_TOOL (alpha + beta)
+    "alpha::read_file",  # DENY_VIOLATION
+    "alpha::export_data",  # DENY_GOVERNED
+    "alpha::ghost_tool",  # DRIFTED
+    "alpha::free_tool",  # UNMAPPED
+    "alpha::loose_tool",  # NOT_GRANTED
+    "alpha::no_such_tool",  # TOOL_NOT_FOUND
 ]
 
 

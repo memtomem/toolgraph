@@ -289,10 +289,11 @@ def crawl(
     servers: Path = typer.Option(None, help="Path to servers.yaml (defaults to config)."),
     timeout: float = typer.Option(DEFAULT_TIMEOUT, help="Per-server crawl timeout (seconds)."),
     prune: bool = typer.Option(
-        True, "--prune/--no-prune",
+        True,
+        "--prune/--no-prune",
         help="Fleet reconciliation (ADR-0007): after loading, retire crawled "
-             "subgraphs of servers no longer in servers.yaml. Pass --no-prune "
-             "when crawling a subset file that does not declare the whole fleet.",
+        "subgraphs of servers no longer in servers.yaml. Pass --no-prune "
+        "when crawling a subset file that does not declare the whole fleet.",
     ),
 ) -> None:
     """Crawl every server in servers.yaml and load its tools/resources into the graph.
@@ -371,13 +372,17 @@ def crawl(
 def ingest_manifest(
     governance: Path = typer.Option(None, help="Path to governance.yaml (defaults to config)."),
     strict_drift: bool = typer.Option(
-        False, "--strict-drift",
+        False,
+        "--strict-drift",
         help="Treat drifted tool refs (no live EXPOSES edge) as errors that "
-             "reject the manifest. Default: non-fatal notice.",
+        "reject the manifest. Default: non-fatal notice.",
     ),
-    json_output: bool = typer.Option(False, "--json", help="Emit the complete dry-run delta as JSON; requires --dry-run."),
+    json_output: bool = typer.Option(
+        False, "--json", help="Emit the complete dry-run delta as JSON; requires --dry-run."
+    ),
     dry_run: bool = typer.Option(
-        False, "--dry-run",
+        False,
+        "--dry-run",
         help="Analyze and display proposed graph changes without modifying the database.",
     ),
 ) -> None:
@@ -431,7 +436,9 @@ def ingest_manifest(
 
 @app.command()
 @_reports_backend_outage
-def reset(yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL graph data.")) -> None:
+def reset(
+    yes: bool = typer.Option(False, "--yes", help="Confirm deletion of ALL graph data."),
+) -> None:
     """Delete every node and relationship (keeps constraints). Destructive.
 
     Not atomic: deletion runs in batches, so run it inside a maintenance
@@ -475,10 +482,11 @@ def check_access(
     agent: str,
     tool: str,
     fail_on_deny: bool = typer.Option(
-        False, "--fail-on-deny",
+        False,
+        "--fail-on-deny",
         help="CI gate (ADR-0003): exit 1 on a DENY that isn't fully covered "
-             "by operator exceptions, 2 on a not-found/ambiguous verdict. "
-             "Default: always exit 0.",
+        "by operator exceptions, 2 on a not-found/ambiguous verdict. "
+        "Default: always exit 0.",
     ),
 ) -> None:
     """Is AGENT allowed to call TOOL, and does the call cross a DENY policy?
@@ -501,13 +509,15 @@ def check_access(
 def unsafe_tools(
     agent: str,
     all: bool = typer.Option(
-        False, "--all",
+        False,
+        "--all",
         help="Include authorized_but_governed rows (operator-declared exceptions).",
     ),
     fail_on_violation: bool = typer.Option(
-        False, "--fail-on-violation",
+        False,
+        "--fail-on-violation",
         help="CI gate (ADR-0003): exit 1 when any violation row remains in "
-             "the output. Default: exit 0 regardless of findings.",
+        "the output. Default: exit 0 regardless of findings.",
     ),
 ) -> None:
     """Tools AGENT can call that touch a DENY-governed resource.
@@ -555,7 +565,8 @@ def orphan_policies() -> None:
 @_reports_backend_outage
 def unbacked_edges(
     include_grants: bool = typer.Option(
-        False, "--include-grants",
+        False,
+        "--include-grants",
         help="Include CAN_CALL grants (intent declarations) — usually noise.",
     ),
 ) -> None:
@@ -565,9 +576,7 @@ def unbacked_edges(
     CAN_CALL grants are excluded by default — a grant is intent, not a
     factual claim, so requiring evidence on every grant pollutes the audit.
     """
-    typer.echo(
-        json.dumps(queries.unbacked_edges(include_grants=include_grants), indent=2)
-    )
+    typer.echo(json.dumps(queries.unbacked_edges(include_grants=include_grants), indent=2))
 
 
 @app.command("drift")
@@ -647,9 +656,7 @@ def audit_report(
     ),
 ) -> None:
     """Whole-graph operational audit summary."""
-    report = queries.with_graph_state(
-        lambda: queries.audit_report(include_grants=include_grants)
-    )
+    report = queries.with_graph_state(lambda: queries.audit_report(include_grants=include_grants))
     if format is AuditReportFormat.markdown:
         typer.echo(_audit_report_markdown(report), nl=False)
     else:
@@ -706,7 +713,8 @@ def eligible_tools(
     agent: str,
     candidates: list[str],
     profile: str = typer.Option(
-        selector.DEFAULT_PROFILE, "--profile",
+        selector.DEFAULT_PROFILE,
+        "--profile",
         help="Named rule set: strict (production default) / review / explore.",
     ),
 ) -> None:
@@ -718,9 +726,7 @@ def eligible_tools(
     _selector_profile(profile)
     _bounded_candidates(candidates)
     _require_agent(agent)
-    typer.echo(
-        json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2)
-    )
+    typer.echo(json.dumps(selector.eligible_tools(agent, candidates, profile=profile), indent=2))
 
 
 @app.command("selection-explain")
@@ -729,16 +735,15 @@ def selection_explain(
     agent: str,
     tool: str,
     profile: str = typer.Option(
-        selector.DEFAULT_PROFILE, "--profile",
+        selector.DEFAULT_PROFILE,
+        "--profile",
         help="Named rule set: strict (production default) / review / explore.",
     ),
 ) -> None:
     """Compact human-readable reasons why TOOL is eligible/rejected for AGENT."""
     _selector_profile(profile)
     _require_agent(agent)
-    typer.echo(
-        json.dumps(selector.selection_explain(agent, tool, profile=profile), indent=2)
-    )
+    typer.echo(json.dumps(selector.selection_explain(agent, tool, profile=profile), indent=2))
 
 
 @app.command("preflight")
@@ -747,7 +752,8 @@ def preflight(
     agent: str,
     candidates: list[str],
     profile: str = typer.Option(
-        selector.DEFAULT_PROFILE, "--profile",
+        selector.DEFAULT_PROFILE,
+        "--profile",
         help="Named selector profile: strict / review / explore.",
     ),
     run_id: str = typer.Option(..., "--run-id", help="Stable ecosystem run identifier."),
@@ -815,9 +821,7 @@ def control_preflight(
         with plan.open("rb") as handle:
             raw_plan = handle.read(MAX_PLAN_BYTES + 1)
         if len(raw_plan) > MAX_PLAN_BYTES:
-            raise ControlPlanError(
-                f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
-            )
+            raise ControlPlanError(f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit")
         artifact = build_control_preflight(raw_plan, profile=profile)
         payload = canonical_json_bytes(artifact)
         if out is not None:
@@ -941,7 +945,9 @@ def policy_propose(
         "unspecified", "--window-label", help="Descriptive label for the observation window."
     ),
     unverified_provenance: bool = typer.Option(
-        False, "--unverified-provenance", help="Allow missing envelope/identity with explicitly unverified provenance; contradictions still fail."
+        False,
+        "--unverified-provenance",
+        help="Allow missing envelope/identity with explicitly unverified provenance; contradictions still fail.",
     ),
     revalidate_current: bool = typer.Option(
         False,
@@ -951,9 +957,7 @@ def policy_propose(
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write proposal markdown to file instead of stdout."
     ),
-    json_output: bool = typer.Option(
-        False, "--json", help="Emit raw proposal dictionary as JSON."
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit raw proposal dictionary as JSON."),
 ) -> None:
     """Propose governance.yaml grant changes from observed gateway usage."""
     if json_output and output is not None:

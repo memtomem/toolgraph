@@ -48,13 +48,13 @@ def _tool_props(key: str) -> dict:
         return dict(rec["t"]) if rec else {}
 
 
-
 def test_tool_hint_fields_match_the_model():
     """The selector and the Ladybug dialect iterate TOOL_HINT_FIELDS, not the model."""
     from toolgraph.models import TOOL_HINT_FIELDS, ToolRecord
 
     hints = tuple(name for name in ToolRecord.model_fields if name.endswith("_hint"))
     assert hints == TOOL_HINT_FIELDS
+
 
 def test_loader_stores_and_clears_annotations(graph):
     loader.load_crawl_result(

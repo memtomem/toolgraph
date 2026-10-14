@@ -106,7 +106,9 @@ def test_linter_reports_cycles_unknown_edges_and_low_bounds():
     )
     document["limits"]["maximum_agent_calls"] = 1
     document["limits"]["maximum_parallelism"] = 1
-    codes = {row["code"] for row in lint_control_plan(load_control_plan(control_plan_raw(document)))}
+    codes = {
+        row["code"] for row in lint_control_plan(load_control_plan(control_plan_raw(document)))
+    }
     assert {
         "UNKNOWN_NODE_REFERENCE",
         "CONTROL_CYCLE_UNSUPPORTED",
@@ -148,6 +150,7 @@ def test_missing_graph_instance_fails_closed(monkeypatch):
             "rejected": [],
         },
     )
+
     class MockSession:
         def run(self, *args, **kwargs):
             return []
@@ -182,9 +185,7 @@ def test_cli_writes_private_canonical_artifact(monkeypatch, tmp_path):
     assert out.read_bytes().endswith(b"\n")
 
     envelope = json.loads(result.stdout)
-    assert envelope["artifact_digest"] == (
-        "sha256:" + hashlib.sha256(out.read_bytes()).hexdigest()
-    )
+    assert envelope["artifact_digest"] == ("sha256:" + hashlib.sha256(out.read_bytes()).hexdigest())
     assert envelope["plan_digest"] == written["plan_digest"]
     assert envelope["run_id"] == written["run_id"]
     assert envelope["graph_state"] == written["graph_state"]
@@ -218,9 +219,7 @@ def test_cli_failure_preserves_existing_output(monkeypatch, tmp_path):
     plan.write_bytes(control_plan_raw())
     out = tmp_path / "result.json"
     out.write_text("keep", encoding="utf-8")
-    result = CliRunner().invoke(
-        cli.app, ["control-preflight", str(plan), "--out", str(out)]
-    )
+    result = CliRunner().invoke(cli.app, ["control-preflight", str(plan), "--out", str(out)])
     assert result.exit_code == 1
     assert out.read_text(encoding="utf-8") == "keep"
 
@@ -246,17 +245,21 @@ def test_control_plan_transitive_exposure_and_redaction(monkeypatch, artifact_fo
             # mock tool data access
             rows = []
             if "filesystem::read_file" in (keys or []):
-                rows.append({
-                    "tool_key": "filesystem::read_file",
-                    "mode": "READS",
-                    "resource_uri": "https://api.test/data?token=supersecret123",
-                })
+                rows.append(
+                    {
+                        "tool_key": "filesystem::read_file",
+                        "mode": "READS",
+                        "resource_uri": "https://api.test/data?token=supersecret123",
+                    }
+                )
             if "filesystem::write_file" in (keys or []):
-                rows.append({
-                    "tool_key": "filesystem::write_file",
-                    "mode": "WRITES",
-                    "resource_uri": "https://user:password123@storage.test/vault",
-                })
+                rows.append(
+                    {
+                        "tool_key": "filesystem::write_file",
+                        "mode": "WRITES",
+                        "resource_uri": "https://user:password123@storage.test/vault",
+                    }
+                )
             return rows
 
         def __enter__(self):
@@ -377,12 +380,23 @@ def test_control_plan_cycle_and_invalid_edge_safe_traversal(monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", lambda p, c, **kwargs: {
-        "agent": p, "agent_found": True, "profile": kwargs.get("profile", "strict"), "eligible": list(c), "rejected": []
-    })
-    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", lambda fetch, **kwargs: {
-        **fetch(), "graph_state": {"instance_id": "test-instance", "generation": 1}
-    })
+    monkeypatch.setattr(
+        "toolgraph.control_plan.selector.eligible_tools",
+        lambda p, c, **kwargs: {
+            "agent": p,
+            "agent_found": True,
+            "profile": kwargs.get("profile", "strict"),
+            "eligible": list(c),
+            "rejected": [],
+        },
+    )
+    monkeypatch.setattr(
+        "toolgraph.control_plan.queries.with_graph_state",
+        lambda fetch, **kwargs: {
+            **fetch(),
+            "graph_state": {"instance_id": "test-instance", "generation": 1},
+        },
+    )
     monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
 
     doc = {
@@ -446,12 +460,23 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", lambda p, c, **kwargs: {
-        "agent": p, "agent_found": True, "profile": kwargs.get("profile", "strict"), "eligible": list(c), "rejected": []
-    })
-    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", lambda fetch, **kwargs: {
-        **fetch(), "graph_state": {"instance_id": "test-instance", "generation": 1}
-    })
+    monkeypatch.setattr(
+        "toolgraph.control_plan.selector.eligible_tools",
+        lambda p, c, **kwargs: {
+            "agent": p,
+            "agent_found": True,
+            "profile": kwargs.get("profile", "strict"),
+            "eligible": list(c),
+            "rejected": [],
+        },
+    )
+    monkeypatch.setattr(
+        "toolgraph.control_plan.queries.with_graph_state",
+        lambda fetch, **kwargs: {
+            **fetch(),
+            "graph_state": {"instance_id": "test-instance", "generation": 1},
+        },
+    )
     monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
 
     # Build 100 node chain: start -> n_0 -> ... -> n_99 -> end
@@ -502,7 +527,6 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
     assert "... (69 intermediate nodes) ..." in witness[16]
 
 
-
 def test_invalid_plan_error_names_the_field_but_not_its_value():
     document = control_plan_document()
     document["nodes"][0]["id"] = 12345678901234567890
@@ -543,43 +567,69 @@ def test_undeclared_principal_error_names_the_position_not_the_value():
 
 
 class ExposureSession:
-    def __init__(self, reads=('file:///input',), writes=('file:///output',)):
-        self.rows = [{'tool_key': 't::read', 'mode': 'READS', 'resource_uri': uri} for uri in reads]
-        self.rows += [{'tool_key': 't::write', 'mode': 'WRITES', 'resource_uri': uri} for uri in writes]
+    def __init__(self, reads=("file:///input",), writes=("file:///output",)):
+        self.rows = [{"tool_key": "t::read", "mode": "READS", "resource_uri": uri} for uri in reads]
+        self.rows += [
+            {"tool_key": "t::write", "mode": "WRITES", "resource_uri": uri} for uri in writes
+        ]
 
     def run(self, *_args, **_kwargs):
         return self.rows
 
 
 def _chain(count, *, writers=True, all_readers=False):
-    nodes = [{'id': f'n{i}', 'kind': 'start' if i == 0 else 'end' if i == count-1 else 'join',
-              'principals': [], 'agent_call': False} for i in range(count)]
-    for i in (range(1, count-1) if all_readers else [1]):
-        nodes[i]['principals'] = ['reader']
+    nodes = [
+        {
+            "id": f"n{i}",
+            "kind": "start" if i == 0 else "end" if i == count - 1 else "join",
+            "principals": [],
+            "agent_call": False,
+        }
+        for i in range(count)
+    ]
+    for i in range(1, count - 1) if all_readers else [1]:
+        nodes[i]["principals"] = ["reader"]
     if writers:
-        nodes[-2]['principals'] = ['writer']
-    raw = json.dumps({
-        'schema_version': 1, 'kind': 'toolgraph.control-plan', 'run_id': 'bounded',
-        'producer': {'name': 'test', 'version': '1'},
-        'principals': [{'id': 'reader', 'candidate_tools': ['t::read']}, {'id': 'writer', 'candidate_tools': ['t::write']}],
-        'nodes': nodes,
-        'edges': [{'from': f'n{i}', 'to': f'n{i+1}', 'kind': 'always', 'decided_by': 'code'} for i in range(count-1)],
-        'limits': {'maximum_agent_calls': 1, 'maximum_parallelism': 1, 'maximum_cycles': 0},
-    }).encode()
+        nodes[-2]["principals"] = ["writer"]
+    raw = json.dumps(
+        {
+            "schema_version": 1,
+            "kind": "toolgraph.control-plan",
+            "run_id": "bounded",
+            "producer": {"name": "test", "version": "1"},
+            "principals": [
+                {"id": "reader", "candidate_tools": ["t::read"]},
+                {"id": "writer", "candidate_tools": ["t::write"]},
+            ],
+            "nodes": nodes,
+            "edges": [
+                {"from": f"n{i}", "to": f"n{i + 1}", "kind": "always", "decided_by": "code"}
+                for i in range(count - 1)
+            ],
+            "limits": {"maximum_agent_calls": 1, "maximum_parallelism": 1, "maximum_cycles": 0},
+        }
+    ).encode()
     return raw, control_plan.load_control_plan(raw)
 
 
-EVALUATIONS = [{'principal': 'reader', 'eligible': ['t::read']}, {'principal': 'writer', 'eligible': ['t::write']}]
+EVALUATIONS = [
+    {"principal": "reader", "eligible": ["t::read"]},
+    {"principal": "writer", "eligible": ["t::write"]},
+]
 
 
 def test_golden_exposure_fixture_matches_actual_producer(monkeypatch):
     control_plan_bracket(monkeypatch)
-    fixture_dir = ROOT / 'contracts/fixtures'
-    expected = json.loads((fixture_dir / 'control-preflight-exposure-v1.json').read_text())
+    fixture_dir = ROOT / "contracts/fixtures"
+    expected = json.loads((fixture_dir / "control-preflight-exposure-v1.json").read_text())
     facts = ExposureSession()
     facts.rows = [
-        {'tool_key': 'workspace::read', 'mode': 'READS', 'resource_uri': 'file:///workspace/input'},
-        {'tool_key': 'workspace::write', 'mode': 'WRITES', 'resource_uri': 'file:///workspace/output'},
+        {"tool_key": "workspace::read", "mode": "READS", "resource_uri": "file:///workspace/input"},
+        {
+            "tool_key": "workspace::write",
+            "mode": "WRITES",
+            "resource_uri": "file:///workspace/output",
+        },
     ]
 
     @contextmanager
@@ -587,8 +637,10 @@ def test_golden_exposure_fixture_matches_actual_producer(monkeypatch):
         yield facts
 
     actual = control_plan.build_control_preflight(
-        (fixture_dir / 'control-plan-exposure-v1.json').read_bytes(), profile='review',
-        created_at=datetime.fromisoformat(expected['created_at']), session_factory=session,
+        (fixture_dir / "control-plan-exposure-v1.json").read_bytes(),
+        profile="review",
+        created_at=datetime.fromisoformat(expected["created_at"]),
+        session_factory=session,
     )
     assert actual == expected
 
@@ -596,84 +648,111 @@ def test_golden_exposure_fixture_matches_actual_producer(monkeypatch):
 def test_real_4096_node_reader_only_plan_skips_forward_search(monkeypatch):
     _, plan = _chain(4096, writers=False, all_readers=True)
     assert not control_plan.lint_control_plan(plan)
-    monkeypatch.setattr(control_plan, 'deque', lambda *a: pytest.fail('no writer requires no traversal'))
-    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession(writes=()))
-    assert result == {'exposures': [], 'truncated': False, 'total_candidate_pairs_found': 0}
+    monkeypatch.setattr(
+        control_plan, "deque", lambda *a: pytest.fail("no writer requires no traversal")
+    )
+    result = control_plan.compute_control_plan_exposures(
+        plan, EVALUATIONS, ExposureSession(writes=())
+    )
+    assert result == {"exposures": [], "truncated": False, "total_candidate_pairs_found": 0}
 
 
 def test_real_4096_node_witness_is_bounded():
     _, plan = _chain(4096)
     assert not control_plan.lint_control_plan(plan)
     result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession())
-    assert not result['truncated']
-    assert len(result['exposures']) == 1
-    witness = result['exposures'][0]['witness_path']
+    assert not result["truncated"]
+    assert len(result["exposures"]) == 1
+    witness = result["exposures"][0]["witness_path"]
     assert len(witness) == 32
-    assert witness[0] == 'n1' and witness[-1] == 'n4094'
-    assert '4063 intermediate nodes' in witness[16]
+    assert witness[0] == "n1" and witness[-1] == "n4094"
+    assert "4063 intermediate nodes" in witness[16]
 
 
 def test_traversal_cutoff_warns_even_without_emitted_pairs(monkeypatch):
     raw, _ = _chain(30)
-    monkeypatch.setattr(control_plan, 'MAX_EXPOSURE_TRAVERSAL_STEPS', 10)
-    monkeypatch.setattr(control_plan.selector, 'eligible_tools', lambda principal, candidates, **kw: {
-        'agent_found': True, 'eligible': candidates, 'rejected': [],
-    })
-    monkeypatch.setattr(control_plan.queries, 'with_graph_state', lambda fetch, **kw: {
-        **fetch(), 'graph_state': {'instance_id': 'test', 'generation': 1},
-    })
+    monkeypatch.setattr(control_plan, "MAX_EXPOSURE_TRAVERSAL_STEPS", 10)
+    monkeypatch.setattr(
+        control_plan.selector,
+        "eligible_tools",
+        lambda principal, candidates, **kw: {
+            "agent_found": True,
+            "eligible": candidates,
+            "rejected": [],
+        },
+    )
+    monkeypatch.setattr(
+        control_plan.queries,
+        "with_graph_state",
+        lambda fetch, **kw: {
+            **fetch(),
+            "graph_state": {"instance_id": "test", "generation": 1},
+        },
+    )
+
     @contextmanager
     def session():
         yield ExposureSession()
+
     artifact = control_plan.build_control_preflight(raw, session_factory=session)
-    assert artifact['potential_exposures'] == []
-    assert artifact['truncated'] is True
-    assert artifact['total_candidate_pairs_found'] == 0
-    assert artifact['decision'] == 'advisory_warn'
-    validator = Draft202012Validator(json.loads((ROOT / 'contracts/control-preflight.schema.json').read_text()))
+    assert artifact["potential_exposures"] == []
+    assert artifact["truncated"] is True
+    assert artifact["total_candidate_pairs_found"] == 0
+    assert artifact["decision"] == "advisory_warn"
+    validator = Draft202012Validator(
+        json.loads((ROOT / "contracts/control-preflight.schema.json").read_text())
+    )
     validator.validate(artifact)
     # Producer behavior is stricter than the backward-compatible v1 schema.
-    artifact['decision'] = 'advisory_allow'
+    artifact["decision"] = "advisory_allow"
     validator.validate(artifact)
 
 
 def test_sanitized_array_byte_budget_and_lower_bound(monkeypatch):
     _, plan = _chain(5)
-    session = ExposureSession(reads=('https://user:secret@host/input?token=' + 'x'*70_000,))
+    session = ExposureSession(reads=("https://user:secret@host/input?token=" + "x" * 70_000,))
     complete = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session)
-    assert len(complete['exposures']) == 1 and not complete['truncated']
-    assert complete['exposures'][0]['read_resource'] == 'https://host/input'
-    exact_size = len(json.dumps(complete['exposures']).encode())
-    monkeypatch.setattr(control_plan, 'MAX_AGGREGATE_EXPOSURE_BYTES', exact_size)
+    assert len(complete["exposures"]) == 1 and not complete["truncated"]
+    assert complete["exposures"][0]["read_resource"] == "https://host/input"
+    exact_size = len(json.dumps(complete["exposures"]).encode())
+    monkeypatch.setattr(control_plan, "MAX_AGGREGATE_EXPOSURE_BYTES", exact_size)
     assert control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session) == complete
-    session = ExposureSession(writes=('file:///output', 'file:///second'))
+    session = ExposureSession(writes=("file:///output", "file:///second"))
     bounded = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session)
-    assert bounded['truncated']
-    assert len(json.dumps(bounded['exposures']).encode()) <= exact_size
-    assert bounded['total_candidate_pairs_found'] > len(bounded['exposures'])
+    assert bounded["truncated"]
+    assert len(json.dumps(bounded["exposures"]).encode()) <= exact_size
+    assert bounded["total_candidate_pairs_found"] > len(bounded["exposures"])
 
 
 def test_record_limit_counts_discovered_not_all_pairs(monkeypatch):
     _, plan = _chain(5)
-    monkeypatch.setattr(control_plan, 'MAX_EXPOSURE_RECORDS', 2)
-    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession(writes=tuple(f'file:///{i}' for i in range(20))))
-    assert len(result['exposures']) == 2
-    assert result['truncated']
-    assert result['total_candidate_pairs_found'] == 3  # discovered lower bound, not 20
+    monkeypatch.setattr(control_plan, "MAX_EXPOSURE_RECORDS", 2)
+    result = control_plan.compute_control_plan_exposures(
+        plan, EVALUATIONS, ExposureSession(writes=tuple(f"file:///{i}" for i in range(20)))
+    )
+    assert len(result["exposures"]) == 2
+    assert result["truncated"]
+    assert result["total_candidate_pairs_found"] == 3  # discovered lower bound, not 20
 
 
-@pytest.mark.parametrize('change', ['oversized_path', 'oversized_list', 'negative_count', 'missing_count'])
+@pytest.mark.parametrize(
+    "change", ["oversized_path", "oversized_list", "negative_count", "missing_count"]
+)
 def test_exposure_contract_rejects_invalid_results(change):
-    result = json.loads((ROOT / 'contracts/fixtures/control-preflight-exposure-v1.json').read_text())
-    if change == 'oversized_path':
-        result['potential_exposures'][0]['witness_path'] = ['node'] * 33
-    elif change == 'oversized_list':
-        result['potential_exposures'] *= 101
-    elif change == 'negative_count':
-        result['total_candidate_pairs_found'] = -1
+    result = json.loads(
+        (ROOT / "contracts/fixtures/control-preflight-exposure-v1.json").read_text()
+    )
+    if change == "oversized_path":
+        result["potential_exposures"][0]["witness_path"] = ["node"] * 33
+    elif change == "oversized_list":
+        result["potential_exposures"] *= 101
+    elif change == "negative_count":
+        result["total_candidate_pairs_found"] = -1
     else:
-        result['truncated'] = True
-    validator = Draft202012Validator(json.loads((ROOT / 'contracts/control-preflight.schema.json').read_text()))
+        result["truncated"] = True
+    validator = Draft202012Validator(
+        json.loads((ROOT / "contracts/control-preflight.schema.json").read_text())
+    )
     with pytest.raises(ValidationError):
         validator.validate(result)
 
@@ -721,14 +800,13 @@ def test_control_loader_accepts_json_integer_numbers():
 
 def test_control_preflight_preserves_principal_identity(monkeypatch):
     from toolgraph.control_plan import build_control_preflight
+
     control_plan_bracket(monkeypatch)
     doc = control_plan_document()
     previous = doc["principals"][0]["id"]
     identity = "https://id.test/agent?role=one#part"
     doc["principals"][0]["id"] = identity
     for node in doc["nodes"]:
-        node["principals"] = [
-            identity if p == previous else p for p in node["principals"]
-        ]
+        node["principals"] = [identity if p == previous else p for p in node["principals"]]
     result = build_control_preflight(control_plan_raw(doc), profile="review")
     assert any(row["principal"] == identity for row in result["evaluations"])

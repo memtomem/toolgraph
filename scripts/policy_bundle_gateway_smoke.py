@@ -55,9 +55,7 @@ def run(
     return proc
 
 
-def run_json(
-    argv: list[str], *, cwd: Path, env: dict[str, str] | None = None
-) -> dict[str, Any]:
+def run_json(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> dict[str, Any]:
     proc = run(argv, cwd=cwd, env=env)
     try:
         value = json.loads(proc.stdout)
@@ -312,9 +310,7 @@ def stm_process_env(config: Path, *, observability: bool) -> dict[str, str]:
             "XDG_RUNTIME_DIR": str(runtime),
             "MEMTOMEM_STM_PROXY__CONFIG_PATH": str(config),
             "MEMTOMEM_STM_SURFACING__ENABLED": "false",
-            "MEMTOMEM_STM_ADVERTISE_OBSERVABILITY_TOOLS": (
-                "true" if observability else "false"
-            ),
+            "MEMTOMEM_STM_ADVERTISE_OBSERVABILITY_TOOLS": ("true" if observability else "false"),
         }
     )
     for key in list(env):
@@ -342,7 +338,9 @@ async def strict_live_reload(
     publish_deny: Any,
 ) -> None:
     with errlog.open("w", encoding="utf-8") as errors:
-        async with stdio_client(stm_params(stm_python, config, observability=False), errlog=errors) as (
+        async with stdio_client(
+            stm_params(stm_python, config, observability=False), errlog=errors
+        ) as (
             read_stream,
             write_stream,
         ):
@@ -407,7 +405,9 @@ async def assert_list(
                 if spool is None:
                     raise SmokeError("review call requires an invocation sentinel")
                 before = spool_count(spool, "read_note")
-                called = await session.call_tool("demo__read_note", {"note_id": "review" if expected_would_block else "disabled"})
+                called = await session.call_tool(
+                    "demo__read_note", {"note_id": "review" if expected_would_block else "disabled"}
+                )
                 if called.is_error:
                     raise SmokeError("review mode blocked a would-block call")
                 if spool_count(spool, "read_note") != before + 1:
@@ -432,10 +432,7 @@ def review_counter(health_text: str, expected: int) -> int:
     return int(counts[0])
 
 
-
-async def expect_start_failure(
-    *, stm_python: Path, config: Path, errlog: Path
-) -> None:
+async def expect_start_failure(*, stm_python: Path, config: Path, errlog: Path) -> None:
     async def initialize() -> None:
         with errlog.open("w", encoding="utf-8") as errors:
             async with stdio_client(
@@ -518,8 +515,11 @@ def main() -> int:
         )
         write_yaml(allow_manifest, governance(allow_read=True))
         write_yaml(deny_manifest, governance(allow_read=False))
-        tg_env = {key: value for key, value in os.environ.items()
-                  if not key.startswith(("TOOLGRAPH_", "NEO4J_", "GIT_"))}
+        tg_env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("TOOLGRAPH_", "NEO4J_", "GIT_"))
+        }
         tg_env["TOOLGRAPH_CONFIG"] = str(state / "config.json")
         run([str(tg), "init", "--state-dir", str(state)], cwd=ROOT, env=tg_env)
         run([str(tg), "crawl", "--servers", str(servers)], cwd=ROOT, env=tg_env)
@@ -707,11 +707,17 @@ def main() -> int:
         # The one-field rollback must bypass even a missing policy artifact.
         missing_config["toolgraph"]["enabled"] = False
         write_json(config_path, missing_config)
-        asyncio.run(assert_list(
-            stm_python=stm_python, config=config_path,
-            errlog=workspace / "disabled.stderr.log", expected_present=True,
-            review_call=True, spool=spool, expected_would_block=None,
-        ))
+        asyncio.run(
+            assert_list(
+                stm_python=stm_python,
+                config=config_path,
+                errlog=workspace / "disabled.stderr.log",
+                expected_present=True,
+                review_call=True,
+                spool=spool,
+                expected_would_block=None,
+            )
+        )
 
         require_clean_checkout(ROOT, args.toolgraph_ref)
         require_clean_checkout(stm_root, args.memtomem_stm_ref)

@@ -67,6 +67,7 @@ def profile_error(profile: object) -> str | None:
         return None
     return f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
 
+
 DEFAULT_PROFILE = "strict"
 
 # Batch bound, mirroring the control-plan limit: the selector is batch-first,
@@ -171,17 +172,13 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     ``risk_score`` (see ``_risk_score`` for the fixed table).
     """
     if len(candidates) > MAX_CANDIDATES:
-        raise ContractError(
-            f"{len(candidates)} candidates exceed the {MAX_CANDIDATES} limit"
-        )
+        raise ContractError(f"{len(candidates)} candidates exceed the {MAX_CANDIDATES} limit")
     if not agent_exists(agent):
         return {"agent": agent, "agent_found": False, "features": []}
 
     with session() as s:
         resolved = resolve_tool_refs(s, candidates)
-        unique_keys = sorted(
-            {keys[0] for keys in resolved.values() if len(keys) == 1}
-        )
+        unique_keys = sorted({keys[0] for keys in resolved.values() if len(keys) == 1})
         facts = _tool_facts(s, unique_keys, agent)
         deny = _deny_evidence_batch(s, unique_keys, agent=agent)
 
@@ -288,9 +285,7 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
     eligible: list[str] = []
     rejected: list[dict] = []
     for feature in ranked["features"]:
-        reason = next(
-            (r for r in _applicable_reasons(feature) if r in rejects), None
-        )
+        reason = next((r for r in _applicable_reasons(feature) if r in rejects), None)
         if reason is None:
             eligible.append(feature["tool_key"])
             continue
@@ -302,13 +297,9 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
         if reason == "AMBIGUOUS_TOOL":
             row["candidates"] = feature["candidates"]
         if reason in ("DENY_VIOLATION", "DENY_GOVERNED"):
-            wanted = (
-                "violation" if reason == "DENY_VIOLATION" else "authorized_but_governed"
-            )
+            wanted = "violation" if reason == "DENY_VIOLATION" else "authorized_but_governed"
             row["paths"] = [
-                d["path"]
-                for d in feature["deny_paths"]
-                if d.get("classification") == wanted
+                d["path"] for d in feature["deny_paths"] if d.get("classification") == wanted
             ]
         rejected.append(row)
 
@@ -321,9 +312,7 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
     }
 
 
-def eligible_tools(
-    agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE
-) -> dict:
+def eligible_tools(agent: str, candidates: list[str], profile: str = DEFAULT_PROFILE) -> dict:
     """Hard filter with reject reasons and policy-evidence paths (ADR-0005).
 
     ``eligible`` holds resolved tool keys in candidate input order; every
@@ -337,9 +326,7 @@ def eligible_tools(
     return filter_features(rank_features(agent, candidates), profile)
 
 
-def selection_explain(
-    agent: str, tool: str, profile: str = DEFAULT_PROFILE
-) -> dict:
+def selection_explain(agent: str, tool: str, profile: str = DEFAULT_PROFILE) -> dict:
     """Compact human-readable reasons for one (agent, tool) — a view over the
     same facts ``rank_features`` returns, for operators and end users."""
     if problem := profile_error(profile):
@@ -370,9 +357,7 @@ def selection_explain(
         )
     else:
         reasons.append(
-            "agent has CAN_CALL grant"
-            if feature["permitted"]
-            else "agent has no CAN_CALL grant"
+            "agent has CAN_CALL grant" if feature["permitted"] else "agent has no CAN_CALL grant"
         )
         if not feature["deny_paths"]:
             reasons.append("no DENY policy path found")
@@ -399,9 +384,7 @@ def selection_explain(
         )
         for hint in TOOL_HINT_FIELDS:
             if feature[hint] is not None:
-                reasons.append(
-                    f"server self-claim (crawled/medium): {hint}={feature[hint]}"
-                )
+                reasons.append(f"server self-claim (crawled/medium): {hint}={feature[hint]}")
 
     return {
         "agent": agent,

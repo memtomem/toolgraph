@@ -100,7 +100,9 @@ def comma_set(value: str) -> set[str]:
     return {item.strip().lower() for item in value.split(",") if item.strip()}
 
 
-def load_signatures(repo: str, branch: str, path: str, token: str) -> tuple[dict[str, Any], str | None]:
+def load_signatures(
+    repo: str, branch: str, path: str, token: str
+) -> tuple[dict[str, Any], str | None]:
     try:
         response = gh_api(f"repos/{repo}/contents/{path}?ref={branch}", token=token)
     except GitHubApiError as exc:
@@ -263,7 +265,10 @@ def cla_bot_comments(repo: str, pr_number: int, token: str) -> list[dict[str, An
 
 
 def post_comment_once(repo: str, pr_number: int, token: str, body: str, marker: str) -> None:
-    if any(marker in (comment.get("body") or "") for comment in cla_bot_comments(repo, pr_number, token)):
+    if any(
+        marker in (comment.get("body") or "")
+        for comment in cla_bot_comments(repo, pr_number, token)
+    ):
         return
     gh_api(
         f"repos/{repo}/issues/{pr_number}/comments",

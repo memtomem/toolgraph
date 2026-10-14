@@ -27,6 +27,7 @@ from toolgraph.models import (
 from toolgraph.models import ExpectedException
 from tests._helpers import CSV, seed_basic
 
+
 def _seed() -> None:
     loader.load_crawl_result(
         CrawlResult(
@@ -152,16 +153,22 @@ async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container)
     candidates = ["read_file", "sample::ping", "nope"]
     async with open_session(_spec(neo4j_container)) as session:
         await session.initialize()
-        ranked = _structured(await session.call_tool(
-            "rank_features", {"agent": "support-bot", "candidates": candidates}
-        ))
-        filtered = _structured(await session.call_tool(
-            "eligible_tools",
-            {"agent": "support-bot", "candidates": candidates, "profile": "review"},
-        ))
-        explained = _structured(await session.call_tool(
-            "selection_explain", {"agent": "support-bot", "tool": "read_file"}
-        ))
+        ranked = _structured(
+            await session.call_tool(
+                "rank_features", {"agent": "support-bot", "candidates": candidates}
+            )
+        )
+        filtered = _structured(
+            await session.call_tool(
+                "eligible_tools",
+                {"agent": "support-bot", "candidates": candidates, "profile": "review"},
+            )
+        )
+        explained = _structured(
+            await session.call_tool(
+                "selection_explain", {"agent": "support-bot", "tool": "read_file"}
+            )
+        )
 
     state = queries.graph_state()
     for got, expected in (
@@ -173,7 +180,7 @@ async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container)
             graph_generation=state.generation,
             graph_instance_id=state.instance_id,
             graph_state={"instance_id": state.instance_id, "generation": state.generation},
-        graph_state_verified=True,
+            graph_state_verified=True,
         )
         assert got == expected
 
@@ -184,9 +191,9 @@ async def test_mcp_blast_radius_carries_found_flag(graph, neo4j_container):
     _seed()
     async with open_session(_spec(neo4j_container)) as session:
         await session.initialize()
-        got = _structured(await session.call_tool(
-            "blast_radius", {"node": "file:///does/not/exist"}
-        ))
+        got = _structured(
+            await session.call_tool("blast_radius", {"node": "file:///does/not/exist"})
+        )
     assert got["found"] is False
     assert got["impacted"] == []
 
@@ -198,9 +205,7 @@ async def test_mcp_unbacked_edges_respects_include_grants(graph, neo4j_container
     async with open_session(_spec(neo4j_container)) as session:
         await session.initialize()
         default = _structured(await session.call_tool("unbacked_edges", {}))
-        wider = _structured(await session.call_tool(
-            "unbacked_edges", {"include_grants": True}
-        ))
+        wider = _structured(await session.call_tool("unbacked_edges", {"include_grants": True}))
     assert wider["count"] >= default["count"]
     assert {e["edge_type"] for e in default["edges"]}.isdisjoint({"CAN_CALL"})
 
@@ -261,13 +266,18 @@ def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
     # Direct invocation of the @mcp.tool() function (no MCP transport needed
     # for this assertion — we're testing the wrapper, not the protocol).
     from toolgraph.server.app import unsafe_callable_tools as wrap
+
     default = wrap.fn("planner") if hasattr(wrap, "fn") else wrap("planner")
     assert default["agent_found"] is True
     assert default["count"] == 1
     assert default["tools"][0]["tool"] == "write_file"
     assert all(t["classification"] == "violation" for t in default["tools"])
 
-    full = wrap.fn("planner", include_authorized=True) if hasattr(wrap, "fn") else wrap("planner", include_authorized=True)
+    full = (
+        wrap.fn("planner", include_authorized=True)
+        if hasattr(wrap, "fn")
+        else wrap("planner", include_authorized=True)
+    )
     assert full["count"] == 2
     classifications = {t["classification"] for t in full["tools"]}
     assert classifications == {"violation", "authorized_but_governed"}
@@ -276,6 +286,7 @@ def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
 def test_mcp_unsafe_callable_tools_wrapper_signals_unknown_agent(graph):
     seed_basic(graph)
     from toolgraph.server.app import unsafe_callable_tools as wrap
+
     res = wrap.fn("planer") if hasattr(wrap, "fn") else wrap("planer")
     assert res["agent_found"] is False
     assert res["count"] == 0

@@ -22,9 +22,7 @@ from toolgraph.graph.driver import BackendUnavailableError
 
 # A message shaped like the neo4j driver's: carries the full connection URI
 # with userinfo. The CLI must never print the credential part back.
-OUTAGE = BackendUnavailableError(
-    "Couldn't connect to bolt://neo4j:supersecret@graph.internal:7687"
-)
+OUTAGE = BackendUnavailableError("Couldn't connect to bolt://neo4j:supersecret@graph.internal:7687")
 
 
 def _raise_outage(*args, **kwargs):
@@ -45,15 +43,17 @@ def _all_output(result) -> str:
         (["check"], ("toolgraph.cli.driver.verify_connectivity",)),
         (["init-schema"], ("toolgraph.cli.schema.init_schema",)),
         (["drift"], ("toolgraph.cli.queries.drifted_tools",)),
-        (["audit-report"], ("toolgraph.cli.queries.graph_state",
-                            "toolgraph.cli.queries.audit_report")),
-        (["check-access", "planner", "sample::read_file"],
-         ("toolgraph.cli.queries.check_access",)),
+        (
+            ["audit-report"],
+            ("toolgraph.cli.queries.graph_state", "toolgraph.cli.queries.audit_report"),
+        ),
+        (["check-access", "planner", "sample::read_file"], ("toolgraph.cli.queries.check_access",)),
         (["unsafe-tools", "planner"], ("toolgraph.cli.queries.agent_exists",)),
-        (["rank-features", "planner", "sample::read_file"],
-         ("toolgraph.cli.queries.agent_exists",)),
-        (["blast-radius", "file:///data/customers.csv"],
-         ("toolgraph.cli.queries.blast_radius",)),
+        (
+            ["rank-features", "planner", "sample::read_file"],
+            ("toolgraph.cli.queries.agent_exists",),
+        ),
+        (["blast-radius", "file:///data/customers.csv"], ("toolgraph.cli.queries.blast_radius",)),
     ],
 )
 def test_backend_outage_is_one_redacted_error_line(monkeypatch, argv, attr):
@@ -73,8 +73,7 @@ def test_policy_compile_outage_is_redacted(monkeypatch, tmp_path):
     monkeypatch.setattr("toolgraph.policy_bundle.queries.with_graph_state", _raise_outage)
     result = CliRunner().invoke(
         cli.app,
-        ["policy", "compile", "--agent", "planner",
-         "--output", str(tmp_path / "bundle.json")],
+        ["policy", "compile", "--agent", "planner", "--output", str(tmp_path / "bundle.json")],
     )
 
     output = _all_output(result)
@@ -84,9 +83,7 @@ def test_policy_compile_outage_is_redacted(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="directory fsync is POSIX-only")
-def test_atomic_write_warns_but_publishes_when_directory_fsync_fails(
-    monkeypatch, tmp_path
-):
+def test_atomic_write_warns_but_publishes_when_directory_fsync_fails(monkeypatch, tmp_path):
     """A dir-fsync I/O failure after os.replace must not fail the write."""
     real_fsync = os.fsync
 

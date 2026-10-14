@@ -5,6 +5,7 @@ Timing includes one complete ingest transaction, not crawl or schema creation.
 Python allocation peaks exclude native engine/container memory. Measurements
 are evidence for this fixture and machine, not a latency SLA or backend ranking.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -53,12 +54,14 @@ def measure(module, gov, repeats):
     digest = governance_digest(gov)
     for attempt in range(repeats + 1):
         with driver.session() as session:
+
             def apply(tx):
                 counted = Counter(tx)
                 warnings, notices = module._ingest(counted, gov, digest=digest)
                 if warnings or notices:
                     raise RuntimeError("benchmark fixture did not ingest cleanly")
                 return counted.count
+
             tracemalloc.start()
             start = time.perf_counter()
             count = session.execute_write(apply)
@@ -69,8 +72,12 @@ def measure(module, gov, repeats):
             durations.append(duration)
             counts.append(count)
             peaks.append(peak)
-    return {"query_counts": counts, "median_ms": statistics.median(durations),
-            "samples_ms": durations, "python_peak_bytes": max(peaks)}
+    return {
+        "query_counts": counts,
+        "median_ms": statistics.median(durations),
+        "samples_ms": durations,
+        "python_peak_bytes": max(peaks),
+    }
 
 
 def main():
@@ -90,42 +97,68 @@ def main():
     try:
         for backend in ("ladybug", "neo4j"):
             with ExitStack() as stack:
-                temp = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="toolgraph-bench-")))
+                temp = Path(
+                    stack.enter_context(tempfile.TemporaryDirectory(prefix="toolgraph-bench-"))
+                )
                 if backend == "ladybug":
                     if importlib.util.find_spec("ladybug") is None:
                         raise RuntimeError("Ladybug is required")
                     settings = config.Settings(backend="ladybug", db_path=temp / "bench.lbug")
                 else:
                     from testcontainers.neo4j import Neo4jContainer
-                    db = stack.enter_context(Neo4jContainer(
-                        NEO4J_IMAGE, username="neo4j", password="testpass"
-                    ))
-                    settings = config.Settings(backend="neo4j", neo4j_uri=db.get_connection_url(),
-                                               neo4j_user="neo4j", neo4j_password="testpass")
+
+                    db = stack.enter_context(
+                        Neo4jContainer(NEO4J_IMAGE, username="neo4j", password="testpass")
+                    )
+                    settings = config.Settings(
+                        backend="neo4j",
+                        neo4j_uri=db.get_connection_url(),
+                        neo4j_user="neo4j",
+                        neo4j_password="testpass",
+                    )
                 driver.close_driver()
                 config.settings = settings
                 stack.callback(driver.close_driver)
                 schema.init_schema()
                 for size in (100, 1000, 4097, 10000):
-                    loader.load_crawl_result(CrawlResult(
-                        server_name="bench", tools=[ToolRecord(name=f"t{i}") for i in range(size)]
-                    ))
-                    gov = Governance(agents=["a"], policies=[Policy(id="p", effect="ALLOW")],
-                                     grants=[AccessGrant(agent="a", tool=f"bench::t{i}") for i in range(size)])
+                    loader.load_crawl_result(
+                        CrawlResult(
+                            server_name="bench",
+                            tools=[ToolRecord(name=f"t{i}") for i in range(size)],
+                        )
+                    )
+                    gov = Governance(
+                        agents=["a"],
+                        policies=[Policy(id="p", effect="ALLOW")],
+                        grants=[AccessGrant(agent="a", tool=f"bench::t{i}") for i in range(size)],
+                    )
                     # Duplicate the first grant 100 times: this must not add resolution queries.
                     gov.grants.extend([gov.grants[0]] * 100)
                     for variant, module in (("baseline", old_ingest), ("batched", ingest)):
-                        result = {"backend": backend, "tools": size, "variant": variant,
-                                  **measure(module, gov, args.repeats)}
+                        result = {
+                            "backend": backend,
+                            "tools": size,
+                            "variant": variant,
+                            **measure(module, gov, args.repeats),
+                        }
                         rows.append(result)
                         print(json.dumps(result), flush=True)
     finally:
         driver.close_driver()
         config.settings = original
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({"baseline_ref": ref, "rows": rows,
-        "working_tree_dirty": bool(run(["git", "status", "--porcelain"], cwd=ROOT).stdout),
-        "memory_scope": "tracemalloc Python allocations only; excludes native/DB memory"}, indent=2) + "\n")
+    args.output.write_text(
+        json.dumps(
+            {
+                "baseline_ref": ref,
+                "rows": rows,
+                "working_tree_dirty": bool(run(["git", "status", "--porcelain"], cwd=ROOT).stdout),
+                "memory_scope": "tracemalloc Python allocations only; excludes native/DB memory",
+            },
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":

@@ -58,9 +58,7 @@ def _seed() -> None:
                 AccessGrant(agent="codex", tool="alpha::read"),
                 AccessGrant(agent="codex", tool="alpha::ping"),
             ],
-            data_access=[
-                DataAccess(tool="alpha::read", resource=SECRET, mode="READS")
-            ],
+            data_access=[DataAccess(tool="alpha::read", resource=SECRET, mode="READS")],
             governed_by={SECRET: ["secret-deny"]},
         )
     )
@@ -70,9 +68,7 @@ def _seed() -> None:
 def test_ladybug_end_to_end_policy_bundle(ladybug_graph):
     _seed()
     assert queries.check_access("codex", "alpha::read")["verdict"] == "DENY"
-    filtered = selector.eligible_tools(
-        "codex", ["alpha::ping", "alpha::read"], profile="strict"
-    )
+    filtered = selector.eligible_tools("codex", ["alpha::ping", "alpha::read"], profile="strict")
     assert filtered["eligible"] == []  # ping is intentionally UNMAPPED
     assert {row["reason"] for row in filtered["rejected"]} == {
         "UNMAPPED",
@@ -214,61 +210,69 @@ def test_init_schema_does_not_skip_the_version_gate_on_an_outage(monkeypatch):
     assert len(statements) == 1  # the version read; no DDL ran
 
 
-@pytest.mark.parametrize('json_output', [False, True])
-def test_uninitialized_ladybug_dry_run_is_controlled_and_unchanged(embedded_path, tmp_path, json_output):
+@pytest.mark.parametrize("json_output", [False, True])
+def test_uninitialized_ladybug_dry_run_is_controlled_and_unchanged(
+    embedded_path, tmp_path, json_output
+):
     import ladybug
+
     embedded_path.parent.mkdir()
     ladybug.Database(embedded_path).close()
     before = hashlib.sha256(embedded_path.read_bytes()).hexdigest()
-    gov = tmp_path / 'gov.yaml'
-    gov.write_text('agents: [bot]\n')
-    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(gov), '--dry-run'] + (['--json'] if json_output else []))
+    gov = tmp_path / "gov.yaml"
+    gov.write_text("agents: [bot]\n")
+    result = CliRunner().invoke(
+        cli.app,
+        ["ingest-manifest", "--governance", str(gov), "--dry-run"]
+        + (["--json"] if json_output else []),
+    )
     assert result.exit_code == 1, result.output
-    assert 'init-schema' in result.stderr
-    assert 'Traceback' not in result.output
+    assert "init-schema" in result.stderr
+    assert "Traceback" not in result.output
     assert driver._ladybug_database is None
     assert hashlib.sha256(embedded_path.read_bytes()).hexdigest() == before
 
 
 def test_owned_readonly_sessions_never_use_writable_acquisition(embedded_path, monkeypatch):
     schema.init_schema()
-    assert ingest_governance(Governance(agents=['bot'])).applied
+    assert ingest_governance(Governance(agents=["bot"])).applied
     state = queries.graph_state()
     driver.close_driver()
     before = embedded_path.read_bytes()
 
     @contextmanager
     def forbidden():
-        raise AssertionError('reader reopened a writable database')
+        raise AssertionError("reader reopened a writable database")
         yield  # unreachable; makes forbidden() a generator for @contextmanager
 
-    monkeypatch.setattr(driver, 'session', forbidden)
-    monkeypatch.setattr(queries, 'session', forbidden)
-    result = CliRunner().invoke(cli.app, ['doctor', '--json'])
+    monkeypatch.setattr(driver, "session", forbidden)
+    monkeypatch.setattr(queries, "session", forbidden)
+    result = CliRunner().invoke(cli.app, ["doctor", "--json"])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)['healthy']
+    assert json.loads(result.stdout)["healthy"]
     report = dry_run_ingest(Governance())
-    assert report.graph_state == {'instance_id': state.instance_id, 'generation': state.generation}
-    assert report.agents_deleted == ['bot']
+    assert report.graph_state == {"instance_id": state.instance_id, "generation": state.generation}
+    assert report.agents_deleted == ["bot"]
     assert embedded_path.read_bytes() == before
     assert driver._ladybug_database is None
 
 
 def test_readonly_native_open_cannot_recreate_a_disappearing_file(embedded_path, monkeypatch):
     import ladybug
+
     schema.init_schema()
     driver.close_driver()
     original = ladybug.Database
 
     def disappear(path, **kwargs):
-        assert kwargs['read_only'] is True
+        assert kwargs["read_only"] is True
         Path(path).unlink()
         return original(path, **kwargs)
 
-    monkeypatch.setattr(ladybug, 'Database', disappear)
+    monkeypatch.setattr(ladybug, "Database", disappear)
     with pytest.raises(driver.BackendUnavailableError):
         with driver.acquire_readonly_session():
-            pytest.fail('must refuse missing database')
+            pytest.fail("must refuse missing database")
     assert not embedded_path.exists()
 
 
@@ -288,9 +292,9 @@ def test_borrowed_readonly_handle_survives_concurrent_shutdown(embedded_path):
             worker.start()
             assert attempted.wait(2)
             assert not completed.wait(0.05)
-            assert session.run('RETURN 1 AS ok').single()['ok'] == 1
+            assert session.run("RETURN 1 AS ok").single()["ok"] == 1
             with driver.acquire_readonly_session() as nested:
-                assert nested.run('RETURN 1 AS ok').single()['ok'] == 1
+                assert nested.run("RETURN 1 AS ok").single()["ok"] == 1
         worker.join(2)
         assert completed.is_set()
         assert driver._ladybug_database is None
@@ -298,30 +302,34 @@ def test_borrowed_readonly_handle_survives_concurrent_shutdown(embedded_path):
         worker.join(2)
 
 
-@pytest.mark.parametrize('backend', ['neo4j', 'ladybug'])
+@pytest.mark.parametrize("backend", ["neo4j", "ladybug"])
 def test_catalog_failure_is_not_reported_as_missing_schema(monkeypatch, backend):
-    monkeypatch.setattr(schema, 'backend_name', lambda: backend)
-    monkeypatch.setattr(schema, '_stored_backend_schema_version', lambda s: schema.BACKEND_SCHEMA_VERSION)
+    monkeypatch.setattr(schema, "backend_name", lambda: backend)
+    monkeypatch.setattr(
+        schema, "_stored_backend_schema_version", lambda s: schema.BACKEND_SCHEMA_VERSION
+    )
 
     class DeniedCatalog:
         def run(self, *_args):
-            raise RuntimeError('permission denied')
+            raise RuntimeError("permission denied")
 
-    with pytest.raises(driver.BackendConfigurationError, match='catalog read permissions') as error:
+    with pytest.raises(driver.BackendConfigurationError, match="catalog read permissions") as error:
         schema.check_backend_schema_version(DeniedCatalog())
-    assert 'init-schema' not in str(error.value)
+    assert "init-schema" not in str(error.value)
 
 
-@pytest.mark.parametrize('native', [False, True])
+@pytest.mark.parametrize("native", [False, True])
 def test_catalog_outage_preserves_backend_unavailable(monkeypatch, native):
     from neo4j.exceptions import ServiceUnavailable
 
-    monkeypatch.setattr(schema, 'backend_name', lambda: 'neo4j')
-    monkeypatch.setattr(schema, '_stored_backend_schema_version', lambda s: schema.BACKEND_SCHEMA_VERSION)
+    monkeypatch.setattr(schema, "backend_name", lambda: "neo4j")
+    monkeypatch.setattr(
+        schema, "_stored_backend_schema_version", lambda s: schema.BACKEND_SCHEMA_VERSION
+    )
 
     class OfflineCatalog:
         def run(self, *_args):
-            raise (ServiceUnavailable if native else driver.BackendUnavailableError)('offline')
+            raise (ServiceUnavailable if native else driver.BackendUnavailableError)("offline")
 
     with pytest.raises(driver.BackendUnavailableError):
         schema.check_backend_schema_version(OfflineCatalog())
@@ -329,11 +337,13 @@ def test_catalog_outage_preserves_backend_unavailable(monkeypatch, native):
 
 def test_corrupt_ladybug_dry_run_is_controlled(embedded_path, tmp_path):
     embedded_path.parent.mkdir()
-    embedded_path.write_bytes(b'not a database')
-    path = tmp_path / 'governance.yaml'
-    path.write_text('agents: [bot]\n')
-    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path), '--dry-run'])
+    embedded_path.write_bytes(b"not a database")
+    path = tmp_path / "governance.yaml"
+    path.write_text("agents: [bot]\n")
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run"]
+    )
     assert result.exit_code == 1
-    assert 'file integrity and format' in result.stderr
-    assert 'Traceback' not in result.output
-    assert embedded_path.read_bytes() == b'not a database'
+    assert "file integrity and format" in result.stderr
+    assert "Traceback" not in result.output
+    assert embedded_path.read_bytes() == b"not a database"

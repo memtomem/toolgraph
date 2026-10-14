@@ -138,18 +138,14 @@ def test_bundle_schema_accepts_producer(monkeypatch):
 
 
 def test_golden_contract_and_bundle_bytes_pin_cross_repo_encoding():
-    fixture = json.loads(
-        (ROOT / "contracts" / "fixtures" / "tool-contract-v1.json").read_text()
-    )
+    fixture = json.loads((ROOT / "contracts" / "fixtures" / "tool-contract-v1.json").read_text())
     assert tool_contract_digest(fixture["contract"]) == fixture["expected_digest"]
 
     bundle_path = ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json"
     payload = bundle_path.read_bytes()
     bundle = json.loads(payload)
     assert canonical_json_bytes(bundle) == payload
-    expected = (
-        ROOT / "contracts" / "fixtures" / "policy-bundle-v1.sha256"
-    ).read_text().strip()
+    expected = (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.sha256").read_text().strip()
     assert sha256_bytes(payload) == expected
     schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
     Draft202012Validator(schema, format_checker=None).validate(bundle)
@@ -161,8 +157,8 @@ def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
     bundle = json.loads(payload)
     assert canonical_json_bytes(bundle) == payload
     expected = (
-        ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.sha256"
-    ).read_text().strip()
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.sha256").read_text().strip()
+    )
     assert sha256_bytes(payload) == expected
     decision = bundle["tools"][0]
     assert decision["decision"] == "rejected"
@@ -183,9 +179,7 @@ def test_schema_rejects_exact_duplicate_tool_rows():
     # tools description and the producer check.
     assert schema["$defs"]["graphState"]["additionalProperties"] is False
     assert schema["properties"]["tools"]["uniqueItems"] is True
-    bundle = json.loads(
-        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text()
-    )
+    bundle = json.loads((ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text())
     bundle["tools"] = bundle["tools"] * 2
     with pytest.raises(ValidationError):
         Draft202012Validator(schema, format_checker=None).validate(bundle)
@@ -216,9 +210,7 @@ def test_schema_alone_cannot_catch_conflicting_duplicate_rows():
     check, not the schema, are what make uniqueness enforceable.
     """
     schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
-    bundle = json.loads(
-        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text()
-    )
+    bundle = json.loads((ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text())
     conflicting = dict(bundle["tools"][0])
     conflicting["risk_score"] = 1.0
     bundle["tools"] = [bundle["tools"][0], conflicting]
@@ -355,9 +347,7 @@ def test_real_graph_bundle_carries_ingested_governance_digest(graph):
 
 @pytest.mark.parametrize("size", [0, 4095, 4096, 4097])
 def test_injected_reader_chunks_without_runtime(monkeypatch, size):
-    monkeypatch.setattr(
-        queries, "graph_state", lambda: pytest.fail("global state accessed")
-    )
+    monkeypatch.setattr(queries, "graph_state", lambda: pytest.fail("global state accessed"))
     reader = FakeBundleReader(size)
     bundle = build_policy_bundle(agent="a", store=reader)
     assert [r["tool_key"] for r in bundle["tools"]] == reader.keys
@@ -411,10 +401,7 @@ def test_chunk_state_change_retries_whole_catalog(monkeypatch, always):
             build_policy_bundle(agent="a", store=reader)
         assert len(reader.calls) == 10
     else:
-        assert (
-            build_policy_bundle(agent="a", store=reader)["graph_state"]["generation"]
-            == 2
-        )
+        assert build_policy_bundle(agent="a", store=reader)["graph_state"]["generation"] == 2
         assert reader.calls[:2] == reader.calls[2:]
 
 
@@ -425,9 +412,7 @@ def test_uri_identities_keep_opposite_decisions_in_export(backend_graph, tmp_pat
     agent = "https://id.test/a?role=one#part"
     keys = ["s::https://id.test/t?role=one#part", "s::https://id.test/t?role=two#part"]
     loader.load_crawl_result(
-        CrawlResult(
-            server_name="s", tools=[ToolRecord(name=k.split("::", 1)[1]) for k in keys]
-        )
+        CrawlResult(server_name="s", tools=[ToolRecord(name=k.split("::", 1)[1]) for k in keys])
     )
     assert ingest_governance(
         Governance(
@@ -474,10 +459,7 @@ def test_legacy_reader_fallback():
                 "features": [{"tool_key": "s::t", "risk_score": 0}],
             }
 
-    assert (
-        build_policy_bundle(agent="a", store=Legacy())["tools"][0]["decision"]
-        == "eligible"
-    )
+    assert build_policy_bundle(agent="a", store=Legacy())["tools"][0]["decision"] == "eligible"
 
 
 def test_empty_catalog_unknown_agent_fails():

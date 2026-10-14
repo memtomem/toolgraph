@@ -52,9 +52,7 @@ def test_init_schema_refuses_mismatched_backend_schema_version(graph):
 
     schema.init_schema()  # the graph fixture wiped GraphMeta; recreate it
     with driver.session() as s:
-        s.run(
-            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 99"
-        )
+        s.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 99")
     with pytest.raises(BackendConfigurationError, match="backend schema version 99"):
         schema.init_schema()
     # Restore so the fixture teardown and later assertions stay clean.

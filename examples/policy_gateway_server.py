@@ -34,9 +34,7 @@ def build() -> MCPServer:
 
     if schema_version == "2":
 
-        @server.tool(
-            annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True)
-        )
+        @server.tool(annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True))
         def read_note(note_id: str, format: str = "text") -> str:
             """Read a deterministic demo note using the v2 contract."""
             _record("read_note")
@@ -44,9 +42,7 @@ def build() -> MCPServer:
 
     else:
 
-        @server.tool(
-            annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True)
-        )
+        @server.tool(annotations=ToolAnnotations(read_only_hint=True, idempotent_hint=True))
         def read_note(note_id: str) -> str:
             """Read a deterministic demo note."""
             _record("read_note")

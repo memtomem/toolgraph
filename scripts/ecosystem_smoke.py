@@ -115,10 +115,12 @@ def dependency_evidence(root: Path) -> dict[str, Any]:
         "lock_digest": sha256(root / "uv.lock"),
         "installed": [
             {"name": item["name"], "version": item["version"]}
-            for item in json.loads(run(
-                ["uv", "pip", "list", "--format", "json", "--python", str(root / ".venv")],
-                cwd=root,
-            ).stdout)
+            for item in json.loads(
+                run(
+                    ["uv", "pip", "list", "--format", "json", "--python", str(root / ".venv")],
+                    cwd=root,
+                ).stdout
+            )
         ],
     }
 
@@ -146,14 +148,14 @@ def write_stubs(bin_dir: Path) -> None:
         "#!/bin/sh\n"
         "sleep 1\n"
         "printf 'codex\\n' > winner.txt\n"
-        "printf '%s\\n' '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"done\"}}'\n",
+        'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\'\n',
         encoding="utf-8",
     )
     kimi = bin_dir / "kimi"
     kimi.write_text(
         "#!/bin/sh\n"
         "printf 'kimi\\n' > winner.txt\n"
-        "printf '%s\\n' '{\"role\":\"assistant\",\"content\":\"done\"}'\n",
+        'printf \'%s\\n\' \'{"role":"assistant","content":"done"}\'\n',
         encoding="utf-8",
     )
     codex.chmod(0o755)
@@ -335,7 +337,11 @@ def main() -> int:
     if run(["docker", "info"], check=False, timeout=20).returncode:
         raise SmokeError("Docker is required; start the daemon and rerun the smoke")
 
-    roots = {"toolgraph": ROOT, "syncmill": args.syncmill_root.resolve(), "tracegraph": args.tracegraph_root.resolve()}
+    roots = {
+        "toolgraph": ROOT,
+        "syncmill": args.syncmill_root.resolve(),
+        "tracegraph": args.tracegraph_root.resolve(),
+    }
     shas = {name: exact_sha(root, getattr(args, f"{name}_ref")) for name, root in roots.items()}
     # Prefer the short, predictable macOS scratch root when present; fall back to
     # the platform temp dir (e.g. Linux CI) so the smoke stays portable.
@@ -354,42 +360,87 @@ def main() -> int:
             run(sync, cwd=clone)
         dependencies = {name: dependency_evidence(clone) for name, clone in clones.items()}
         port = free_port()
-        run([
-            "docker", "run", "-d", "--name", container,
-            "-p", f"127.0.0.1:{port}:7687",
-            "-e", "NEO4J_AUTH=neo4j/" + PASSWORD,
-            NEO4J_IMAGE,
-        ], timeout=120)
+        run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container,
+                "-p",
+                f"127.0.0.1:{port}:7687",
+                "-e",
+                "NEO4J_AUTH=neo4j/" + PASSWORD,
+                NEO4J_IMAGE,
+            ],
+            timeout=120,
+        )
         base_env = {
-            k: v for k, v in os.environ.items()
+            k: v
+            for k, v in os.environ.items()
             if not k.startswith(("TOOLGRAPH_", "NEO4J_", "SYNCMILL_", "GIT_"))
         }
-        base_env.update({
-            "NEO4J_URI": f"bolt://127.0.0.1:{port}",
-            "NEO4J_USER": "neo4j",
-            "NEO4J_PASSWORD": PASSWORD,
-            "TOOLGRAPH_ROOT": str(clones["toolgraph"]),
-        })
+        base_env.update(
+            {
+                "NEO4J_URI": f"bolt://127.0.0.1:{port}",
+                "NEO4J_USER": "neo4j",
+                "NEO4J_PASSWORD": PASSWORD,
+                "TOOLGRAPH_ROOT": str(clones["toolgraph"]),
+            }
+        )
         wait_for_neo4j(base_env)
         run(["uv", "run", "toolgraph", "init-schema"], cwd=clones["toolgraph"], env=base_env)
         servers = workspace / "servers.yaml"
         servers.write_text(
             "servers:\n  - name: syncmill\n    transport: stdio\n"
-            f"    command: uv\n    args: [\"run\", \"--project\", \"{clones['syncmill']}\", \"syncmill\", \"serve\"]\n",
+            f'    command: uv\n    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
             encoding="utf-8",
         )
-        run(["uv", "run", "toolgraph", "crawl", "--servers", str(servers)], cwd=clones["toolgraph"], env=base_env)
-        run(["uv", "run", "toolgraph", "ingest-manifest", "--governance", str(clones["toolgraph"] / "examples" / GOVERNANCE.name)], cwd=clones["toolgraph"], env=base_env)
+        run(
+            ["uv", "run", "toolgraph", "crawl", "--servers", str(servers)],
+            cwd=clones["toolgraph"],
+            env=base_env,
+        )
+        run(
+            [
+                "uv",
+                "run",
+                "toolgraph",
+                "ingest-manifest",
+                "--governance",
+                str(clones["toolgraph"] / "examples" / GOVERNANCE.name),
+            ],
+            cwd=clones["toolgraph"],
+            env=base_env,
+        )
 
         target = workspace / "target"
         initial_head = make_target(target)
         bin_dir = workspace / "bin"
         write_stubs(bin_dir)
         runs_dir = workspace / "runs"
-        env = syncmill_env(base_env, runs_dir=runs_dir, toolgraph_root=clones["toolgraph"], bin_dir=bin_dir)
+        env = syncmill_env(
+            base_env, runs_dir=runs_dir, toolgraph_root=clones["toolgraph"], bin_dir=bin_dir
+        )
 
         before = set()
-        run(["uv", "run", "syncmill", "run", "smoke", "--repo", str(target), "--strategy", "route", "--agent", "kimi-code"], cwd=clones["syncmill"], env=env)
+        run(
+            [
+                "uv",
+                "run",
+                "syncmill",
+                "run",
+                "smoke",
+                "--repo",
+                str(target),
+                "--strategy",
+                "route",
+                "--agent",
+                "kimi-code",
+            ],
+            cwd=clones["syncmill"],
+            env=env,
+        )
         route_id = one_new_run(runs_dir, before)
         route_data = validate_run(
             runs_dir / route_id,
@@ -401,7 +452,21 @@ def main() -> int:
         assert_clean_target(target, initial_head)
 
         before = {item.name for item in runs_dir.iterdir() if item.is_dir()}
-        run(["uv", "run", "syncmill", "run", "smoke", "--repo", str(target), "--strategy", "compete"], cwd=clones["syncmill"], env=env)
+        run(
+            [
+                "uv",
+                "run",
+                "syncmill",
+                "run",
+                "smoke",
+                "--repo",
+                str(target),
+                "--strategy",
+                "compete",
+            ],
+            cwd=clones["syncmill"],
+            env=env,
+        )
         compete_id = one_new_run(runs_dir, before)
         compete_data = validate_run(
             runs_dir / compete_id,
@@ -447,12 +512,24 @@ def main() -> int:
                 "compete_preflight": sha256(runs_dir / compete_id / "preflight.json"),
             },
             "route": {"run_id": route_id, "agent": "kimi", "decision": "advisory_allow"},
-            "compete": {"run_id": compete_id, "agent": "codex", "decision": "advisory_warn", "winner": "codex", "rejected": ["syncmill::board_stats:DENY_VIOLATION"]},
+            "compete": {
+                "run_id": compete_id,
+                "agent": "codex",
+                "decision": "advisory_warn",
+                "winner": "codex",
+                "rejected": ["syncmill::board_stats:DENY_VIOLATION"],
+            },
         }
         summary_path = args.artifacts_dir / "ecosystem-smoke-summary.json"
-        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        shutil.copy2(runs_dir / route_id / "preflight.json", args.artifacts_dir / "route-preflight.json")
-        shutil.copy2(runs_dir / compete_id / "preflight.json", args.artifacts_dir / "compete-preflight.json")
+        summary_path.write_text(
+            json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        shutil.copy2(
+            runs_dir / route_id / "preflight.json", args.artifacts_dir / "route-preflight.json"
+        )
+        shutil.copy2(
+            runs_dir / compete_id / "preflight.json", args.artifacts_dir / "compete-preflight.json"
+        )
         if args.export_compete_trace:
             shutil.copy2(compete_data["trace_path"], args.artifacts_dir / "compete.otlp.json")
         success = True

@@ -1,4 +1,5 @@
 """Reject mismatched or partially published release evidence before promotion."""
+
 import copy
 import hashlib
 import importlib.util
@@ -6,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("verify_index_release", Path(__file__).parents[1] / "scripts/verify_index_release.py")
+spec = importlib.util.spec_from_file_location(
+    "verify_index_release", Path(__file__).parents[1] / "scripts/verify_index_release.py"
+)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 
@@ -16,8 +19,14 @@ def publication(tmp_path):
     rows = []
     for name in ["toolgraph-0.0.1-py3-none-any.whl", "toolgraph-0.0.1.tar.gz"]:
         (tmp_path / name).write_bytes(name.encode())
-        rows.append({"filename": name, "digests": {"sha256": hashlib.sha256(name.encode()).hexdigest()},
-                     "url": "https://test-files.pythonhosted.org/" + name, "yanked": False})
+        rows.append(
+            {
+                "filename": name,
+                "digests": {"sha256": hashlib.sha256(name.encode()).hexdigest()},
+                "url": "https://test-files.pythonhosted.org/" + name,
+                "yanked": False,
+            }
+        )
     return tmp_path, {"info": {"name": "toolgraph", "version": "0.0.1"}, "urls": rows}
 
 
@@ -28,7 +37,9 @@ def test_published_and_downloaded_bytes_match_candidate(publication):
     assert len(result["sha256"]) == 2
 
 
-@pytest.mark.parametrize("mutation", ["version", "project", "missing", "duplicate", "digest", "yanked", "url"])
+@pytest.mark.parametrize(
+    "mutation", ["version", "project", "missing", "duplicate", "digest", "yanked", "url"]
+)
 def test_refuse_unsafe_or_mismatched_index(publication, mutation):
     dist, original = publication
     metadata = copy.deepcopy(original)

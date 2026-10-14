@@ -70,11 +70,13 @@ class RequireToken:
         self.rejections = 0
 
     async def _reply(self, send, status: int, body: bytes) -> None:
-        await send({
-            "type": "http.response.start",
-            "status": status,
-            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+            }
+        )
         await send({"type": "http.response.body", "body": body})
 
     async def __call__(self, scope, receive, send):
@@ -99,9 +101,7 @@ def _serve_with_auth(server: MCPServer, kind: str, port: int) -> None:
     import uvicorn
 
     app = server.sse_app() if kind == "sse" else server.streamable_http_app()
-    uvicorn.run(
-        RequireToken(app, AUTH_TOKEN), host="127.0.0.1", port=port, log_level="warning"
-    )
+    uvicorn.run(RequireToken(app, AUTH_TOKEN), host="127.0.0.1", port=port, log_level="warning")
 
 
 if __name__ == "__main__":

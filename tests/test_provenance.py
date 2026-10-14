@@ -23,6 +23,7 @@ from toolgraph.models import (
 )
 from tests._helpers import CSV
 
+
 def _seed(graph) -> None:
     loader.load_crawl_result(
         CrawlResult(
@@ -102,9 +103,7 @@ def test_explicit_provenance_roundtrips_to_graph(graph):
         )
     )
     with driver.session() as s:
-        grant = s.run(
-            "MATCH ()-[r:CAN_CALL]->() RETURN r.evidence AS ev"
-        ).single()
+        grant = s.run("MATCH ()-[r:CAN_CALL]->() RETURN r.evidence AS ev").single()
         access = s.run(
             "MATCH ()-[r:READS]->() "
             "RETURN r.source AS source, r.confidence AS conf, r.evidence AS ev"
@@ -129,17 +128,18 @@ def test_bare_string_governed_by_still_works(graph):
     GOVERNED_BY edge with default source/confidence and null evidence.
     """
     _seed(graph)
-    assert ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[
-                DataAccess(tool="sample::read_file", resource=CSV, mode="READS")
-            ],
-            governed_by={CSV: ["pii-deny"]},  # bare string, no provenance
-        )
-    ).warnings == []
+    assert (
+        ingest_governance(
+            Governance(
+                agents=["planner"],
+                policies=[Policy(id="pii-deny", effect="DENY", scope="customer-pii")],
+                grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+                data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+                governed_by={CSV: ["pii-deny"]},  # bare string, no provenance
+            )
+        ).warnings
+        == []
+    )
     with driver.session() as s:
         gov_edge = s.run(
             "MATCH (:Resource)-[r:GOVERNED_BY]->(:Policy {id:'pii-deny'}) "

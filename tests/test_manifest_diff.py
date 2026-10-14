@@ -64,18 +64,12 @@ def test_check_backend_schema_version_read_only_and_detects_mismatch(backend_gra
     # Mismatched version raises BackendConfigurationError
     try:
         with driver.session() as s:
-            s.run(
-                "MERGE (m:GraphMeta {id:'singleton'}) "
-                "SET m.backend_schema_version = 999"
-            )
+            s.run("MERGE (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 999")
         with pytest.raises(schema.BackendConfigurationError, match="backend schema version 999"):
             schema.check_backend_schema_version()
     finally:
         with driver.session() as s:
-            s.run(
-                "MATCH (m:GraphMeta {id:'singleton'}) "
-                "SET m.backend_schema_version = 1"
-            )
+            s.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = 1")
 
 
 def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph):
@@ -93,8 +87,12 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
             AccessGrant(agent="agent-b", tool="sample::write_file", granted_by="team-b"),
         ],
         data_access=[
-            DataAccess(tool="sample::read_file", resource="file:///data/customers.csv", mode="READS"),
-            DataAccess(tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"),
+            DataAccess(
+                tool="sample::read_file", resource="file:///data/customers.csv", mode="READS"
+            ),
+            DataAccess(
+                tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"
+            ),
         ],
         governed_by={
             "file:///data/customers.csv": ["pol-2"],
@@ -133,7 +131,9 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
             AccessGrant(agent="agent-c", tool="sample::exec_cmd", granted_by="team-lead"),
         ],
         data_access=[
-            DataAccess(tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"),
+            DataAccess(
+                tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"
+            ),
             DataAccess(tool="sample::exec_cmd", resource="file:///data/public.txt", mode="WRITES"),
         ],
         governed_by={
@@ -164,20 +164,40 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
 
     assert any(p["id"] == "pol-3" for p in diff.policies_created)
     assert diff.policies_deleted == ["pol-2"]
-    assert any(p["id"] == "pol-1" and p["after"]["effect"] == "DENY" for p in diff.policy_properties_modified)
+    assert any(
+        p["id"] == "pol-1" and p["after"]["effect"] == "DENY"
+        for p in diff.policy_properties_modified
+    )
 
-    assert any(g["agent"] == "agent-c" and g["tool"] == "sample::read_file" for g in diff.grants_added)
-    assert any(g["agent"] == "agent-b" and g["tool"] == "sample::write_file" for g in diff.grants_revoked)
-    assert any(g["agent"] == "agent-a" and g["tool"] == "sample::read_file" and g["after"] == "team-lead" for g in diff.granted_by_modified)
+    assert any(
+        g["agent"] == "agent-c" and g["tool"] == "sample::read_file" for g in diff.grants_added
+    )
+    assert any(
+        g["agent"] == "agent-b" and g["tool"] == "sample::write_file" for g in diff.grants_revoked
+    )
+    assert any(
+        g["agent"] == "agent-a" and g["tool"] == "sample::read_file" and g["after"] == "team-lead"
+        for g in diff.granted_by_modified
+    )
 
-    assert any(da["tool"] == "sample::exec_cmd" and da["resource"] == "file:///data/public.txt" for da in diff.data_access_added)
-    assert any(da["tool"] == "sample::read_file" and da["resource"] == "file:///data/customers.csv" for da in diff.data_access_removed)
+    assert any(
+        da["tool"] == "sample::exec_cmd" and da["resource"] == "file:///data/public.txt"
+        for da in diff.data_access_added
+    )
+    assert any(
+        da["tool"] == "sample::read_file" and da["resource"] == "file:///data/customers.csv"
+        for da in diff.data_access_removed
+    )
 
     assert any(gb["policy"] == "pol-3" for gb in diff.governed_by_added)
     assert any(gb["policy"] == "pol-2" for gb in diff.governed_by_removed)
 
-    assert any(e["agent"] == "agent-c" and e["policy"] == "pol-1" for e in diff.expected_exceptions_added)
-    assert any(e["agent"] == "agent-a" and e["policy"] == "pol-2" for e in diff.expected_exceptions_removed)
+    assert any(
+        e["agent"] == "agent-c" and e["policy"] == "pol-1" for e in diff.expected_exceptions_added
+    )
+    assert any(
+        e["agent"] == "agent-a" and e["policy"] == "pol-2" for e in diff.expected_exceptions_removed
+    )
 
 
 def test_whole_graph_final_degree_zero_pruning_semantics(backend_graph):
@@ -187,7 +207,10 @@ def test_whole_graph_final_degree_zero_pruning_semantics(backend_graph):
         CrawlResult(
             server_name="test_srv",
             tools=[ToolRecord(name="tool_keep"), ToolRecord(name="tool_orphan")],
-            resources=[ResourceRecord(uri="file:///res/keep"), ResourceRecord(uri="file:///res/orphan")],
+            resources=[
+                ResourceRecord(uri="file:///res/keep"),
+                ResourceRecord(uri="file:///res/orphan"),
+            ],
         )
     )
 
@@ -279,26 +302,42 @@ grants:
 
 
 def test_nullable_exceptions_and_empty_bindings_match_real_ingest(backend_graph):
-    loader.load_crawl_result(CrawlResult(server_name='sample', tools=[ToolRecord(name='read')]))
+    loader.load_crawl_result(CrawlResult(server_name="sample", tools=[ToolRecord(name="read")]))
 
     def gov(reason):
-        return Governance.model_validate({
-            'agents': ['bot'], 'policies': [{'id': 'deny', 'effect': 'DENY'}],
-            'grants': [{'agent': 'bot', 'tool': 'sample::read'}],
-            'data_access': [{'tool': 'sample::read', 'resource': 'file:///data', 'mode': 'READS'}],
-            'governed_by': {'file:///data': [{'policy': 'deny'}]},
-            'expected_exceptions': [
-                {'agent': 'bot', 'tool': 'sample::read', 'resource': resource, 'policy': 'deny', 'reason': reason}
-                for resource in (None, 'file:///data')
-            ],
-        })
+        return Governance.model_validate(
+            {
+                "agents": ["bot"],
+                "policies": [{"id": "deny", "effect": "DENY"}],
+                "grants": [{"agent": "bot", "tool": "sample::read"}],
+                "data_access": [
+                    {"tool": "sample::read", "resource": "file:///data", "mode": "READS"}
+                ],
+                "governed_by": {"file:///data": [{"policy": "deny"}]},
+                "expected_exceptions": [
+                    {
+                        "agent": "bot",
+                        "tool": "sample::read",
+                        "resource": resource,
+                        "policy": "deny",
+                        "reason": reason,
+                    }
+                    for resource in (None, "file:///data")
+                ],
+            }
+        )
 
     def snapshot():
         with driver.session() as session:
             return (
                 queries.graph_state(),
-                [dict(row) for row in session.run('MATCH (e:ExpectedException) RETURN e.resource AS resource, e.reason AS reason')],
-                sorted(row['uri'] for row in session.run('MATCH (r:Resource) RETURN r.uri AS uri')),
+                [
+                    dict(row)
+                    for row in session.run(
+                        "MATCH (e:ExpectedException) RETURN e.resource AS resource, e.reason AS reason"
+                    )
+                ],
+                sorted(row["uri"] for row in session.run("MATCH (r:Resource) RETURN r.uri AS uri")),
             )
 
     def dry_unchanged(manifest):
@@ -308,65 +347,74 @@ def test_nullable_exceptions_and_empty_bindings_match_real_ingest(backend_graph)
         assert graph_content() == before
         return diff
 
-    first = gov('before')
-    assert [row['resource'] for row in dry_unchanged(first).expected_exceptions_added] == [None, 'file:///data']
+    first = gov("before")
+    assert [row["resource"] for row in dry_unchanged(first).expected_exceptions_added] == [
+        None,
+        "file:///data",
+    ]
     assert ingest_governance(first).applied
-    updated = gov('after')
+    updated = gov("after")
     assert len(dry_unchanged(updated).expected_exceptions_reason_updated) == 2
     assert ingest_governance(updated).applied
-    assert {row['reason'] for row in snapshot()[1]} == {'after'}
-    empty = Governance(governed_by={'file:///unused': [], 'file:///data': []})
+    assert {row["reason"] for row in snapshot()[1]} == {"after"}
+    empty = Governance(governed_by={"file:///unused": [], "file:///data": []})
     with driver.session() as session:
         session.run("CREATE (:Resource {uri:'file:///unused'})")
     diff = dry_unchanged(empty)
     assert len(diff.expected_exceptions_removed) == 2
     assert diff.resources_created == []
-    assert set(diff.resources_pruned) == {'file:///data', 'file:///unused'}
+    assert set(diff.resources_pruned) == {"file:///data", "file:///unused"}
     assert ingest_governance(empty).applied
     assert snapshot()[1:] == ([], [])
     assert dry_unchanged(empty).resources_created == []
 
 
 def test_dry_run_json_exposes_full_delta_and_rejection(backend_graph, tmp_path):
-    loader.load_crawl_result(CrawlResult(server_name='sample', tools=[ToolRecord(name='read')]))
-    assert ingest_governance(Governance(agents=['bot'], grants=[AccessGrant(agent='bot', tool='sample::read')])).applied
+    loader.load_crawl_result(CrawlResult(server_name="sample", tools=[ToolRecord(name="read")]))
+    assert ingest_governance(
+        Governance(agents=["bot"], grants=[AccessGrant(agent="bot", tool="sample::read")])
+    ).applied
     before = queries.graph_state()
-    path = tmp_path / 'gov.yaml'
-    path.write_text('agents: [replacement]\n')
+    path = tmp_path / "gov.yaml"
+    path.write_text("agents: [replacement]\n")
     runner = CliRunner()
-    args = ['ingest-manifest', '--governance', str(path), '--dry-run', '--json']
+    args = ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 0, result.output
     delta = json.loads(result.stdout)
-    assert delta['grants_revoked'] == [{'agent': 'bot', 'tool': 'sample::read'}]
-    assert delta['agents_created'] == ['replacement']
-    assert delta['agents_deleted'] == ['bot']
+    assert delta["grants_revoked"] == [{"agent": "bot", "tool": "sample::read"}]
+    assert delta["agents_created"] == ["replacement"]
+    assert delta["agents_deleted"] == ["bot"]
     assert queries.graph_state() == before
-    path.write_text('agents: [bot]\ngrants:\n  - agent: bot\n    tool: missing::tool\n')
+    path.write_text("agents: [bot]\ngrants:\n  - agent: bot\n    tool: missing::tool\n")
     rejected = runner.invoke(cli.app, args)
     assert rejected.exit_code == 1
-    assert json.loads(rejected.stdout)['warnings']
-    assert not json.loads(rejected.stdout)['applied']
+    assert json.loads(rejected.stdout)["warnings"]
+    assert not json.loads(rejected.stdout)["applied"]
     assert queries.graph_state() == before
 
 
 def test_dry_run_json_scrubs_uri_lists_nested_evidence_and_warnings(monkeypatch, tmp_path):
     from toolgraph.manifest.ingest import GovernanceDiffReport
 
-    uri = 'https://user:password@host/path?token=secret'
+    uri = "https://user:password@host/path?token=secret"
     report = GovernanceDiffReport(
-        applied=False, resources_pruned=[uri], resources_retained_crawled=[uri],
-        data_access_removed=[{'resource': uri}],
-        expected_exceptions_removed=[{'reason': f'see {uri}'}],
-        warnings=[f'invalid {uri}'],
+        applied=False,
+        resources_pruned=[uri],
+        resources_retained_crawled=[uri],
+        data_access_removed=[{"resource": uri}],
+        expected_exceptions_removed=[{"reason": f"see {uri}"}],
+        warnings=[f"invalid {uri}"],
     )
-    monkeypatch.setattr(cli, 'dry_run_ingest', lambda *a, **k: report)
-    path = tmp_path / 'governance.yaml'
-    path.write_text('agents: [bot]\n')
-    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path), '--dry-run', '--json'])
+    monkeypatch.setattr(cli, "dry_run_ingest", lambda *a, **k: report)
+    path = tmp_path / "governance.yaml"
+    path.write_text("agents: [bot]\n")
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+    )
     assert result.exit_code == 1
     rendered = json.loads(result.stdout)
-    assert rendered['resources_pruned'] == ['https://host/path']
-    assert rendered['expected_exceptions_removed'] == [{'reason': 'see https://host/path'}]
-    assert 'password' not in result.stdout and 'secret' not in result.stdout
+    assert rendered["resources_pruned"] == ["https://host/path"]
+    assert rendered["expected_exceptions_removed"] == [{"reason": "see https://host/path"}]
+    assert "password" not in result.stdout and "secret" not in result.stdout
     assert report.resources_pruned == [uri]  # rendering does not change the delta

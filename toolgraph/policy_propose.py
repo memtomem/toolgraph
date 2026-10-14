@@ -41,27 +41,37 @@ class AmbiguousGrantError(PolicyProposeError):
 
 NON_GRANT_REMEDIES = {
     "UNMAPPED": "granted already, but no authored data-flow — add the "
-                "data_access edges; a grant will not clear this in strict mode",
+    "data_access edges; a grant will not clear this in strict mode",
     "DRIFTED": "no server currently exposes this tool — re-crawl, or retire the "
-               "workflow; a grant cannot make it callable",
+    "workflow; a grant cannot make it callable",
     "TOOL_NOT_FOUND": "the tool ref does not resolve — fix the ref or crawl the "
-                      "server that provides it",
+    "server that provides it",
     "AMBIGUOUS_TOOL": "the ref matches more than one tool — qualify it as "
-                      "'server::tool'; granting one of them hides the ambiguity",
+    "'server::tool'; granting one of them hides the ambiguity",
 }
 
-VALID_REASONS = frozenset({
-    "TOOL_NOT_FOUND", "AMBIGUOUS_TOOL", "NOT_GRANTED", "DENY_VIOLATION",
-    "DENY_GOVERNED", "DRIFTED", "UNMAPPED",
-})
+VALID_REASONS = frozenset(
+    {
+        "TOOL_NOT_FOUND",
+        "AMBIGUOUS_TOOL",
+        "NOT_GRANTED",
+        "DENY_VIOLATION",
+        "DENY_GOVERNED",
+        "DRIFTED",
+        "UNMAPPED",
+    }
+)
 DECISIONS = frozenset({"eligible", "rejected"})
 UNSAFE_IN_NAME = re.compile(r"[\x00-\x1f\x7f]")
 QUALIFIED_KEY = re.compile(r"^[^:\s]+::[^:\s]+$")
 ENVELOPE_KEY = "envelope"
 DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 ENVELOPE_FIELDS = (
-    "governance_digest", "graph_generation", "profile",
-    "window_start", "window_end",
+    "governance_digest",
+    "graph_generation",
+    "profile",
+    "window_start",
+    "window_end",
 )
 
 UNVERIFIED_PROVENANCE = (
@@ -129,11 +139,7 @@ def _instant(value: str, where: str) -> datetime:
                 f"{where} has an out-of-range UTC offset in {value!r}; "
                 "the parser would silently repair it"
             )
-        if (
-            match.group("sign") == "-"
-            and match.group("oh") == "00"
-            and match.group("om") == "00"
-        ):
+        if match.group("sign") == "-" and match.group("oh") == "00" and match.group("om") == "00":
             raise ProvenanceError(
                 f'{where} uses "-00:00", which RFC 3339 reads as "offset '
                 f'unknown"; write "Z" if the bound is UTC, got {value!r}'
@@ -226,8 +232,8 @@ def verify_envelope(envelope: dict, expected_digest: str, known_profiles: set[st
     # naming an earlier moment.
     if bounds["window_start"] > bounds["window_end"]:
         raise ProvenanceError(
-            f'window_start ({envelope["window_start"]}) is after '
-            f'window_end ({envelope["window_end"]})'
+            f"window_start ({envelope['window_start']}) is after "
+            f"window_end ({envelope['window_end']})"
         )
     out = {f: envelope[f] for f in ENVELOPE_FIELDS}
     canonical = _instance_id(envelope.get("graph_instance_id"), "graph_instance_id")
@@ -312,8 +318,7 @@ def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
                 raise ValueError(f"{where}: missing {key!r}")
         if row["decision"] not in DECISIONS:
             raise ValueError(
-                f"{where}: decision must be one of {sorted(DECISIONS)}, "
-                f"got {row['decision']!r}"
+                f"{where}: decision must be one of {sorted(DECISIONS)}, got {row['decision']!r}"
             )
         tool_key = row.get("tool_key")
         if tool_key is not None and not QUALIFIED_KEY.match(str(tool_key)):
@@ -339,9 +344,7 @@ def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
                     "is not evidence"
                 )
         elif would_block > calls:
-            raise ValueError(
-                f"{where}: would_block_calls ({would_block}) exceeds calls ({calls})"
-            )
+            raise ValueError(f"{where}: would_block_calls ({would_block}) exceeds calls ({calls})")
         reasons = row.get("reject_reasons")
         if reasons is None:
             legacy = row.get("reject_reason")
@@ -395,16 +398,18 @@ def resolve_grants_from_graph(
         if len(matches) == 1:
             resolved[(agent, matches[0])] = tool
         elif len(matches) > 1:
-            ambiguous.append({
-                "agent": agent,
-                "tool": tool,
-                "would_block_calls": 0,
-                "reason": "AMBIGUOUS_GRANT",
-                "note": (
-                    f"this bare grant matches multiple tools in the live graph: "
-                    f"{' or '.join(sorted(matches))} — qualify it in the manifest before reasoning about it"
-                ),
-            })
+            ambiguous.append(
+                {
+                    "agent": agent,
+                    "tool": tool,
+                    "would_block_calls": 0,
+                    "reason": "AMBIGUOUS_GRANT",
+                    "note": (
+                        f"this bare grant matches multiple tools in the live graph: "
+                        f"{' or '.join(sorted(matches))} — qualify it in the manifest before reasoning about it"
+                    ),
+                }
+            )
         else:
             # Unmatched in live graph (drifted/uncrawled): keep as bare ref so
             # it cannot accidentally match any resolved qualified observation row.
@@ -460,57 +465,67 @@ def propose(
 
         deny = sorted(r for r in reasons if "DENY" in r)
         if deny:
-            conflicts.append({
-                **entry,
-                "reason": ", ".join(deny),
-                "note": (
-                    "governed by a DENY policy — do not grant; change the "
-                    "policy or the workflow, not the grant"
-                ),
-            })
+            conflicts.append(
+                {
+                    **entry,
+                    "reason": ", ".join(deny),
+                    "note": (
+                        "governed by a DENY policy — do not grant; change the "
+                        "policy or the workflow, not the grant"
+                    ),
+                }
+            )
             continue
         if wb < min_would_block:
             continue
         if not o["reasons_complete"]:
-            unproven.append({
-                **entry,
-                "note": (
-                    "export carries only the winning reject_reason; "
-                    "re-export reject_reasons before proposing"
-                ),
-            })
+            unproven.append(
+                {
+                    **entry,
+                    "note": (
+                        "export carries only the winning reject_reason; "
+                        "re-export reject_reasons before proposing"
+                    ),
+                }
+            )
             continue
         if reasons == {"NOT_GRANTED"}:
             if not o["has_tool_key"]:
-                unproven.append({
-                    **entry,
-                    "note": (
-                        "no canonical tool_key — resolve the ref "
-                        "before proposing a grant for it"
-                    ),
-                })
+                unproven.append(
+                    {
+                        **entry,
+                        "note": (
+                            "no canonical tool_key — resolve the ref "
+                            "before proposing a grant for it"
+                        ),
+                    }
+                )
             elif key not in granted:
                 additions.append({**entry, "reason": "NOT_GRANTED"})
             continue
         if "NOT_GRANTED" in reasons:
             blockers = sorted(reasons - {"NOT_GRANTED"})
-            other.append({
-                **entry,
-                "reason": ", ".join(blockers),
-                "note": (
-                    "ungranted AND "
-                    + "; ".join(NON_GRANT_REMEDIES.get(r, r.lower()) for r in blockers)
-                    + " — a grant alone would not make it eligible"
-                ),
-            })
+            other.append(
+                {
+                    **entry,
+                    "reason": ", ".join(blockers),
+                    "note": (
+                        "ungranted AND "
+                        + "; ".join(NON_GRANT_REMEDIES.get(r, r.lower()) for r in blockers)
+                        + " — a grant alone would not make it eligible"
+                    ),
+                }
+            )
             continue
         first = sorted(reasons)[0]
-        other.append({
-            **entry,
-            "note": NON_GRANT_REMEDIES.get(
-                first, "not a grant problem — read the selector reason before acting"
-            ),
-        })
+        other.append(
+            {
+                **entry,
+                "note": NON_GRANT_REMEDIES.get(
+                    first, "not a grant problem — read the selector reason before acting"
+                ),
+            }
+        )
 
     removals = [
         {"agent": a, "tool": granted[(a, t)]}
@@ -555,19 +570,16 @@ def render(
         a("> DECLARED DIGEST MATCHES — the digest this export declares equals")
         a("> the digest of the manifest supplied. That is the whole of it.")
         a(">")
-        a(f'> governance_digest: `{envelope["governance_digest"]}` (matches supplied manifest)')
+        a(f"> governance_digest: `{envelope['governance_digest']}` (matches supplied manifest)")
         a(
-            f'> graph_generation: {envelope["graph_generation"]} · '
-            f'profile: `{envelope["profile"]}` (declared)'
+            f"> graph_generation: {envelope['graph_generation']} · "
+            f"profile: `{envelope['profile']}` (declared)"
         )
-        a(
-            f'> window: {envelope["window_start"]} .. {envelope["window_end"]} '
-            "(declared)"
-        )
+        a(f"> window: {envelope['window_start']} .. {envelope['window_end']} (declared)")
         if envelope["profile"] != "strict":
             a(">")
             a(
-                f'> Declared as the `{envelope["profile"]}` profile, which rejects '
+                f"> Declared as the `{envelope['profile']}` profile, which rejects "
                 "fewer reasons than `strict`. A tool absent from these rows was not"
             )
             a("> necessarily allowed under strict.")
@@ -589,10 +601,12 @@ def render(
         a("")
         a("```yaml")
         for r in proposal["additions"]:
-            a(yaml_entry(
-                {"agent": r["agent"], "tool": r["tool"], "granted_by": "REVIEW-ME"},
-                f'would_block={r["would_block_calls"]} reason={r["reason"]}',
-            ))
+            a(
+                yaml_entry(
+                    {"agent": r["agent"], "tool": r["tool"], "granted_by": "REVIEW-ME"},
+                    f"would_block={r['would_block_calls']} reason={r['reason']}",
+                )
+            )
         a("```")
         a("")
     else:
@@ -602,18 +616,20 @@ def render(
         a("## Candidate grant removals (lower confidence: an explicit zero-call row)")
         a("")
         for r in proposal["removals"]:
-            a(yaml_entry(
-                {"agent": r["agent"], "tool": r["tool"]},
-                "verify the window is representative before removing",
-            ))
+            a(
+                yaml_entry(
+                    {"agent": r["agent"], "tool": r["tool"]},
+                    "verify the window is representative before removing",
+                )
+            )
         a("")
     if proposal["insufficient_evidence"]:
         a("## Insufficient evidence to propose — re-export first")
         a("")
         for r in proposal["insufficient_evidence"]:
             a(
-                f'- {r["agent"]} → `{r["tool"]}` ({r["reason"]}, '
-                f'would_block={r["would_block_calls"]}): {r["note"]}'
+                f"- {r['agent']} → `{r['tool']}` ({r['reason']}, "
+                f"would_block={r['would_block_calls']}): {r['note']}"
             )
         a("")
     if proposal["not_grant_shaped"]:
@@ -621,8 +637,8 @@ def render(
         a("")
         for r in proposal["not_grant_shaped"]:
             a(
-                f'- {r["agent"]} → `{r["tool"]}` ({r["reason"]}, '
-                f'would_block={r["would_block_calls"]}): {r["note"]}'
+                f"- {r['agent']} → `{r['tool']}` ({r['reason']}, "
+                f"would_block={r['would_block_calls']}): {r['note']}"
             )
         a("")
     if proposal["conflicts"]:
@@ -630,8 +646,8 @@ def render(
         a("")
         for r in proposal["conflicts"]:
             a(
-                f'- {r["agent"]} → `{r["tool"]}` ({r["reason"]}, '
-                f'would_block={r["would_block_calls"]}): {r["note"]}'
+                f"- {r['agent']} → `{r['tool']}` ({r['reason']}, "
+                f"would_block={r['would_block_calls']}): {r['note']}"
             )
         a("")
     a(
@@ -676,8 +692,11 @@ def run_propose(
         with driver.session() as session:
             granted, ambiguous = resolve_grants_from_graph(session, gov.get("grants") or [])
         proposal = propose(
-            gov, observed, min_would_block,
-            granted=granted, ambiguous_grants=ambiguous,
+            gov,
+            observed,
+            min_would_block,
+            granted=granted,
+            ambiguous_grants=ambiguous,
         )
         ranked = []
         if revalidate_current:
@@ -686,9 +705,12 @@ def run_propose(
                 candidates[addition["agent"]].append(addition["tool"])
             for agent, keys in sorted(candidates.items()):
                 for start in range(0, len(keys), selector.MAX_CANDIDATES):
-                    ranked.append(selector.rank_features(
-                        agent, keys[start:start + selector.MAX_CANDIDATES],
-                    ))
+                    ranked.append(
+                        selector.rank_features(
+                            agent,
+                            keys[start : start + selector.MAX_CANDIDATES],
+                        )
+                    )
         return {"state": st, "proposal": proposal, "ranked": ranked}
 
     try:
@@ -700,7 +722,9 @@ def run_propose(
         ) from exc
 
     provenance = _proposal_provenance(
-        envelope, bracket_result["state"], expected_digest=expected_digest,
+        envelope,
+        bracket_result["state"],
+        expected_digest=expected_digest,
         unverified_provenance=unverified_provenance,
         revalidate_current=revalidate_current,
     )
@@ -710,7 +734,10 @@ def run_propose(
     proposal["provenance"] = provenance
     _check_output_identities(proposal)
     rendered = render(
-        proposal, redact_text(window_label), min_would_block, envelope=envelope,
+        proposal,
+        redact_text(window_label),
+        min_would_block,
+        envelope=envelope,
         provenance_note=_provenance_note(provenance),
     )
     return proposal, rendered
@@ -785,7 +812,9 @@ def _proposal_provenance(
         elif not DIGEST_RE.fullmatch(digest):
             raise ProvenanceError("live governance_digest must be 64 lowercase hex characters")
     if digest is not None and digest != expected_digest:
-        raise StateMismatchError("graph governance digest mismatch: supplied manifest and live graph differ")
+        raise StateMismatchError(
+            "graph governance digest mismatch: supplied manifest and live graph differ"
+        )
     if type(state.generation) is not int or state.generation < 0:
         raise ProvenanceError("live graph generation must be a non-negative integer")
     current = {"instance_id": instance, "generation": state.generation, "governance_digest": digest}
@@ -805,7 +834,9 @@ def _proposal_provenance(
                 f"graph instance mismatch: export declared {env_instance}, live graph is {instance}"
             )
         if digest is not None and digest != observed["governance_digest"]:
-            raise StateMismatchError("graph governance digest mismatch: export and live graph differ")
+            raise StateMismatchError(
+                "graph governance digest mismatch: export and live graph differ"
+            )
         if observed["generation"] != state.generation and not revalidate_current:
             raise StateMismatchError(
                 f"export declared graph_generation {observed['generation']} but "
@@ -847,10 +878,15 @@ def _provenance_note(provenance: dict) -> str:
         f"gen={observed.get('generation', 'none')}; "
         f"current: instance={current['instance_id']}, gen={current['generation']}"
     )
-    checked = "revalidated against current catalog; profile=strict; " if provenance["current_revalidated"] else ""
+    checked = (
+        "revalidated against current catalog; profile=strict; "
+        if provenance["current_revalidated"]
+        else ""
+    )
     if provenance["status"] == "unverified":
         return (
-            "UNVERIFIED PROVENANCE (missing: " + ", ".join(provenance["missing_fields"])
+            "UNVERIFIED PROVENANCE (missing: "
+            + ", ".join(provenance["missing_fields"])
             + f"; {checked}{tokens}; current checks do not establish historical provenance)"
         )
     return f"declared ({checked}{tokens})"
@@ -859,40 +895,55 @@ def _provenance_note(provenance: dict) -> str:
 def _revalidate_additions(proposal: dict, ranked_batches: list[dict]) -> None:
     features = {
         (ranked["agent"], feature["candidate"]): feature
-        for ranked in ranked_batches for feature in ranked["features"]
+        for ranked in ranked_batches
+        for feature in ranked["features"]
     }
     missing_agents = {ranked["agent"] for ranked in ranked_batches if not ranked["agent_found"]}
     survivors = []
     for addition in proposal["additions"]:
         agent, tool = addition["agent"], addition["tool"]
         if agent in missing_agents:
-            proposal["insufficient_evidence"].append({
-                **addition, "reason": "AGENT_NOT_FOUND",
-                "note": "agent is absent from the current graph (strict revalidation)",
-            })
+            proposal["insufficient_evidence"].append(
+                {
+                    **addition,
+                    "reason": "AGENT_NOT_FOUND",
+                    "note": "agent is absent from the current graph (strict revalidation)",
+                }
+            )
             continue
         feature = features[(agent, tool)]
         # Only the hypothetical grant changes. Drift, mapping and DENY facts
         # remain authoritative, including reasons hidden behind NOT_GRANTED.
         hypothetical = {**feature, "permitted": True}
         filtered = selector.filter_features(
-            {"agent": agent, "agent_found": True, "features": [hypothetical]}, "strict",
+            {"agent": agent, "agent_found": True, "features": [hypothetical]},
+            "strict",
         )
         if filtered["rejected"]:
             reason = filtered["rejected"][0]["reason"]
-            bucket = "conflicts" if reason in {"DENY_VIOLATION", "DENY_GOVERNED"} else "not_grant_shaped"
-            proposal[bucket].append({
-                **addition, "reason": reason,
-                "note": f"current strict revalidation rejected {tool}: {reason}; a grant cannot clear this blocker",
-            })
+            bucket = (
+                "conflicts" if reason in {"DENY_VIOLATION", "DENY_GOVERNED"} else "not_grant_shaped"
+            )
+            proposal[bucket].append(
+                {
+                    **addition,
+                    "reason": reason,
+                    "note": f"current strict revalidation rejected {tool}: {reason}; a grant cannot clear this blocker",
+                }
+            )
         elif feature["permitted"]:
-            proposal["insufficient_evidence"].append({
-                **addition, "reason": "ALREADY_GRANTED",
-                "note": "the current graph already grants this tool; no addition proposed",
-            })
+            proposal["insufficient_evidence"].append(
+                {
+                    **addition,
+                    "reason": "ALREADY_GRANTED",
+                    "note": "the current graph already grants this tool; no addition proposed",
+                }
+            )
         else:
             survivors.append(addition)
     proposal["additions"] = survivors
     proposal["conflicts"].sort(key=lambda row: (row["agent"], row["tool"]))
     for bucket in ("not_grant_shaped", "insufficient_evidence"):
-        proposal[bucket].sort(key=lambda row: (-row["would_block_calls"], row["agent"], row["tool"]))
+        proposal[bucket].sort(
+            key=lambda row: (-row["would_block_calls"], row["agent"], row["tool"])
+        )

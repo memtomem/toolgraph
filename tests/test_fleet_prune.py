@@ -46,9 +46,7 @@ def _load(server: str, tools: list[ToolRecord] = (), resources: list[str] = ()) 
 
 def _generation() -> int | None:
     with driver.session() as s:
-        rec = s.run(
-            "MATCH (m:GraphMeta {id:'singleton'}) RETURN m.generation AS g"
-        ).single()
+        rec = s.run("MATCH (m:GraphMeta {id:'singleton'}) RETURN m.generation AS g").single()
         return rec["g"] if rec else None
 
 
@@ -91,9 +89,7 @@ def test_label_collision_does_not_protect_unnamed_failure():
     named = ServerSpec(name="npx flaky-server", command="cmd-a")
     unnamed = ServerSpec(command="npx flaky-server")
     results = [CrawlResult(server_name="npx flaky-server", transport="stdio")]
-    _, blockers = fleet_keep_names(
-        [named, unnamed], results, [(unnamed, "timeout after 1s")]
-    )
+    _, blockers = fleet_keep_names([named, unnamed], results, [(unnamed, "timeout after 1s")])
     assert blockers == ["stdio:npx"]
 
 
@@ -277,9 +273,7 @@ def test_unnamed_failure_skips_prune_and_keeps_graph(graph, tmp_path):
         [{"transport": "stdio", "command": "sleep", "args": ["30"]}],
     )
 
-    result = CliRunner().invoke(
-        cli.app, ["crawl", "--servers", path, "--timeout", "1"]
-    )
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", path, "--timeout", "1"])
 
     assert result.exit_code == 1  # the crawl failure still gates
     assert "fleet reconciliation skipped" in result.output

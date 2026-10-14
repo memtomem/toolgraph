@@ -106,76 +106,108 @@ def test_cli_doctor(backend_graph):
     assert len(parsed["checks"]) >= 3
 
 
-@pytest.mark.parametrize('phase', ['inspection', 'settings', 'connectivity', 'schema', 'state'])
+@pytest.mark.parametrize("phase", ["inspection", "settings", "connectivity", "schema", "state"])
 def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
-    info = {'path': 'probe.json', 'exists': True, 'valid_json': True,
-            'permissions_ok': True, 'permissions': '0o600', 'healthy': True, 'detail': 'ok'}
-    monkeypatch.setattr(config, 'check_config_health', lambda: info)
-    monkeypatch.setattr(driver, 'verify_connectivity', lambda **kwargs: None)
-    monkeypatch.setattr(schema, 'inspect_backend_schema', lambda: {
-        'healthy': True, 'schema_version': 1, 'backend': 'ladybug', 'live_tables': [],
-    })
-    from contextlib import nullcontext
-    monkeypatch.setattr(driver, 'acquire_readonly_session', lambda: nullcontext(None))
-    monkeypatch.setattr(queries, 'graph_state', lambda *_: queries.GraphState('probe', 1))
-    error = RuntimeError('bolt://user:synthetic-password@localhost:7687 token=synthetic-token')
-    targets = {
-        'inspection': (config, 'check_config_health'),
-        'settings': (config, '__getattr__'),
-        'connectivity': (driver, 'verify_connectivity'),
-        'schema': (schema, 'inspect_backend_schema'),
-        'state': (queries, 'graph_state'),
+    info = {
+        "path": "probe.json",
+        "exists": True,
+        "valid_json": True,
+        "permissions_ok": True,
+        "permissions": "0o600",
+        "healthy": True,
+        "detail": "ok",
     }
-    if phase == 'settings':
-        monkeypatch.delattr(config, 'settings', raising=False)
+    monkeypatch.setattr(config, "check_config_health", lambda: info)
+    monkeypatch.setattr(driver, "verify_connectivity", lambda **kwargs: None)
+    monkeypatch.setattr(
+        schema,
+        "inspect_backend_schema",
+        lambda: {
+            "healthy": True,
+            "schema_version": 1,
+            "backend": "ladybug",
+            "live_tables": [],
+        },
+    )
+    from contextlib import nullcontext
+
+    monkeypatch.setattr(driver, "acquire_readonly_session", lambda: nullcontext(None))
+    monkeypatch.setattr(queries, "graph_state", lambda *_: queries.GraphState("probe", 1))
+    error = RuntimeError("bolt://user:synthetic-password@localhost:7687 token=synthetic-token")
+    targets = {
+        "inspection": (config, "check_config_health"),
+        "settings": (config, "__getattr__"),
+        "connectivity": (driver, "verify_connectivity"),
+        "schema": (schema, "inspect_backend_schema"),
+        "state": (queries, "graph_state"),
+    }
+    if phase == "settings":
+        monkeypatch.delattr(config, "settings", raising=False)
     with patch.object(*targets[phase], side_effect=error):
         report = run_doctor()
     assert not report.healthy
     for text in (report.summary_text(), json.dumps(report.to_dict())):
-        assert 'synthetic-password' not in text
-        assert 'synthetic-token' not in text
-        assert '<redacted>' in text
+        assert "synthetic-password" not in text
+        assert "synthetic-token" not in text
+        assert "<redacted>" in text
 
 
 def test_doctor_invalid_config_in_fresh_process(tmp_path):
-    config_path = tmp_path / 'broken.json'
-    config_path.write_text('{invalid json')
-    result = subprocess.run([
-        sys.executable, '-c', 'from toolgraph.cli import app; app()', 'doctor', '--json',
-    ], cwd=Path(__file__).resolve().parents[1], env={**os.environ, 'TOOLGRAPH_CONFIG': str(config_path)},
-       text=True, capture_output=True)
+    config_path = tmp_path / "broken.json"
+    config_path.write_text("{invalid json")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from toolgraph.cli import app; app()",
+            "doctor",
+            "--json",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "TOOLGRAPH_CONFIG": str(config_path)},
+        text=True,
+        capture_output=True,
+    )
     assert result.returncode == 1, result.stderr
     report = json.loads(result.stdout)
-    assert report['healthy'] is False
-    assert [check['name'] for check in report['checks']] == ['Configuration']
-    assert 'Traceback' not in result.stderr
+    assert report["healthy"] is False
+    assert [check["name"] for check in report["checks"]] == ["Configuration"]
+    assert "Traceback" not in result.stderr
 
 
 def test_doctor_redacts_configuration_details_before_early_return(monkeypatch):
-    monkeypatch.setattr(config, 'check_config_health', lambda: {
-        'path': 'probe.json', 'exists': True, 'valid_json': False,
-        'permissions_ok': True, 'permissions': '0o600', 'healthy': False,
-        'detail': 'could not load bolt://user:synthetic-secret@localhost:7687',
-    })
-    with patch.object(driver, 'verify_connectivity') as connect:
+    monkeypatch.setattr(
+        config,
+        "check_config_health",
+        lambda: {
+            "path": "probe.json",
+            "exists": True,
+            "valid_json": False,
+            "permissions_ok": True,
+            "permissions": "0o600",
+            "healthy": False,
+            "detail": "could not load bolt://user:synthetic-secret@localhost:7687",
+        },
+    )
+    with patch.object(driver, "verify_connectivity") as connect:
         report = run_doctor()
     connect.assert_not_called()
     assert not report.healthy
-    assert 'synthetic-secret' not in report.summary_text()
-    assert 'synthetic-secret' not in json.dumps(report.to_dict())
+    assert "synthetic-secret" not in report.summary_text()
+    assert "synthetic-secret" not in json.dumps(report.to_dict())
 
 
-@pytest.mark.parametrize('json_output', [False, True])
+@pytest.mark.parametrize("json_output", [False, True])
 def test_doctor_missing_ladybug_does_not_create_files(embedded_path, json_output):
-    result = CliRunner().invoke(cli.app, ['doctor'] + (['--json'] if json_output else []))
+    result = CliRunner().invoke(cli.app, ["doctor"] + (["--json"] if json_output else []))
     assert result.exit_code == 1, result.output
     assert not embedded_path.parent.exists()
-    assert 'Traceback' not in result.output
+    assert "Traceback" not in result.output
     if json_output:
         report = json.loads(result.stdout)
-        assert not report['healthy']
-        connectivity = next(c for c in report['checks'] if c['name'] == 'Connectivity')
-        assert connectivity['status'] == 'FAIL'
-        assert 'does not exist' in connectivity['message']
+        assert not report["healthy"]
+        connectivity = next(c for c in report["checks"] if c["name"] == "Connectivity")
+        assert connectivity["status"] == "FAIL"
+        assert "does not exist" in connectivity["message"]
     else:
-        assert 'does not exist' in result.stdout
+        assert "does not exist" in result.stdout

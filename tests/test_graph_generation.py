@@ -23,6 +23,7 @@ from toolgraph.models import (
 )
 from tests._helpers import CSV
 
+
 def _crawl() -> CrawlResult:
     return CrawlResult(
         server_name="sample",

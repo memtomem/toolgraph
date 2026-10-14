@@ -43,8 +43,12 @@ def _governance() -> Governance:
             AccessGrant(agent="support-bot", tool="sample::read_file"),
         ],
         data_access=[
-            DataAccess(tool="sample::read_file", resource="file:///data/customers.csv", mode="READS"),
-            DataAccess(tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"),
+            DataAccess(
+                tool="sample::read_file", resource="file:///data/customers.csv", mode="READS"
+            ),
+            DataAccess(
+                tool="sample::write_file", resource="file:///data/customers.csv", mode="WRITES"
+            ),
         ],
         governed_by={"file:///data/customers.csv": ["pii-deny"]},
     )
@@ -317,13 +321,16 @@ def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
         policies=[Policy(id="secrets-deny", effect="DENY")],
         grants=[AccessGrant(agent="planner", tool="sample::read_file")],
     )
-    assert ingest_governance(
-        Governance(
-            **base,
-            data_access=[DataAccess(tool="sample::read_file", resource=ENV, mode="READS")],
-            governed_by={ENV: ["secrets-deny"]},
-        )
-    ).warnings == []
+    assert (
+        ingest_governance(
+            Governance(
+                **base,
+                data_access=[DataAccess(tool="sample::read_file", resource=ENV, mode="READS")],
+                governed_by={ENV: ["secrets-deny"]},
+            )
+        ).warnings
+        == []
+    )
     assert queries.blast_radius(ENV)["found"] is True
 
     # Re-ingest without any mention of ENV.
@@ -358,9 +365,7 @@ def test_governance_yaml_rejects_duplicate_keys_at_any_depth(tmp_path, content):
 
 def test_governance_yaml_rejects_unknown_nested_field(tmp_path):
     path = tmp_path / "governance.yaml"
-    path.write_text(
-        "policies:\n  - id: deny\n    effect: DENY\n    descriptino: typo\n"
-    )
+    path.write_text("policies:\n  - id: deny\n    effect: DENY\n    descriptino: typo\n")
 
     with pytest.raises(ValidationError, match="policies.0.descriptino"):
         load_governance(path)
@@ -374,9 +379,14 @@ def test_ambiguous_bare_name_in_ingest_warns(graph):
     ).warnings
     assert any("ambiguous" in w for w in warnings)
     # exact key still resolves
-    assert ingest_governance(
-        Governance(agents=["planner"], grants=[AccessGrant(agent="planner", tool="alpha::read_file")])
-    ).warnings == []
+    assert (
+        ingest_governance(
+            Governance(
+                agents=["planner"], grants=[AccessGrant(agent="planner", tool="alpha::read_file")]
+            )
+        ).warnings
+        == []
+    )
 
 
 def test_missing_policy_id_warns(graph):
@@ -453,10 +463,7 @@ def test_empty_collection_combinations(backend_graph, tools, resources, policies
     assert ingest_governance(Governance()).applied
     with driver.session() as session:
         assert session.run("MATCH (p:Policy) RETURN count(p) AS n").single()["n"] == 0
-        assert (
-            session.run("MATCH ()-[p:PROVIDES]->() RETURN count(p) AS n").single()["n"]
-            == 0
-        )
+        assert session.run("MATCH ()-[p:PROVIDES]->() RETURN count(p) AS n").single()["n"] == 0
 
 
 def test_revocation_and_failed_ingest_preserve_state(backend_graph, monkeypatch):
@@ -509,6 +516,7 @@ def test_ingest_reuses_resolution_across_manifest_rows(backend_graph):
     gov.grants *= 100
     gov.data_access *= 100
     with driver.session() as session:
+
         def apply(tx):
             counted = CountingSession(tx)
             report = ingest._ingest(counted, gov)
@@ -517,6 +525,7 @@ def test_ingest_reuses_resolution_across_manifest_rows(backend_graph):
             assert len(resolution_calls) == 2
             assert all(len(p["keys"]) == 2 for p in resolution_calls)
             return report
+
         assert session.execute_write(apply) == ([], [])
     assert ingest.governance_counts()["can_call"] == 3
 
@@ -526,11 +535,13 @@ def test_ingest_diagnostics_and_rollback(backend_graph):
     assert ingest.ingest_governance(_governance()).applied
     before = queries.graph_state()
     counts = ingest.governance_counts()
-    bad = Governance(grants=[
-        AccessGrant(agent="a", tool="missing::first"),
-        AccessGrant(agent="a", tool="missing::second"),
-        AccessGrant(agent="b", tool="missing::first"),
-    ])
+    bad = Governance(
+        grants=[
+            AccessGrant(agent="a", tool="missing::first"),
+            AccessGrant(agent="a", tool="missing::second"),
+            AccessGrant(agent="b", tool="missing::first"),
+        ]
+    )
     report = ingest.ingest_governance(bad)
     assert len(report.warnings) == 3
     assert "missing::first" in report.warnings[0]

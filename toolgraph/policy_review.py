@@ -42,9 +42,7 @@ def build_policy_review_plan(
     if problem := selector.profile_error(profile):
         raise PolicyReviewPlanError(problem)
     try:
-        reviewed = list_candidates(
-            report, annotations_path=annotations, status="accepted"
-        )
+        reviewed = list_candidates(report, annotations_path=annotations, status="accepted")
     except ReviewCandidateError as exc:
         raise PolicyReviewPlanError(str(exc)) from exc
     accepted = reviewed["candidates"]
@@ -64,13 +62,8 @@ def build_policy_review_plan(
     # GraphMeta would otherwise produce a schema-invalid artifact.
     instance_id = compiled["graph_state"].get("instance_id")
     if not isinstance(instance_id, str) or not instance_id:
-        raise PolicyReviewPlanError(
-            "graph has no instance id — run init-schema before planning"
-        )
-    rejected = {
-        row.get("tool_key") or row["candidate"]: row
-        for row in compiled["rejected"]
-    }
+        raise PolicyReviewPlanError("graph has no instance id — run init-schema before planning")
+    rejected = {row.get("tool_key") or row["candidate"]: row for row in compiled["rejected"]}
     candidates = []
     for row in accepted:
         rejection = rejected.get(row["tool_key"])
@@ -91,14 +84,16 @@ def build_policy_review_plan(
         )
 
     timestamp = created_at or datetime.now(timezone.utc)
-    return safe_artifact({
-        "schema_version": SCHEMA_VERSION,
-        "kind": KIND,
-        "created_at": timestamp.isoformat(),
-        "source_report_digest": reviewed["source_report_digest"],
-        "graph_state": compiled["graph_state"],
-        "agent": agent,
-        "profile": profile,
-        "decision_mode": "human_required",
-        "candidates": candidates,
-    })
+    return safe_artifact(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "kind": KIND,
+            "created_at": timestamp.isoformat(),
+            "source_report_digest": reviewed["source_report_digest"],
+            "graph_state": compiled["graph_state"],
+            "agent": agent,
+            "profile": profile,
+            "decision_mode": "human_required",
+            "candidates": candidates,
+        }
+    )

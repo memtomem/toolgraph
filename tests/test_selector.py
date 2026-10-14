@@ -95,15 +95,21 @@ def _seed() -> None:
             ],
             data_access=[
                 DataAccess(
-                    tool="alpha::git_status", resource=REPO, mode="READS",
+                    tool="alpha::git_status",
+                    resource=REPO,
+                    mode="READS",
                     provenance=EVIDENCE,
                 ),
                 DataAccess(
-                    tool="alpha::read_file", resource=SECRETS, mode="READS",
+                    tool="alpha::read_file",
+                    resource=SECRETS,
+                    mode="READS",
                     provenance=EVIDENCE,
                 ),
                 DataAccess(
-                    tool="alpha::export_data", resource=EXPORT, mode="WRITES",
+                    tool="alpha::export_data",
+                    resource=EXPORT,
+                    mode="WRITES",
                     provenance=EVIDENCE,
                 ),
                 DataAccess(tool="alpha::unbacked", resource=REPO, mode="READS"),
@@ -148,7 +154,7 @@ def _seed() -> None:
 
 CANDIDATES = [
     "alpha::git_status",
-    "read_file",            # bare name, matches alpha + beta → ambiguous
+    "read_file",  # bare name, matches alpha + beta → ambiguous
     "alpha::read_file",
     "alpha::export_data",
     "alpha::ghost_tool",
@@ -173,12 +179,12 @@ def test_rank_features_risk_scores_follow_the_published_table(graph):
     _seed()
     got = selector.rank_features("planner", CANDIDATES)
     by_ref = {f["candidate"]: f for f in got["features"]}
-    assert by_ref["alpha::read_file"]["risk_score"] == 1.0      # DENY violation
-    assert by_ref["alpha::ghost_tool"]["risk_score"] == 0.8     # drifted
-    assert by_ref["alpha::free_tool"]["risk_score"] == 0.6      # unmapped
-    assert by_ref["alpha::unbacked"]["risk_score"] == 0.4       # unbacked edge
-    assert by_ref["alpha::export_data"]["risk_score"] == 0.2    # authorized_but_governed
-    assert by_ref["alpha::git_status"]["risk_score"] == 0.0     # clean
+    assert by_ref["alpha::read_file"]["risk_score"] == 1.0  # DENY violation
+    assert by_ref["alpha::ghost_tool"]["risk_score"] == 0.8  # drifted
+    assert by_ref["alpha::free_tool"]["risk_score"] == 0.6  # unmapped
+    assert by_ref["alpha::unbacked"]["risk_score"] == 0.4  # unbacked edge
+    assert by_ref["alpha::export_data"]["risk_score"] == 0.2  # authorized_but_governed
+    assert by_ref["alpha::git_status"]["risk_score"] == 0.0  # clean
     # No facts to score for unresolved candidates.
     assert by_ref["read_file"]["risk_score"] is None
     assert by_ref["alpha::no_such_tool"]["risk_score"] is None
@@ -270,7 +276,10 @@ def test_explore_rejects_only_resolution_grant_and_drift(backend_graph):
         "alpha::unbacked",
     ]
     assert set(_reasons(got)) == {
-        "read_file", "alpha::ghost_tool", "alpha::loose_tool", "alpha::no_such_tool",
+        "read_file",
+        "alpha::ghost_tool",
+        "alpha::loose_tool",
+        "alpha::no_such_tool",
     }
 
 
@@ -296,9 +305,7 @@ def test_deny_rejections_carry_policy_evidence_paths(graph):
     _seed()
     got = selector.eligible_tools("planner", ["alpha::read_file"], profile="strict")
     [row] = got["rejected"]
-    assert row["paths"] == [
-        f"(read_file) -READS-> ({SECRETS}) -GOVERNED_BY-> (pii-deny:DENY)"
-    ]
+    assert row["paths"] == [f"(read_file) -READS-> ({SECRETS}) -GOVERNED_BY-> (pii-deny:DENY)"]
 
 
 def test_unknown_profile_raises(graph):
@@ -334,8 +341,10 @@ def test_schema_profile_enums_match_the_selector():
         for enum in enums(json.loads(path.read_text()))
     ]
     assert [name for name, _ in found] == [
-        "control-preflight.schema.json", "observation-window.schema.json",
-        "policy-bundle.schema.json", "policy-review-plan.schema.json",
+        "control-preflight.schema.json",
+        "observation-window.schema.json",
+        "policy-bundle.schema.json",
+        "policy-review-plan.schema.json",
         "preflight.schema.json",
     ]
     assert all(enum == sorted(selector.PROFILES) for _, enum in found), found
@@ -372,6 +381,7 @@ def test_selection_explain_surfaces_operator_exception_reason(graph):
 
 
 runner = CliRunner()
+
 
 def test_cli_eligible_tools_stdout_is_pure_json(graph):
     _seed()

@@ -86,9 +86,7 @@ def build_policy_bundle(
         # on a duplicate (the schema's tools description makes this normative),
         # so failing compilation here is strictly better than shipping one.
         duplicates = sorted(
-            key
-            for key, count in Counter(row["tool_key"] for row in contracts).items()
-            if count > 1
+            key for key, count in Counter(row["tool_key"] for row in contracts).items() if count > 1
         )
         if duplicates:
             raise PolicyBundleError(
@@ -109,7 +107,7 @@ def build_policy_bundle(
         # The empty catalog still evaluates identity once. Every chunk is
         # inside the same bracket; a state change retries the entire catalog.
         chunks = [
-            candidates[i:i + selector.MAX_CANDIDATES]
+            candidates[i : i + selector.MAX_CANDIDATES]
             for i in range(0, len(candidates), selector.MAX_CANDIDATES)
         ] or [[]]
         for chunk in chunks:
@@ -134,11 +132,12 @@ def build_policy_bundle(
                 )
             decision_keys = Counter(decisions["eligible"])
             decision_keys.update(
-                row.get("tool_key") or row["candidate"]
-                for row in decisions["rejected"]
+                row.get("tool_key") or row["candidate"] for row in decisions["rejected"]
             )
             if decision_keys != expected:
-                raise PolicyBundleError("selector returned missing, duplicate, or conflicting decisions")
+                raise PolicyBundleError(
+                    "selector returned missing, duplicate, or conflicting decisions"
+                )
             filtered["eligible"].extend(decisions["eligible"])
             filtered["rejected"].extend(decisions["rejected"])
             features.extend(rows)
@@ -152,9 +151,7 @@ def build_policy_bundle(
     compiled = queries.with_graph_state(fetch, strict=True, state_reader=reader.state)
     graph_state = compiled["graph_state"]
     if not isinstance(graph_state.get("instance_id"), str) or not graph_state["instance_id"]:
-        raise PolicyBundleError(
-            "graph has no instance id — run init-schema before compiling"
-        )
+        raise PolicyBundleError("graph has no instance id — run init-schema before compiling")
     gen = graph_state.get("generation")
     if isinstance(gen, bool) or not isinstance(gen, int) or gen < 0:
         raise PolicyBundleError(
@@ -167,13 +164,9 @@ def build_policy_bundle(
         )
 
     rejected = {
-        row.get("tool_key") or row["candidate"]: row
-        for row in compiled["filtered"]["rejected"]
+        row.get("tool_key") or row["candidate"]: row for row in compiled["filtered"]["rejected"]
     }
-    features = {
-        row.get("tool_key") or row["candidate"]: row
-        for row in compiled["features"]
-    }
+    features = {row.get("tool_key") or row["candidate"]: row for row in compiled["features"]}
     tools: list[dict[str, Any]] = []
     for contract in compiled["contracts"]:
         key = contract["tool_key"]
@@ -183,9 +176,7 @@ def build_policy_bundle(
             # Both passes ran inside one graph-state bracket, so every catalog
             # key must have a feature row; a miss means the selector contract
             # broke — fail as a typed compile error, not a KeyError traceback.
-            raise PolicyBundleError(
-                f"selector returned no feature row for catalog tool {key!r}"
-            )
+            raise PolicyBundleError(f"selector returned no feature row for catalog tool {key!r}")
         item: dict[str, Any] = {
             "tool_key": key,
             "tool_contract_digest": tool_contract_digest(contract),

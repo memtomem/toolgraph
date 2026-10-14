@@ -19,6 +19,7 @@ from pydantic import AnyUrl, ValidationError
 class ResourceUriNormalizationWarning(UserWarning):
     """A URL-shaped resource identifier could not be canonicalized."""
 
+
 # A URI scheme (RFC 3986): scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) ":"
 _SCHEME = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:")
 _TOOL_REF_PREFIX = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.\-]*::")

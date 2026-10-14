@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only verification of the exact two published release distributions."""
+
 from __future__ import annotations
 
 import argparse
@@ -25,7 +26,10 @@ def fetch(url: str) -> bytes:
 def verify(version: str, dist: Path, metadata: dict, download=fetch) -> dict:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("expected a final three-part release version")
-    if metadata.get("info", {}).get("name") != "toolgraph" or metadata.get("info", {}).get("version") != version:
+    if (
+        metadata.get("info", {}).get("name") != "toolgraph"
+        or metadata.get("info", {}).get("version") != version
+    ):
         raise ValueError("index project/version differs from the candidate")
     expected = {f"toolgraph-{version}-py3-none-any.whl", f"toolgraph-{version}.tar.gz"}
     rows = metadata.get("urls", [])
@@ -40,8 +44,13 @@ def verify(version: str, dist: Path, metadata: dict, download=fetch) -> dict:
         if row.get("yanked"):
             raise ValueError("published release is yanked")
         url = urlsplit(row["url"])
-        if (url.scheme != "https" or not (url.hostname or "").endswith(".pythonhosted.org")
-                or url.username is not None or url.password is not None or url.port not in (None, 443)):
+        if (
+            url.scheme != "https"
+            or not (url.hostname or "").endswith(".pythonhosted.org")
+            or url.username is not None
+            or url.password is not None
+            or url.port not in (None, 443)
+        ):
             raise ValueError("distribution URL is not an HTTPS Python package host")
         digest = hashlib.sha256((dist / name).read_bytes()).hexdigest()
         if row.get("digests", {}).get("sha256") != digest:
