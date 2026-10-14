@@ -1,13 +1,15 @@
 """Release workflow invariants: publish-job authority, no silent re-publish, a
-pinned build toolchain.
+pinned build toolchain, a checked commit before building.
 """
 
 from __future__ import annotations
 
 import re
+import shlex
 import tomllib
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -190,3 +192,77 @@ def test_release_build_toolchain_is_pinned():
     assert requires and all("==" in item for item in requires), (
         f"the build backend must be pinned exactly, got {requires}"
     )
+
+
+# The checks the build job must run, as exact argv, before it builds.
+RELEASE_CHECKS = (
+    ["uv", "run", "--frozen", "ruff", "check", "."],
+    ["uv", "run", "--frozen", "ruff", "format", "--check", "."],
+    ["uv", "run", "--frozen", "pytest", "-q", "-m", "not neo4j"],
+)
+
+
+def _argv(step: dict) -> list[str]:
+    # Multi-line scripts elsewhere in the job need not tokenize; none of them
+    # can be one of the single commands looked for here.
+    try:
+        return shlex.split(step.get("run", ""))
+    except ValueError:
+        return []
+
+
+def _gated_build_problems(steps: list[dict]) -> list[str]:
+    """Why these build steps would let an unchecked commit be built, if they would."""
+    argvs = [_argv(step) for step in steps]
+    if ["uv", "build"] not in argvs:
+        return ["no `uv build` step"]
+    build = argvs.index(["uv", "build"])
+    problems = []
+    for check in RELEASE_CHECKS:
+        if check not in argvs[:build]:
+            problems.append(f"{shlex.join(check)} does not run before uv build")
+            continue
+        step = steps[argvs.index(check)]
+        if "if" in step:
+            problems.append(f"{shlex.join(check)} is conditional")
+        if step.get("continue-on-error"):
+            problems.append(f"{shlex.join(check)} cannot fail the job")
+    tests = next((step for step in steps if _argv(step) == list(RELEASE_CHECKS[-1])), {})
+    if (tests.get("env") or {}).get("TOOLGRAPH_TEST_NO_DOCKER") != "1":
+        problems.append("the tests do not set TOOLGRAPH_TEST_NO_DOCKER")
+    return problems
+
+
+def test_release_checks_the_commit_before_building_it():
+    """Lint and the Docker-free tests gate `uv build` in the build job.
+
+    A tag can name a commit CI never passed. Each check must be an exact
+    command (not text that merely mentions it), run before the build, and be
+    able to fail the job.
+
+    This guards against accidental edits: a reordered step, a check made
+    conditional or non-fatal, a command reworded. It does not try to stop a
+    deliberate bypass (a `shell:` override, a later step that rebuilds from
+    edited sources): whoever can make that edit can edit this test too.
+    """
+    build = _release_workflow()["jobs"]["build"]
+    assert "if" not in build and not build.get("continue-on-error")
+    assert _gated_build_problems(build["steps"]) == []
+
+
+@pytest.mark.parametrize(
+    "bypass",
+    ["after-build", "conditional", "continue-on-error", "echoed"],
+)
+def test_release_check_gate_rejects_bypasses(bypass):
+    steps = [dict(step) for step in _release_workflow()["jobs"]["build"]["steps"]]
+    index = next(i for i, step in enumerate(steps) if _argv(step) == list(RELEASE_CHECKS[-1]))
+    if bypass == "after-build":
+        steps.append(steps.pop(index))
+    elif bypass == "conditional":
+        steps[index]["if"] = "${{ false }}"
+    elif bypass == "continue-on-error":
+        steps[index]["continue-on-error"] = True
+    else:
+        steps[index]["run"] = "echo " + shlex.quote(steps[index]["run"])
+    assert _gated_build_problems(steps)
