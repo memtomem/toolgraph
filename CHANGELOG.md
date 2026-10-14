@@ -154,10 +154,11 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
-- Backend configuration errors print one `ERROR:` line and exit 1 on every
-  database command instead of a Python traceback: an unknown
-  `TOOLGRAPH_BACKEND`, a missing `ladybug` extra, and a schema-version
-  mismatch.
+- Backend configuration errors print one `ERROR:` line and exit 1 instead of
+  a Python traceback: an unknown `TOOLGRAPH_BACKEND`, a missing `ladybug`
+  extra, and a schema-version mismatch. `toolgraph doctor` is the exception
+  by design: it reports the same failure as a FAIL check (exit 1) in its text
+  or JSON report.
 - An outage or other backend error while reading the schema version is no
   longer taken for a fresh database, so `init`, `init-schema`, `crawl` and
   `ingest-manifest` stop before running any DDL.
@@ -168,6 +169,11 @@ All notable changes to Toolgraph are documented here.
   a partial database file it cannot remove is named in a warning.
 - `policy review-plan` refuses a graph with no instance id instead of writing
   a plan its own schema rejects.
+- `policy compile` (and `build_policy_bundle()`) refuses a graph state whose
+  generation is not a non-negative integer — a boolean, float, string, null
+  or negative value — instead of writing it into the bundle. Toolgraph's own
+  graph always yields one; the check matters for a hand-edited graph or a
+  library caller's own graph reader.
 - Writing a private artifact — `init`'s config file, `preflight --out`,
   `control-preflight --out`, `policy compile --output`, `policy review-plan
   --output` — no longer reports failure when the new file was already in
