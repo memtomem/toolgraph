@@ -6,7 +6,7 @@ from importlib.metadata import version
 import json
 from pathlib import Path
 
-from toolgraph.graph import loader, queries
+from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
     AccessGrant,
@@ -209,3 +209,56 @@ def mock_policy_review_inputs(monkeypatch, *, accepted: bool = True) -> None:
         return value
 
     monkeypatch.setattr("toolgraph.policy_review.queries.with_graph_state", with_state)
+
+
+
+def _ladybug_id(value: dict) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+def _ladybug_properties(entity: dict) -> dict:
+    # Ladybug returns every column of the table, unset ones as None, plus its
+    # bookkeeping keys; Neo4j's properties() has neither, so it is left as is.
+    bookkeeping = {"_ID", "_LABEL", "_SRC", "_DST"}
+    return {k: v for k, v in entity.items() if v is not None and k not in bookkeeping}
+
+
+def graph_content() -> list[str]:
+    """Every node and relationship, by backend identity, with all its properties.
+
+    Comparing this before and after an operation on the same database proves
+    the operation wrote nothing: a changed property, label or endpoint, and a
+    node or relationship deleted and recreated identically, all show up, where
+    the generation counter only moves on writes that bump it.
+    """
+    with driver.session() as session:
+        if driver.backend_name() == "ladybug":
+            nodes = [
+                (_ladybug_id(row["n"]["_ID"]), [row["label"]], _ladybug_properties(row["n"]))
+                for row in session.run("MATCH (n) RETURN label(n) AS label, n AS n")
+            ]
+            edges = []
+            for row in session.run("MATCH ()-[r]->() RETURN label(r) AS type, r AS r"):
+                r = row["r"]
+                edges.append((
+                    _ladybug_id(r["_ID"]), row["type"], _ladybug_id(r["_SRC"]),
+                    _ladybug_id(r["_DST"]), _ladybug_properties(r),
+                ))
+        else:
+            nodes = [
+                (row["id"], sorted(row["labels"]), row["props"])
+                for row in session.run(
+                    "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props"
+                )
+            ]
+            edges = [
+                (row["id"], row["type"], row["a"], row["b"], row["props"])
+                for row in session.run(
+                    "MATCH (a)-[r]->(b) RETURN elementId(r) AS id, type(r) AS type, "
+                    "properties(r) AS props, elementId(a) AS a, elementId(b) AS b"
+                )
+            ]
+    return sorted(
+        [json.dumps(["node", *node], sort_keys=True, default=str) for node in nodes]
+        + [json.dumps(["edge", *edge], sort_keys=True, default=str) for edge in edges]
+    )
