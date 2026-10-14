@@ -61,11 +61,13 @@ executing inside the privileged job. Pass values through `env:`.
    PyPI refuses a version that already exists, so a released number is spent
    even if the upload later fails verification.
 
-   The first public alpha was `0.0.1`. **The next release is `0.1.0`**: main
-   carries breaking changes against it — the MCP SDK floor moved to 2.x, and an
-   MCP response whose read could not be bracketed now returns null state fields
-   rather than the generation read afterwards. Callers pinned to `0.0.1`
-   continue to work; they are not silently upgraded.
+   Choose the number from what main carries against the last release. Before
+   1.0, a change that can break an existing caller bumps the minor version and
+   anything else the patch version. `0.1.0` followed `0.0.1` for the MCP SDK
+   2.x floor; `0.2.0` follows `0.1.0` because commands now refuse a backend
+   setting that disagrees with the config file instead of letting the
+   environment win. Callers pinned to an earlier version keep working; they are
+   not silently upgraded.
 2. Run the full local release gate:
 
    ```bash

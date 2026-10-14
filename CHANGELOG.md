@@ -4,10 +4,79 @@ All notable changes to Toolgraph are documented here.
 
 ## Unreleased
 
-### Changed
+### Upgrading from 0.1.0
 
-These change which database a command runs against, or whether it runs at
-all. Each one replaces a silent wrong choice with an explicit error.
+- Commands stop with `ERROR: conflicting backend configuration (...)` when
+  `TOOLGRAPH_BACKEND` or `TOOLGRAPH_DB_PATH` disagrees with the config file;
+  0.1.0 silently let the variable win. Pass `--config <file>` or unset the
+  variable. See the first bullet under Changed.
+- `control-preflight` can now return `advisory_warn` for a plan that 0.1.0
+  answered with `advisory_allow`. See the `control-preflight` bullet under
+  Changed before relying on `advisory_allow` as a gate.
+- A program that imports Toolgraph no longer gets `./.env` loaded for it.
+
+### Added
+
+- **`toolgraph doctor [--json]`** checks the configuration file (present,
+  valid JSON, mode 0600, and `backend_source`: which of `--config`, the
+  environment, the config file or the built-in default decided the backend),
+  backend connectivity, the physical schema and the graph state. It opens the
+  database read-only — on Neo4j in READ access mode — and redacts what it
+  reports. It exits 1 when any check fails; a warning alone exits 0.
+- **`toolgraph ingest-manifest --dry-run [--json]`** reports the full delta a
+  manifest would apply without changing the database: agents, policies,
+  grants and `granted_by`, data access, `GOVERNED_BY`, expected exceptions,
+  provenance, and the resources and tools that would be pruned for having no
+  edges left. It exits 1 when the manifest would be rejected; with `--json` it
+  then prints a rejection report with the warnings, not a delta (the delta
+  lists stay empty because no comparison was made). A missing database file is refused and none is
+  created; an existing but uninitialized one is refused with `init-schema`
+  guidance. On Neo4j the preview
+  session opens in READ access mode, so the server rejects an auto-commit write
+  issued through it (verified on Neo4j 5.26 over `bolt://`); that is an access
+  mode, not access control, and does not replace a read-only role. `--json`
+  requires `--dry-run`. Plain `ingest-manifest` behaves as before.
+- **`toolgraph policy propose GOVERNANCE OBSERVED`** proposes grant changes to
+  `governance.yaml` from an observation-window JSONL export
+  (`contracts/observation-window.schema.json`), resolving grants against the
+  live graph. It never writes to the graph and never edits the manifest. The
+  export's envelope must match the manifest and the live graph;
+  `--revalidate-current` accepts a moved generation and re-checks additions
+  against the current strict catalog, and `--unverified-provenance` accepts a
+  missing envelope or identity and labels the result unverified. Other
+  options: `--min-would-block` (default 3), `--window-label`, `--json`, and
+  `-o/--output`, which cannot be combined with `--json` and writes the file
+  atomically with mode 0600 (a failure before the replacement leaves an
+  existing file as it was). It refuses, with a redacted `ERROR:` diagnostic
+  and exit 1 rather than a traceback: an export over 50,000,000 bytes,
+  malformed YAML, and any proposal row it would emit whose agent, tool or note
+  is credential-shaped — that error names the position (`additions[0].tool`),
+  never the value. See
+  `docs/policy-propose.md`.
+- **`control-preflight` reports potential exposures.** Each record in the new
+  `potential_exposures` field joins an eligible reader tool on one plan node to
+  an eligible writer tool on a distinct node downstream of it, with the
+  resources involved (redacted) and a shortest witness path. It marks a
+  potential path, not proof that data moved. The search is bounded: at most 100 records,
+  64,000 bytes of records and 65,536 traversal steps; when it stops early the
+  result also carries `truncated: true` and `total_candidate_pairs_found`,
+  which is then a lower bound. The fields are additive to the v1 schema. See
+  `docs/adr/0013-bounded-control-plan-preflight.md`.
+- `toolgraph audit-report` JSON now carries the graph state it was read at
+  (`graph_generation`, `graph_instance_id`, `graph_state`,
+  `graph_state_verified`), as the MCP `audit_report` tool already did. The
+  Markdown format is unchanged.
+- `toolgraph example init` now writes a `README.md` into the generated
+  directory. `docs/` is excluded from the sdist, so a user who installed from
+  PyPI previously landed in a directory of three unexplained files with only
+  the CLI's one-line hint to go on. The file lists the commands in order,
+  states the expected outcome, and links the full guide.
+- `examples/README.md` maps each `servers-*.yaml` / `governance-*.yaml` input
+  to the script or workflow that consumes it, and to what it needs to run.
+- A `Documentation` URL in the project metadata, so the beginner guide is
+  reachable from the PyPI sidebar.
+
+### Changed
 
 - **An environment variable can no longer silently override `toolgraph
   init`'s config.** Without `--config`, `TOOLGRAPH_BACKEND` and
@@ -31,26 +100,31 @@ all. Each one replaces a silent wrong choice with an explicit error.
   Ladybug file read-only, so a mistyped `db_path` exits 1 with
   `BACKEND_UNAVAILABLE ... does not exist` instead of creating an empty
   database and printing `OK`. Run `toolgraph init` or `init-schema` first.
+- **`control-preflight` can now warn where 0.1.0 allowed.** The decision is
+  `advisory_warn`, not `advisory_allow`, when the plan has a potential
+  exposure (see Added) or the exposure search was truncated. The exit code is
+  still 0 for both. A consumer that gates on `advisory_allow` will see more
+  warnings and should review them rather than treat them as failures of the
+  tool. A result without the exposure fields, from 0.1.0, means "not
+  checked", not "none found"; `total_candidate_pairs_found` on a truncated
+  result is a lower bound. ADR-0013 states the decision rules.
+- **Credential checks are shared and refuse more.** Agent and tool identities
+  (preflight, `policy compile`, `policy review-plan`, `policy propose`) and
+  strings in control plans are now also refused when they carry
+  `?access_token=` or `?credential=`, a password URI whose username is an
+  email address, or an `@` in a query after a port
+  (`https://user@host:443?x=a@b`). `review-candidates annotate` notes that
+  assign `secret=` or `access_token=` are now refused too. Error text
+  now also hides `credential=...` and a bare `Bearer <token>`. Nothing that
+  was refused or hidden before is accepted or shown now.
+- Control-plan validation errors give the location and the reason, never the
+  rejected value: `invalid control plan at nodes.0.principals.1: ...`, and a
+  bad candidate tool is reported by its index.
 - A file that is not a Ladybug database is now a non-retryable
-  `BACKEND_CORRUPT` configuration error. Previously the read-only open path
-  (previews, `doctor`, `check`) reported it as a retryable
-  `BACKEND_UNAVAILABLE` outage, and the writable path let Ladybug's raw
-  `RuntimeError` escape.
-- Neo4j preview and diagnostic sessions (`ingest-manifest --dry-run`,
-  `doctor`) now open in READ access mode, so the server rejects an
-  auto-commit write issued through them (verified on Neo4j 5.26 over
-  `bolt://`) instead of relying on the caller to issue only reads. This is
-  an access mode, not access control; it does not replace a read-only role.
+  `BACKEND_CORRUPT` configuration error, printed as one `ERROR:` line. In
+  0.1.0 it surfaced as a Python traceback from Ladybug.
 - `config.configure()` closes the cached backend connection, so a library
   caller switching configs no longer keeps talking to the previous database.
-- The `pyjwt` security floor rises from `>=2.13.0` to `>=2.15.0`. 2.13.0
-  carries 14 advisories published after it was set: PYSEC-2026-4140 through
-  PYSEC-2026-4152 and PYSEC-2026-4183. PYSEC-2026-4141 and PYSEC-2026-4183
-  are fixed in 2.15.0, PYSEC-2026-4146 lists 2.13.0 as its last affected
-  version, and the rest are fixed in 2.14.0.
-  The lock already resolved 2.15.0; the floor is what keeps an install from
-  PyPI from resolving an older one. Toolgraph does not import `pyjwt`
-  itself; it is pinned for the MCP SDK's dependency tree.
 - Deny-path rows (`check-access` evidence, `unsafe-tools`, `audit-report`,
   selector deny paths) now have a fixed order when rows used to tie: one
   tool under several DENY policies, one tool name on several servers, or a
@@ -58,40 +132,54 @@ all. Each one replaces a silent wrong choice with an explicit error.
   policy and mode; before, the backend chose, and Ladybug and Neo4j could
   disagree. Rows that did not tie keep their order.
 
-### Added
-
-- `toolgraph audit-report` JSON now carries the graph state it was read at
-  (`graph_generation`, `graph_instance_id`, `graph_state`,
-  `graph_state_verified`), as the MCP `audit_report` tool already did. The
-  Markdown format is unchanged.
-- `toolgraph example init` now writes a `README.md` into the generated
-  directory. `docs/` is excluded from the sdist, so a user who installed from
-  PyPI previously landed in a directory of three unexplained files with only
-  the CLI's one-line hint to go on. The file lists the commands in order,
-  states the expected outcome, and links the full guide.
-- `examples/README.md` maps each `servers-*.yaml` / `governance-*.yaml` input
-  to the script or workflow that consumes it, and to what it needs to run.
-- A `Documentation` URL in the project metadata, so the beginner guide is
-  reachable from the PyPI sidebar.
-
 ### Removed
-
-- `GraphState.token()`, which nothing called and which returned a different
-  set of keys than the `graph_state` token that results actually carry.
 
 - **`examples/policy_propose_from_observed.py`, the offline proposal script.**
   There is no longer a graph-free way to produce a proposal. Its replacement,
-  `toolgraph policy propose` (new in this release), applies the same row and
-  proposal rules but resolves grants against the live graph, and checks the
-  envelope against it too: an envelope the script accepted is refused when it
-  lacks a graph instance id, or when its generation, digest or instance
-  differs from the live graph. Re-export from the current graph, or pass
+  `toolgraph policy propose` (see Added), applies the same row and proposal
+  rules but resolves grants against the live graph, and checks the envelope
+  against it too: an envelope the script accepted is refused when it lacks a
+  graph instance id, or when its generation, digest or instance differs from
+  the live graph. Re-export from the current graph, or pass
   `--revalidate-current` (a moved generation) or `--unverified-provenance`
   (missing identity) to proceed. The script was repository-only and never
   shipped in the distribution. Its tests now drive `toolgraph.policy_propose`.
+- `GraphState.token()`, which nothing called and which returned a different
+  set of keys than the `graph_state` token that results actually carry.
+- `toolgraph.graph.queries.with_generation()`, which had no production
+  caller; use `with_graph_state()`. A strict read that sees the graph state
+  change on every retry now raises `queries.GraphStateChurnError`, a
+  `RuntimeError` subclass with the same message, so CLI output and exit codes
+  are unchanged.
 
 ### Fixed
 
+- Backend configuration errors print one `ERROR:` line and exit 1 instead of
+  a Python traceback: an unknown `TOOLGRAPH_BACKEND`, a missing `ladybug`
+  extra, and a schema-version mismatch. `toolgraph doctor` is the exception
+  by design: it reports the same failure as a FAIL check (exit 1) in its text
+  or JSON report.
+- An outage or other backend error while reading the schema version is no
+  longer taken for a fresh database, so `init`, `init-schema`, `crawl` and
+  `ingest-manifest` stop before running any DDL.
+- `toolgraph check` no longer prints credentials embedded in `NEO4J_URI`, and
+  `ingest-manifest` warnings and notices are redacted.
+- `toolgraph init` with an unusable `--state-dir` prints `ERROR: cannot
+  initialize ...` and exits 1 instead of a traceback raised from its cleanup;
+  a partial database file it cannot remove is named in a warning.
+- `policy review-plan` refuses a graph with no instance id instead of writing
+  a plan its own schema rejects.
+- `policy compile` (and `build_policy_bundle()`) refuses a graph state whose
+  generation is not a non-negative integer — a boolean, float, string, null
+  or negative value — instead of writing it into the bundle. Toolgraph's own
+  graph always yields one; the check matters for a hand-edited graph or a
+  library caller's own graph reader.
+- Writing a private artifact — `init`'s config file, `preflight --out`,
+  `control-preflight --out`, `policy compile --output`, `policy review-plan
+  --output` — no longer reports failure when the new file was already in
+  place and only re-applying its 0600 mode afterwards failed. The file is
+  created 0600 before it is written, so that second step was redundant.
+- `crawl` no longer prints `vNone` for a server that reports no version.
 - The packaged quickstart governance manifest now carries `provenance` on
   every authored edge. The beginner guide claimed every authored edge had an
   evidence pointer and then told the reader to run `unbacked-edges`, which
@@ -99,7 +187,9 @@ all. Each one replaces a silent wrong choice with an explicit error.
   manifest and the guide say what that does and does not prove: the demo tools
   return strings and touch no file, so the READS/WRITES effects are synthetic
   and their evidence cites the fixture that defines them. An empty audit means
-  every edge has a pointer, not that a claim is true.
+  every edge has a pointer, not that a claim is true. As a result `read_note`'s
+  risk in the quickstart drops from 0.4 to 0.0 and the compiled bundle's
+  digest changes.
 - Beginner guide corrections (both languages): the shared-backend section
   needs a repository clone, since `docker-compose.yml` and `.env.example` ship
   with neither the package nor the generated quickstart; `policy compile`
@@ -107,19 +197,23 @@ all. Each one replaces a silent wrong choice with an explicit error.
   is labelled optional, matching the README's statement that memtomem-stm is
   not a required dependency.
 
-- The `sse` crawl transport is now verified end to end. `ServerSpec` has always
-  accepted `transport: sse`, but no test, script or CI job ever opened an SSE
-  session, so the branch survived the MCP 2.x migration unexercised. The test
-  fixture server can now serve SSE, `tests/test_crawler.py` crawls it, and
-  `scripts/verify_mcp_floor.py` drives it at the declared SDK floor alongside
-  streamable-http. Endpoint redaction for SSE URLs is pinned by a test.
-- Auth-header forwarding is now verified on both HTTP transports (#103).
-  `ServerSpec.headers` carries crawl credentials to upstream MCP servers, but
-  streamable-http and SSE hand them to the SDK by different mechanisms and
-  neither had ever been run with a non-empty value. The fixture server can now
-  reject tokenless requests, so a dropped header fails a test instead of
-  quietly crawling a smaller tool set. Both transports are covered at the
-  lockfile version and at the declared SDK floor.
+### Dependencies
+
+- The `pyjwt` security floor rises from `>=2.13.0` to `>=2.15.0`. 2.13.0
+  carries 14 advisories published after it was set: PYSEC-2026-4140 through
+  PYSEC-2026-4152 and PYSEC-2026-4183. PYSEC-2026-4141 and PYSEC-2026-4183
+  are fixed in 2.15.0, PYSEC-2026-4146 lists 2.13.0 as its last affected
+  version, and the rest are fixed in 2.14.0. The floor is what keeps an
+  install from PyPI from resolving an older version; the lock already resolves
+  a newer one. Toolgraph does not import `pyjwt` itself; it is pinned for the
+  MCP SDK's dependency tree.
+
+### Testing
+
+- The `sse` crawl transport and auth-header forwarding on both HTTP
+  transports are now exercised end to end, at the lockfile version and at the
+  declared MCP SDK floor. Neither had been run before; no runtime behaviour
+  changed.
 
 ## 0.1.0 - 2026-09-10
 
