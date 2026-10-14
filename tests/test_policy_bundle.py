@@ -22,6 +22,7 @@ from toolgraph.policy_bundle import (
     tool_contract_digest,
 )
 from toolgraph.preflight import build_preflight
+from tests._helpers import FakeBundleReader
 
 NOW = datetime(2026, 7, 14, tzinfo=timezone.utc)
 ROOT = Path(__file__).parent.parent
@@ -352,36 +353,12 @@ def test_real_graph_bundle_carries_ingested_governance_digest(graph):
     }
 
 
-class Reader:
-    def __init__(self, size):
-        self.keys = [f"s::t{i:05}" for i in range(size)]
-        self.calls = []
-        self.generation = 1
-
-    def state(self):
-        return queries.GraphState("injected", self.generation, "a" * 64)
-
-    def exposed_tool_contracts(self):
-        return [
-            {"tool_key": k, "server": "s", "name": k.split("::")[1]}
-            for k in reversed(self.keys)
-        ]
-
-    def evaluate(self, agent, candidates, profile):
-        self.calls.append(list(candidates))
-        return {
-            "agent_found": True,
-            "filtered": {"eligible": candidates, "rejected": []},
-            "features": [{"tool_key": k, "risk_score": 0} for k in candidates],
-        }
-
-
 @pytest.mark.parametrize("size", [0, 4095, 4096, 4097])
 def test_injected_reader_chunks_without_runtime(monkeypatch, size):
     monkeypatch.setattr(
         queries, "graph_state", lambda: pytest.fail("global state accessed")
     )
-    reader = Reader(size)
+    reader = FakeBundleReader(size)
     bundle = build_policy_bundle(agent="a", store=reader)
     assert [r["tool_key"] for r in bundle["tools"]] == reader.keys
     assert [len(c) for c in reader.calls] == ([size] if size <= 4096 else [4096, 1])
@@ -392,7 +369,7 @@ def test_injected_reader_chunks_without_runtime(monkeypatch, size):
     ["missing", "duplicate", "conflict", "feature_missing", "feature_duplicate"],
 )
 def test_compiler_rejects_incomplete_evaluation(failure):
-    reader = Reader(2)
+    reader = FakeBundleReader(2)
     evaluate = reader.evaluate
 
     def broken(*args):
@@ -418,7 +395,7 @@ def test_compiler_rejects_incomplete_evaluation(failure):
 
 @pytest.mark.parametrize("always", [False, True])
 def test_chunk_state_change_retries_whole_catalog(monkeypatch, always):
-    reader = Reader(4097)
+    reader = FakeBundleReader(4097)
     evaluate = reader.evaluate
 
     def changing(*args):
@@ -504,7 +481,7 @@ def test_legacy_reader_fallback():
 
 
 def test_empty_catalog_unknown_agent_fails():
-    reader = Reader(0)
+    reader = FakeBundleReader(0)
     reader.evaluate = lambda *args: {"agent_found": False}
     with pytest.raises(PolicyBundleError, match="not found"):
         build_policy_bundle(agent="missing", store=reader)

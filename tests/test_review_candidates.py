@@ -34,13 +34,13 @@ from toolgraph.review_candidates import (
     default_annotations_path,
     list_candidates,
 )
+from tests._helpers import CSV
 
 
 ROOT = Path(__file__).parents[1]
 GOLDEN = ROOT / "contracts" / "tracegraph" / "v1.json"
 CANDIDATE_ID = "167379e8-3436-546b-9dbb-5fa087ab0493"
 SOURCE_DIGEST = "sha256:ce66fdf2177955ba4f7d146aadf4e7dea3f85215ece59eee003f043711469e00"
-CSV = "file:///data/customers.csv"
 runner = CliRunner()
 
 

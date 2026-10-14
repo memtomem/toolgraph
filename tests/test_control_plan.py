@@ -21,72 +21,15 @@ from toolgraph.control_plan import (
 from contextlib import contextmanager
 from jsonschema import Draft202012Validator, ValidationError
 from toolgraph import control_plan
+from tests._helpers import control_plan_bracket, control_plan_document, control_plan_raw
 
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
 NOW = datetime(2026, 8, 11, tzinfo=timezone.utc)
 
 
-def _document() -> dict:
-    return json.loads(FIXTURE.read_text(encoding="utf-8"))
-
-
-def _raw(document: dict | None = None) -> bytes:
-    value = _document() if document is None else document
-    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-
-
-def _bracket(monkeypatch, *, rejected: bool = False) -> None:
-    calls = []
-
-    def eligible(principal, candidates, *, profile):
-        calls.append((principal, candidates, profile))
-        rejected_rows = []
-        eligible_rows = list(candidates)
-        if rejected and principal == "claude":
-            eligible_rows = candidates[:-1]
-            rejected_rows = [
-                {
-                    "candidate": candidates[-1],
-                    "tool_key": candidates[-1],
-                    "reason": "DENY_VIOLATION",
-                    "paths": [],
-                }
-            ]
-        return {
-            "agent": principal,
-            "agent_found": True,
-            "profile": profile,
-            "eligible": eligible_rows,
-            "rejected": rejected_rows,
-        }
-
-    def bracket(fetch, *, strict):
-        assert strict is True
-        return {
-            **fetch(),
-            "graph_state": {"instance_id": "test-instance", "generation": 42},
-        }
-
-    class MockSession:
-        def run(self, *args, **kwargs):
-            return []
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args):
-            pass
-
-    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
-    monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", bracket)
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
-    monkeypatch.setattr("toolgraph.control_plan._test_calls", calls, raising=False)
-
-
 def test_valid_plan_is_body_free_and_structurally_clean():
-    plan = load_control_plan(_raw())
+    plan = load_control_plan(control_plan_raw())
     assert plan.run_id == "run-control-1"
     assert lint_control_plan(plan) == []
 
@@ -108,31 +51,31 @@ def test_valid_plan_is_body_free_and_structurally_clean():
     ],
 )
 def test_body_free_scanner_rejects_sensitive_shape(path, value):
-    document = _document()
+    document = control_plan_document()
     parent = document
     for key in path[:-1]:
         parent = parent[key]
     parent[path[-1]] = value
     with pytest.raises(ControlPlanError):
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
 
 def test_same_major_additive_fields_are_tolerated():
-    document = _document()
+    document = control_plan_document()
     document["future_metadata"] = {"bounded_hint": 3}
     document["nodes"][1]["future_node_hint"] = True
-    assert load_control_plan(_raw(document)).run_id == "run-control-1"
+    assert load_control_plan(control_plan_raw(document)).run_id == "run-control-1"
 
 
 def test_unknown_major_is_rejected():
-    document = _document()
+    document = control_plan_document()
     document["schema_version"] = 2
     with pytest.raises(ControlPlanError, match="invalid control plan"):
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
 
 def test_duplicate_json_keys_are_rejected_before_model_validation():
-    raw = _raw().replace(
+    raw = control_plan_raw().replace(
         b'"schema_version":1', b'"schema_version":2,"schema_version":1', 1
     )
     with pytest.raises(ControlPlanError, match="duplicate key"):
@@ -140,16 +83,16 @@ def test_duplicate_json_keys_are_rejected_before_model_validation():
 
 
 def test_agent_kind_and_call_flag_must_agree():
-    document = _document()
+    document = control_plan_document()
     document["nodes"][1]["agent_call"] = False
     for key in ("max_invocations", "max_parallelism", "timeout_seconds"):
         document["nodes"][1].pop(key)
     with pytest.raises(ControlPlanError, match="must agree"):
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
 
 def test_linter_reports_cycles_unknown_edges_and_low_bounds():
-    document = _document()
+    document = control_plan_document()
     document["edges"].append(
         {
             "from": "end",
@@ -163,7 +106,7 @@ def test_linter_reports_cycles_unknown_edges_and_low_bounds():
     )
     document["limits"]["maximum_agent_calls"] = 1
     document["limits"]["maximum_parallelism"] = 1
-    codes = {row["code"] for row in lint_control_plan(load_control_plan(_raw(document)))}
+    codes = {row["code"] for row in lint_control_plan(load_control_plan(control_plan_raw(document)))}
     assert {
         "UNKNOWN_NODE_REFERENCE",
         "CONTROL_CYCLE_UNSUPPORTED",
@@ -174,8 +117,8 @@ def test_linter_reports_cycles_unknown_edges_and_low_bounds():
 
 
 def test_build_preflight_brackets_every_principal_in_one_graph_state(monkeypatch):
-    _bracket(monkeypatch)
-    raw = _raw()
+    control_plan_bracket(monkeypatch)
+    raw = control_plan_raw()
     artifact = build_control_preflight(raw, profile="review", created_at=NOW)
     assert artifact["decision"] == "advisory_allow"
     assert artifact["created_at"] == "2026-08-11T00:00:00+00:00"
@@ -185,8 +128,8 @@ def test_build_preflight_brackets_every_principal_in_one_graph_state(monkeypatch
 
 
 def test_build_preflight_warns_without_becoming_an_enforcer(monkeypatch):
-    _bracket(monkeypatch, rejected=True)
-    artifact = build_control_preflight(_raw(), profile="strict", created_at=NOW)
+    control_plan_bracket(monkeypatch, rejected=True)
+    artifact = build_control_preflight(control_plan_raw(), profile="strict", created_at=NOW)
     assert artifact["mode"] == "advisory"
     assert artifact["decision"] == "advisory_warn"
     assert artifact["evaluations"][1]["rejected"]
@@ -217,14 +160,14 @@ def test_missing_graph_instance_fails_closed(monkeypatch):
 
     monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
     with pytest.raises(ControlPlanError, match="no instance id"):
-        build_control_preflight(_raw())
+        build_control_preflight(control_plan_raw())
 
 
 def test_cli_writes_private_canonical_artifact(monkeypatch, tmp_path):
     """Drive the real producer: a stub here cannot catch producer/contract drift."""
-    _bracket(monkeypatch)
+    control_plan_bracket(monkeypatch)
     plan = tmp_path / "plan.json"
-    plan.write_bytes(_raw())
+    plan.write_bytes(control_plan_raw())
     out = tmp_path / "nested" / "result.json"
     result = CliRunner().invoke(
         cli.app,
@@ -251,17 +194,17 @@ def test_cli_writes_private_canonical_artifact(monkeypatch, tmp_path):
 
 def test_naive_created_at_is_rejected_before_stamping(monkeypatch):
     """RFC 3339 needs an offset; policy compile already guards this."""
-    _bracket(monkeypatch)
+    control_plan_bracket(monkeypatch)
     with pytest.raises(ControlPlanError, match="timezone-aware"):
-        build_control_preflight(_raw(), created_at=datetime(2026, 8, 11))
+        build_control_preflight(control_plan_raw(), created_at=datetime(2026, 8, 11))
 
 
 def test_uri_shaped_identities_survive_redaction(monkeypatch):
     """Redaction is for graph evidence; mangling identity breaks correlation."""
-    _bracket(monkeypatch)
-    document = _document()
+    control_plan_bracket(monkeypatch)
+    document = control_plan_document()
     document["run_id"] = "https://runs.example/r?id=42"
-    artifact = build_control_preflight(_raw(document), profile="review")
+    artifact = build_control_preflight(control_plan_raw(document), profile="review")
     assert artifact["run_id"] == "https://runs.example/r?id=42"
 
 
@@ -272,7 +215,7 @@ def test_cli_failure_preserves_existing_output(monkeypatch, tmp_path):
         lambda *args, **kwargs: (_ for _ in ()).throw(ControlPlanError("bad plan")),
     )
     plan = tmp_path / "plan.json"
-    plan.write_bytes(_raw())
+    plan.write_bytes(control_plan_raw())
     out = tmp_path / "result.json"
     out.write_text("keep", encoding="utf-8")
     result = CliRunner().invoke(
@@ -561,11 +504,11 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
 
 
 def test_invalid_plan_error_names_the_field_but_not_its_value():
-    document = _document()
+    document = control_plan_document()
     document["nodes"][0]["id"] = 12345678901234567890
 
     with pytest.raises(ControlPlanError) as raised:
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
     assert str(raised.value) == (
         "invalid control plan at nodes.0.id: Input should be a valid string"
@@ -573,12 +516,12 @@ def test_invalid_plan_error_names_the_field_but_not_its_value():
 
 
 def test_unqualified_candidate_error_names_the_index_not_the_value():
-    document = _document()
+    document = control_plan_document()
     document["principals"][0]["candidate_tools"].append("Bearer TOPSECRET123")
     index = len(document["principals"][0]["candidate_tools"]) - 1
 
     with pytest.raises(ControlPlanError) as raised:
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
     assert str(raised.value) == (
         "invalid control plan at principals.0: Value error, candidate_tools "
@@ -587,11 +530,11 @@ def test_unqualified_candidate_error_names_the_index_not_the_value():
 
 
 def test_undeclared_principal_error_names_the_position_not_the_value():
-    document = _document()
+    document = control_plan_document()
     document["nodes"][1]["principals"][1] = "Bearer TOPSECRET123"
 
     with pytest.raises(ControlPlanError) as raised:
-        load_control_plan(_raw(document))
+        load_control_plan(control_plan_raw(document))
 
     assert str(raised.value) == (
         "invalid control plan at plan: Value error, nodes reference "
@@ -630,9 +573,7 @@ EVALUATIONS = [{'principal': 'reader', 'eligible': ['t::read']}, {'principal': '
 
 
 def test_golden_exposure_fixture_matches_actual_producer(monkeypatch):
-    from tests.test_control_plan import _bracket
-
-    _bracket(monkeypatch)
+    control_plan_bracket(monkeypatch)
     fixture_dir = ROOT / 'contracts/fixtures'
     expected = json.loads((fixture_dir / 'control-preflight-exposure-v1.json').read_text())
     facts = ExposureSession()
@@ -750,7 +691,7 @@ def test_exposure_contract_rejects_invalid_results(change):
     ],
 )
 def test_control_loader_rejects_schema_invalid_mutations(mutation):
-    doc = _document()
+    doc = control_plan_document()
     agent = next(n for n in doc["nodes"] if n["kind"] == "agent")
     if mutation == "missing_cycles":
         del doc["limits"]["maximum_cycles"]
@@ -767,23 +708,21 @@ def test_control_loader_rejects_schema_invalid_mutations(mutation):
     if mutation == "null_edge":
         doc["edges"][0]["max_fan_out"] = None
     with pytest.raises(ControlPlanError):
-        load_control_plan(_raw(doc))
+        load_control_plan(control_plan_raw(doc))
 
 
 def test_control_loader_accepts_json_integer_numbers():
-    doc = _document()
+    doc = control_plan_document()
     doc["schema_version"] = 1.0
     doc["limits"]["maximum_cycles"] = 0.0
     doc["limits"]["maximum_parallelism"] = 2.0
-    assert load_control_plan(_raw(doc)).limits.maximum_parallelism == 2
+    assert load_control_plan(control_plan_raw(doc)).limits.maximum_parallelism == 2
 
 
 def test_control_preflight_preserves_principal_identity(monkeypatch):
     from toolgraph.control_plan import build_control_preflight
-    from tests.test_control_plan import _bracket
-
-    _bracket(monkeypatch)
-    doc = _document()
+    control_plan_bracket(monkeypatch)
+    doc = control_plan_document()
     previous = doc["principals"][0]["id"]
     identity = "https://id.test/agent?role=one#part"
     doc["principals"][0]["id"] = identity
@@ -791,5 +730,5 @@ def test_control_preflight_preserves_principal_identity(monkeypatch):
         node["principals"] = [
             identity if p == previous else p for p in node["principals"]
         ]
-    result = build_control_preflight(_raw(doc), profile="review")
+    result = build_control_preflight(control_plan_raw(doc), profile="review")
     assert any(row["principal"] == identity for row in result["evaluations"])

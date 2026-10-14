@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 import pytest
 from toolgraph.graph import queries
 from toolgraph.policy_review import build_policy_review_plan
+from tests._helpers import mock_policy_review_inputs
 
 
 NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
@@ -238,8 +239,6 @@ class NoOffset(tzinfo):
 def test_timestamp_contract_before_io(
     monkeypatch, artifact_format_checker, offset, producer
 ):
-    from tests.test_preflight import _bracket
-
     now = datetime(2026, 9, 7, tzinfo=offset)
     invalid = (
         offset is None
@@ -276,9 +275,7 @@ def test_timestamp_contract_before_io(
             schema_doc, format_checker=artifact_format_checker
         ).validate(doc)
     else:
-        from tests.test_policy_review import _mock_inputs
-
-        _mock_inputs(monkeypatch)
+        mock_policy_review_inputs(monkeypatch)
         doc = build_policy_review_plan(
             report=Path("trace.json"), agent="planner", created_at=now
         )

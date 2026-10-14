@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json
-from importlib.metadata import version
 
 import pytest
 from typer.testing import CliRunner
@@ -31,6 +30,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+from tests._helpers import CLICK_SPLITS_STREAMS
 
 REPO = "repo:///work"
 SECRETS = "file:///secrets.env"
@@ -372,13 +372,6 @@ def test_selection_explain_surfaces_operator_exception_reason(graph):
 
 
 runner = CliRunner()
-
-# click >= 8.2 always splits streams; older click folds stderr into stdout,
-# making purity unassertable (same guard as test_cli_contract).
-CLICK_SPLITS_STREAMS = tuple(
-    int(p) for p in version("click").split(".")[:2]
-) >= (8, 2)
-
 
 def test_cli_eligible_tools_stdout_is_pure_json(graph):
     _seed()

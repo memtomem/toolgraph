@@ -19,11 +19,9 @@ from toolgraph.models import (
     ServerSpec,
     ToolRecord,
 )
+from tests._helpers import CSV
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
-CSV = "file:///data/customers.csv"
-
-
 # --- crawl: annotations surface on ToolRecord -----------------------------
 
 

@@ -215,16 +215,6 @@ def test_init_schema_does_not_skip_the_version_gate_on_an_outage(monkeypatch):
     assert len(statements) == 1  # the version read; no DDL ran
 
 
-@pytest.fixture
-def embedded_path(tmp_path, monkeypatch):
-    path = tmp_path / 'missing-parent' / 'probe.lbug'
-    monkeypatch.setattr(config, 'settings', config.Settings(backend='ladybug', db_path=path))
-    monkeypatch.setenv('TOOLGRAPH_CONFIG', str(tmp_path / 'no-config.json'))
-    driver.close_driver()
-    yield path
-    driver.close_driver()
-
-
 @pytest.mark.parametrize('json_output', [False, True])
 def test_uninitialized_ladybug_dry_run_is_controlled_and_unchanged(embedded_path, tmp_path, json_output):
     import ladybug

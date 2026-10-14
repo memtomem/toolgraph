@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from toolgraph.graph import queries
 from toolgraph.manifest.parser import load_governance
 from toolgraph.manifest import ingest
+from tests._helpers import CSV, crawl_sample, load_crawl, seed_basic
 
 
 def _seed_crawl() -> None:
@@ -107,52 +108,7 @@ def test_duplicate_grant_entries_keep_the_later_manifest_entry(graph):
     assert row["granted_by"] == "second"
 
 
-CSV = "file:///data/customers.csv"
-
-
-def _seed_basic(graph) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-    ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
-            governed_by={CSV: ["pii-deny"]},
-        )
-    )
-
-
 ENV = "file:///srv/app/.env"
-
-
-def _crawl(graph):
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-
-
-def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name=server,
-            transport="stdio",
-            tools=[ToolRecord(name=n) for n in tool_names],
-            resources=[ResourceRecord(uri=u) for u in (resources or [])],
-        )
-    )
 
 
 class CountingSession:
@@ -287,7 +243,7 @@ def test_duplicate_policy_id_with_conflicting_effects_is_rejected(graph):
     node via MERGE+SET. If the surviving effect is ALLOW, exceptions
     against 'legacy' pass deny-policy validation but then can never
     classify a row. Reject at ingest."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -355,7 +311,7 @@ def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
     """ENV is authored-only (never crawled). Dropping it from the manifest
     must delete the node — otherwise blast_radius answers found:true /
     impacted:[] for a resource nothing governs or touches anymore."""
-    _crawl(graph)
+    crawl_sample(graph)
     base = dict(
         agents=["planner"],
         policies=[Policy(id="secrets-deny", effect="DENY")],
@@ -380,7 +336,7 @@ def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
 def test_phase2_keeps_crawled_resource_without_governance(graph):
     """A crawled resource (live PROVIDES) is the loader's property: ingest
     must never prune it, even when no manifest mentions it."""
-    _crawl(graph)
+    crawl_sample(graph)
     assert ingest_governance(Governance(agents=["planner"])).warnings == []
     assert queries.blast_radius(CSV)["found"] is True
 
@@ -411,8 +367,8 @@ def test_governance_yaml_rejects_unknown_nested_field(tmp_path):
 
 
 def test_ambiguous_bare_name_in_ingest_warns(graph):
-    _load("alpha", ["read_file"])
-    _load("beta", ["read_file"])
+    load_crawl("alpha", ["read_file"])
+    load_crawl("beta", ["read_file"])
     warnings = ingest_governance(
         Governance(agents=["planner"], grants=[AccessGrant(agent="planner", tool="read_file")])
     ).warnings
@@ -424,7 +380,7 @@ def test_ambiguous_bare_name_in_ingest_warns(graph):
 
 
 def test_missing_policy_id_warns(graph):
-    _load("sample", ["read_file"])
+    load_crawl("sample", ["read_file"])
     warnings = ingest_governance(
         Governance(
             policies=[Policy(id="real", effect="DENY")],
@@ -438,7 +394,7 @@ def test_missing_policy_id_warns(graph):
 
 
 def test_revoking_a_grant_removes_the_edge(graph):
-    _load("sample", ["read_file"])
+    load_crawl("sample", ["read_file"])
     full = Governance(
         agents=["planner"],
         grants=[AccessGrant(agent="planner", tool="sample::read_file")],
@@ -452,7 +408,7 @@ def test_revoking_a_grant_removes_the_edge(graph):
 
 
 def test_failed_ingest_does_not_mutate_graph(graph):
-    _load("sample", ["read_file"])
+    load_crawl("sample", ["read_file"])
     good = Governance(
         agents=["planner"],
         policies=[Policy(id="deny", effect="DENY")],
@@ -548,8 +504,6 @@ def test_resolution_batches_and_duplicates(backend_graph, size):
 
 
 def test_ingest_reuses_resolution_across_manifest_rows(backend_graph):
-    from tests.test_manifest import _seed_crawl, _governance
-
     _seed_crawl()
     gov = _governance()
     gov.grants *= 100
@@ -568,8 +522,6 @@ def test_ingest_reuses_resolution_across_manifest_rows(backend_graph):
 
 
 def test_ingest_diagnostics_and_rollback(backend_graph):
-    from tests.test_manifest import _seed_crawl, _governance
-
     _seed_crawl()
     assert ingest.ingest_governance(_governance()).applied
     before = queries.graph_state()

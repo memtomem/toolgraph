@@ -96,3 +96,13 @@ def artifact_format_checker():
     checker = FormatChecker()
     assert "date-time" in checker.checkers, "install the dev dependency group with formats"
     return checker
+
+
+@pytest.fixture
+def embedded_path(tmp_path, monkeypatch):
+    path = tmp_path / 'missing-parent' / 'probe.lbug'
+    monkeypatch.setattr(config, 'settings', config.Settings(backend='ladybug', db_path=path))
+    monkeypatch.setenv('TOOLGRAPH_CONFIG', str(tmp_path / 'no-config.json'))
+    driver.close_driver()
+    yield path
+    driver.close_driver()

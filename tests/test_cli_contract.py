@@ -10,7 +10,6 @@ not-found/ambiguous verdicts so a typo can't pass as a clean run.
 from __future__ import annotations
 
 import json
-from importlib.metadata import version
 
 import pytest
 from typer.testing import CliRunner
@@ -35,16 +34,7 @@ import re
 import sys
 from toolgraph.cli import app
 from toolgraph import __version__
-
-CSV = "file:///data/customers.csv"
-
-# click >= 8.2 always splits streams (result.stdout / result.stderr);
-# older click mixes stderr into stdout by default, so purity can't be
-# asserted there.
-CLICK_SPLITS_STREAMS = tuple(
-    int(p) for p in version("click").split(".")[:2]
-) >= (8, 2)
-
+from tests._helpers import CLICK_SPLITS_STREAMS, CSV, seed_basic
 
 def _seed(exceptions: list[ExpectedException] | None = None) -> None:
     """planner: read_file DENY-governed, free_tool ungoverned; loner: no grants."""
@@ -334,26 +324,6 @@ def test_init_warns_when_a_partial_database_cannot_be_removed(tmp_path, monkeypa
     assert db_path.exists()
 
 
-def _seed_basic(graph) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-    ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
-            governed_by={CSV: ["pii-deny"]},
-        )
-    )
-
-
 def test_cli_ingest_manifest_says_rejected_on_warnings(graph, tmp_path):
     """The CLI must NOT say 'Ingested' when ingest rejected the manifest —
     that contradicts the atomicity guarantee directly to the user."""
@@ -434,7 +404,7 @@ def test_cli_unsafe_tools_default_filters_to_violations(graph):
 def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(graph):
     """A typo'd agent at the CLI must NOT silently return [] — that's the
     exact false-clean the analyzer is supposed to prevent."""
-    _seed_basic(graph)
+    seed_basic(graph)
     runner = CliRunner()
     result = runner.invoke(cli.app, ["unsafe-tools", "planer"])
     assert result.exit_code == 1
@@ -444,7 +414,7 @@ def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(graph):
 def test_cli_unbacked_edges_default_excludes_can_call(graph):
     """`toolgraph unbacked-edges` defaults to READS/WRITES/GOVERNED_BY;
     --include-grants widens to CAN_CALL too."""
-    _seed_basic(graph)
+    seed_basic(graph)
     runner = CliRunner()
 
     default = runner.invoke(cli.app, ["unbacked-edges"])
