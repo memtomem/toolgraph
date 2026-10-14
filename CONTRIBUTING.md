@@ -37,10 +37,10 @@ Tests are marked `neo4j` automatically when they request the `graph` or
 there instead of silently starting Docker. Neither check sees a container
 started anywhere else, so start one only through `neo4j_container`.
 
-`ruff` is deliberately held below 0.16: the repository has no `[tool.ruff]`
-configuration yet, and 0.16's changed defaults surface a large batch of
-unrelated findings. Pin removal is tracked separately — please do not bump it
-as a drive-by change.
+The lint rule set is named in `[tool.ruff]` in `pyproject.toml`, so a newer
+`ruff` cannot change which rules run by changing its default selection (the
+selected rules themselves can still evolve). Widen the rule set in its own
+change, not as a drive-by.
 
 `make install` includes the `ladybug` extra, matching the command above and
 CI. The shared backend regression fixture requires Ladybug: a missing install
