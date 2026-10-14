@@ -22,9 +22,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
 from toolgraph.redaction import CREDENTIAL_KEYWORDS, CREDENTIAL_URI
 
-if os.name == "nt":  # pragma: no cover - exercised on Windows CI/users
+if os.name == "nt":  # exercised on Windows CI/users
     import msvcrt
-else:  # pragma: no branch - one platform branch per interpreter
+else:
     import fcntl
 
 
@@ -429,7 +429,7 @@ def _writer_lock(path: Path) -> Iterator[None]:
         raise ReviewCandidateError(f"cannot lock review annotations: {detail}") from exc
     with handle:
         try:
-            if os.name == "nt":  # pragma: no cover - platform-specific
+            if os.name == "nt":  # platform-specific
                 handle.seek(0)
                 if not handle.read(1):
                     handle.write(b"\0")
@@ -444,7 +444,7 @@ def _writer_lock(path: Path) -> Iterator[None]:
         try:
             yield
         finally:
-            if os.name == "nt":  # pragma: no cover - platform-specific
+            if os.name == "nt":  # platform-specific
                 handle.seek(0)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:

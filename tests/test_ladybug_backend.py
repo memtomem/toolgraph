@@ -240,7 +240,7 @@ def test_owned_readonly_sessions_never_use_writable_acquisition(embedded_path, m
     @contextmanager
     def forbidden():
         raise AssertionError('reader reopened a writable database')
-        yield  # pragma: no cover
+        yield  # unreachable; makes forbidden() a generator for @contextmanager
 
     monkeypatch.setattr(driver, 'session', forbidden)
     monkeypatch.setattr(queries, 'session', forbidden)

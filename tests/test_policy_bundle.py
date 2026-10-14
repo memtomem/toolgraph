@@ -35,7 +35,7 @@ def _mock_graph(
     instance_id: str | None = "graph-instance-1",
     generation: object = 7,
 ) -> None:
-    state = queries.GraphState(instance_id, generation, "a" * 64)  # type: ignore[arg-type]
+    state = queries.GraphState(instance_id, generation, "a" * 64)
     contracts = [
         {
             "tool_key": "alpha::read",
