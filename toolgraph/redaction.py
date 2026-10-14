@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path, PureWindowsPath
 import re
 import shlex
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 from toolgraph.models import ServerSpec

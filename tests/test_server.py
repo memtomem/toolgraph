@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from tests._helpers import CSV, seed_basic
 from toolgraph.crawler.transports import open_session
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
@@ -18,14 +19,13 @@ from toolgraph.models import (
     AccessGrant,
     CrawlResult,
     DataAccess,
+    ExpectedException,
     Governance,
     Policy,
     ResourceRecord,
     ServerSpec,
     ToolRecord,
 )
-from toolgraph.models import ExpectedException
-from tests._helpers import CSV, seed_basic
 
 
 def _seed() -> None:

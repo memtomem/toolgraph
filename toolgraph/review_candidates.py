@@ -7,15 +7,16 @@ sidecar.  This module deliberately has no graph, manifest, or selector imports.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import functools
 import json
 import os
-from pathlib import Path
 import re
-from typing import Iterator, Literal
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -308,7 +309,9 @@ def _validate_events(
     for expected_sequence, event in enumerate(annotations.events, start=1):
         if event.sequence != expected_sequence:
             raise ReviewCandidateError(
-                "review annotation event sequence is not contiguous — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation event sequence is not contiguous — the sidecar no longer "
+                "satisfies its append-only contract; restore it from a backup, or delete the "
+                "sidecar file to reset review history"
             )
         source_candidate = candidates.get(event.candidate_id)
         if source_candidate is None:
@@ -318,11 +321,15 @@ def _validate_events(
             or candidate_id(event.candidate) != event.candidate_id
         ):
             raise ReviewCandidateError(
-                "review annotation candidate snapshot does not match its id — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation candidate snapshot does not match its id — the sidecar no "
+                "longer satisfies its append-only contract; restore it from a backup, or delete "
+                "the sidecar file to reset review history"
             )
         if event.from_disposition != states[event.candidate_id]:
             raise ReviewCandidateError(
-                "review annotation disposition chain is invalid — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation disposition chain is invalid — the sidecar no longer satisfies "
+                "its append-only contract; restore it from a backup, or delete the sidecar file to "
+                "reset review history"
             )
         states[event.candidate_id] = event.disposition
         histories[event.candidate_id].append(event)
@@ -487,10 +494,10 @@ def annotate_candidate(
         if candidate is None:
             raise ReviewCandidateError("candidate id is not present in the source report")
 
-        timestamp = recorded_at or datetime.now(timezone.utc)
+        timestamp = recorded_at or datetime.now(UTC)
         if timestamp.tzinfo is None or timestamp.utcoffset() is None:
             raise ReviewCandidateError("recorded_at must include a timezone")
-        timestamp = timestamp.astimezone(timezone.utc)
+        timestamp = timestamp.astimezone(UTC)
         event = AnnotationEvent(
             sequence=len(annotations.events) + 1,
             candidate_id=item_id,

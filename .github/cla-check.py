@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 SIGNATURES_KEY = "signedContributors"
 CLA_BOT_LOGINS = {"github-actions[bot]", "cla-assistant[bot]"}
 MISSING_MARKER = "Before we can merge, please sign"
@@ -396,7 +395,7 @@ if __name__ == "__main__":
     except GitHubApiError as exc:
         print(f"GitHub API call failed: {' '.join(exc.command)}", file=sys.stderr)
         print(exc.stderr, file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     except Exception as exc:
         print(f"CLA check failed: {exc}", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None

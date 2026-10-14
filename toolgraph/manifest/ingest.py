@@ -92,10 +92,12 @@ class GovernanceDiffReport:
         lines.append("  Delta summary:")
         lines.append(f"    Agents: +{len(self.agents_created)} / -{len(self.agents_deleted)}")
         lines.append(
-            f"    Policies: +{len(self.policies_created)} / -{len(self.policies_deleted)} / ~{len(self.policy_properties_modified)}"
+            f"    Policies: +{len(self.policies_created)} / -{len(self.policies_deleted)} / "
+            f"~{len(self.policy_properties_modified)}"
         )
         lines.append(
-            f"    Grants: +{len(self.grants_added)} / -{len(self.grants_revoked)} / ~{len(self.granted_by_modified)} (granted_by)"
+            f"    Grants: +{len(self.grants_added)} / -{len(self.grants_revoked)} / "
+            f"~{len(self.granted_by_modified)} (granted_by)"
         )
         lines.append(
             f"    Data access: +{len(self.data_access_added)} / -{len(self.data_access_removed)}"
@@ -104,14 +106,19 @@ class GovernanceDiffReport:
             f"    Governed by: +{len(self.governed_by_added)} / -{len(self.governed_by_removed)}"
         )
         lines.append(
-            f"    Exceptions: +{len(self.expected_exceptions_added)} / -{len(self.expected_exceptions_removed)} / ~{len(self.expected_exceptions_reason_updated)}"
+            f"    Exceptions: +{len(self.expected_exceptions_added)} / "
+            f"-{len(self.expected_exceptions_removed)} / "
+            f"~{len(self.expected_exceptions_reason_updated)}"
         )
         lines.append(f"    Provenance modified: {len(self.provenance_modified)}")
         lines.append(
-            f"    Resources: +{len(self.resources_created)} created / -{len(self.resources_pruned)} pruned (final degree 0) / {len(self.resources_retained_crawled)} retained crawled"
+            f"    Resources: +{len(self.resources_created)} created / "
+            f"-{len(self.resources_pruned)} pruned (final degree 0) / "
+            f"{len(self.resources_retained_crawled)} retained crawled"
         )
         lines.append(
-            f"    Tools: -{len(self.tools_pruned)} pruned (final degree 0) / {len(self.tools_retained_crawled)} retained crawled"
+            f"    Tools: -{len(self.tools_pruned)} pruned (final degree 0) / "
+            f"{len(self.tools_retained_crawled)} retained crawled"
         )
         return "\n".join(lines)
 
@@ -615,7 +622,8 @@ def _compute_dry_run_diff(
             "description": r["description"],
         }
         for r in s.run(
-            "MATCH (p:Policy) RETURN p.id AS id, p.effect AS effect, p.scope AS scope, p.description AS description"
+            "MATCH (p:Policy) RETURN p.id AS id, p.effect AS effect, p.scope AS scope, "
+            "p.description AS description"
         )
     }
     prop_policies = {

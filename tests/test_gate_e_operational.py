@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPTS = Path(__file__).parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 SPEC = importlib.util.spec_from_file_location(

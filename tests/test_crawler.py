@@ -17,10 +17,10 @@ from toolgraph.graph import loader
 from toolgraph.models import ServerSpec
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
-from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH
 from pydantic import ValidationError
-from toolgraph.crawler.crawl import load_servers_config
-from toolgraph.crawler.crawl import crawl_all
+from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH
+
+from toolgraph.crawler.crawl import crawl_all, load_servers_config
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
 

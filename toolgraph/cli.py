@@ -5,18 +5,17 @@ from __future__ import annotations
 import functools
 import json
 import os
-from enum import Enum
-from importlib.resources import as_file, files
-from pathlib import Path
 import shutil
 import sys
+from enum import StrEnum
+from importlib.resources import as_file, files
+from pathlib import Path
 from typing import NoReturn
 
 import typer
 import yaml
 
-from toolgraph import __version__
-from toolgraph import config
+from toolgraph import __version__, config
 from toolgraph.artifact_safety import redact
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes, sha256_prefixed
 from toolgraph.control_plan import (
@@ -37,10 +36,11 @@ from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.health import run_doctor
 from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
-from toolgraph.preflight import build_preflight
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
 from toolgraph.policy_propose import PolicyProposeError, run_propose
 from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
+from toolgraph.preflight import build_preflight
+from toolgraph.redaction import redact_text
 from toolgraph.review_candidates import (
     ReviewCandidateError,
     annotate_candidate,
@@ -48,15 +48,14 @@ from toolgraph.review_candidates import (
     normalize_note,
     normalize_reviewer,
 )
-from toolgraph.redaction import redact_text
 
 
-class AuditReportFormat(str, Enum):
+class AuditReportFormat(StrEnum):
     json = "json"
     markdown = "markdown"
 
 
-class ReviewDisposition(str, Enum):
+class ReviewDisposition(StrEnum):
     open = "open"
     accepted = "accepted"
     dismissed = "dismissed"
@@ -947,12 +946,14 @@ def policy_propose(
     unverified_provenance: bool = typer.Option(
         False,
         "--unverified-provenance",
-        help="Allow missing envelope/identity with explicitly unverified provenance; contradictions still fail.",
+        help="Allow missing envelope/identity with explicitly unverified provenance; "
+        "contradictions still fail.",
     ),
     revalidate_current: bool = typer.Option(
         False,
         "--revalidate-current",
-        help="Check proposed additions against the current strict catalog, even at the same generation.",
+        help="Check proposed additions against the current strict catalog, even at the same "
+        "generation.",
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write proposal markdown to file instead of stdout."

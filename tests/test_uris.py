@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from toolgraph.uris import normalize_resource_uri
+from tests._helpers import load_crawl
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
@@ -29,8 +29,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from toolgraph.uris import is_resource_ref
-from tests._helpers import load_crawl
+from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 GOLDEN = [
     # authority-only URL gains a trailing slash

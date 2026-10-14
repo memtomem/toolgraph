@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from toolgraph import cli, config
-from toolgraph.graph import driver, schema
+from toolgraph.graph import driver, queries, schema
 from toolgraph.health import run_doctor
-from pathlib import Path
-import subprocess
-import sys
-from unittest.mock import patch
-import pytest
-from toolgraph.graph import queries
 
 
 def test_config_health_missing_and_invalid(tmp_path, monkeypatch):

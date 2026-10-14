@@ -8,17 +8,17 @@ collision-safe graph-state bracket.
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from datetime import datetime, timezone
 import json
 import re
+from collections import defaultdict, deque
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from toolgraph.artifact_safety import safe_artifact
 from toolgraph.artifacts import rfc3339_offset_error, sha256_prefixed
 from toolgraph.graph import driver, queries, selector
-from toolgraph.artifact_safety import safe_artifact
 from toolgraph.redaction import CREDENTIAL_QUERY, CREDENTIAL_URI
 
 SCHEMA_VERSION = 1
@@ -131,7 +131,7 @@ class Principal(_AdditiveModel):
     candidate_tools: list[str] = Field(min_length=1, max_length=4096)
 
     @model_validator(mode="after")
-    def _qualified_unique_tools(self) -> "Principal":
+    def _qualified_unique_tools(self) -> Principal:
         # Name positions, never the rejected strings: candidate_tools has no
         # identifier pattern, so a malformed entry can be any text at all.
         bad = [
@@ -167,7 +167,7 @@ class ControlNode(_AdditiveModel):
     validator_scope: Literal["workspace_result"] | None = None
 
     @model_validator(mode="after")
-    def _coherent_execution_shape(self) -> "ControlNode":
+    def _coherent_execution_shape(self) -> ControlNode:
         if (self.kind == "agent") != self.agent_call:
             raise ValueError(f"node {self.id!r} kind='agent' and agent_call must agree")
         if len(set(self.principals)) != len(self.principals):
@@ -213,7 +213,7 @@ class ControlEdge(_AdditiveModel):
     max_fan_out: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
-    def _coherent_fanout_bound(self) -> "ControlEdge":
+    def _coherent_fanout_bound(self) -> ControlEdge:
         if self.kind != "fanout" and self.max_fan_out is not None:
             raise ValueError("max_fan_out is valid only on fanout edges")
         return self
@@ -236,7 +236,7 @@ class ControlPlan(_AdditiveModel):
     limits: ControlLimits
 
     @model_validator(mode="after")
-    def _unique_identities(self) -> "ControlPlan":
+    def _unique_identities(self) -> ControlPlan:
         principal_ids = [principal.id for principal in self.principals]
         if len(set(principal_ids)) != len(principal_ids):
             raise ValueError("principal ids must be unique")
@@ -642,7 +642,7 @@ def build_control_preflight(
         or bool(attempt_exposures)
         or truncated
     )
-    timestamp = created_at or datetime.now(timezone.utc)
+    timestamp = created_at or datetime.now(UTC)
     result = {
         "schema_version": SCHEMA_VERSION,
         "kind": RESULT_KIND,

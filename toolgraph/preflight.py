@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from toolgraph.artifacts import rfc3339_offset_error
-from toolgraph.artifact_safety import safe_artifact, validate_identity
-from toolgraph.artifact_safety import redact as redact
+from datetime import UTC, datetime
 
+from toolgraph.artifact_safety import redact as redact
+from toolgraph.artifact_safety import safe_artifact, validate_identity
+from toolgraph.artifacts import rfc3339_offset_error
 from toolgraph.graph import queries, selector
 
 SCHEMA_VERSION = 1
@@ -55,7 +55,7 @@ def build_preflight(
         decision = "advisory_warn"
     else:
         decision = "advisory_allow"
-    timestamp = created_at or datetime.now(timezone.utc)
+    timestamp = created_at or datetime.now(UTC)
     artifact = {
         "schema_version": SCHEMA_VERSION,
         "kind": KIND,

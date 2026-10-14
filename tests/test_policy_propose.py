@@ -7,24 +7,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from toolgraph import cli
 from toolgraph import policy_propose as pp
-from toolgraph.graph import driver, schema
+from toolgraph.graph import driver, loader, queries, schema, selector
+from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.manifest.parser import governance_digest, load_governance
+from toolgraph.models import CrawlResult, Governance, ResourceRecord, ToolRecord
 from toolgraph.policy_propose import (
+    ProvenanceError,
     StateChurnError,
     StateMismatchError,
     propose,
     resolve_grants_from_graph,
     run_propose,
 )
-import yaml
-from toolgraph.graph import loader, queries, selector
-from toolgraph.manifest.ingest import ingest_governance
-from toolgraph.models import CrawlResult, Governance, ResourceRecord, ToolRecord
-from toolgraph.policy_propose import ProvenanceError
 
 
 @pytest.fixture
@@ -136,10 +135,12 @@ def test_ambiguous_bare_grant_protection_regression(backend_graph, tmp_path):
     with driver.session() as s:
         # Populate live graph with two servers exposing read_file
         s.run(
-            "CREATE (m1:MCPServer {name: 'alpha'}) CREATE (t1:Tool {key: 'alpha::read_file', name: 'read_file'}) CREATE (m1)-[:EXPOSES]->(t1)"
+            "CREATE (m1:MCPServer {name: 'alpha'}) CREATE (t1:Tool "
+            "{key: 'alpha::read_file', name: 'read_file'}) CREATE (m1)-[:EXPOSES]->(t1)"
         )
         s.run(
-            "CREATE (m2:MCPServer {name: 'beta'}) CREATE (t2:Tool {key: 'beta::read_file', name: 'read_file'}) CREATE (m2)-[:EXPOSES]->(t2)"
+            "CREATE (m2:MCPServer {name: 'beta'}) CREATE (t2:Tool "
+            "{key: 'beta::read_file', name: 'read_file'}) CREATE (m2)-[:EXPOSES]->(t2)"
         )
 
         # Bare grant in governance: agent 'worker' has tool 'read_file'
@@ -183,7 +184,8 @@ def test_bare_grant_adopts_a_single_live_resolution(backend_graph):
     schema.init_schema()
     with driver.session() as s:
         s.run(
-            "CREATE (m:MCPServer {name: 'alpha'}) CREATE (t:Tool {key: 'alpha::read_file', name: 'read_file'}) CREATE (m)-[:EXPOSES]->(t)"
+            "CREATE (m:MCPServer {name: 'alpha'}) CREATE (t:Tool "
+            "{key: 'alpha::read_file', name: 'read_file'}) CREATE (m)-[:EXPOSES]->(t)"
         )
         resolved, ambiguous = resolve_grants_from_graph(s, [{"agent": "bot", "tool": "read_file"}])
     assert resolved == {("bot", "alpha::read_file"): "read_file"}
@@ -292,9 +294,11 @@ def test_state_churn_exhaustion_typed_refusal(
     from toolgraph.graph import queries
 
     churn = queries.GraphStateChurnError("graph state changed during every read attempt")
-    with patch("toolgraph.graph.queries.with_graph_state", side_effect=churn):
-        with pytest.raises(StateChurnError) as raised:
-            run_propose(sample_gov_path, sample_observed_jsonl)
+    with (
+        patch("toolgraph.graph.queries.with_graph_state", side_effect=churn),
+        pytest.raises(StateChurnError) as raised,
+    ):
+        run_propose(sample_gov_path, sample_observed_jsonl)
     assert str(raised.value) == (
         "graph state churn during observation proposal: concurrent graph "
         "modifications exhausted 5 read attempts"
@@ -303,9 +307,11 @@ def test_state_churn_exhaustion_typed_refusal(
     # Any other RuntimeError is not churn and must surface unchanged, whatever
     # its text says.
     other = RuntimeError("graph state changed during every read attempt")
-    with patch("toolgraph.graph.queries.with_graph_state", side_effect=other):
-        with pytest.raises(RuntimeError) as raised:
-            run_propose(sample_gov_path, sample_observed_jsonl)
+    with (
+        patch("toolgraph.graph.queries.with_graph_state", side_effect=other),
+        pytest.raises(RuntimeError) as raised,
+    ):
+        run_propose(sample_gov_path, sample_observed_jsonl)
     assert raised.value is other
 
 
@@ -840,9 +846,11 @@ def test_an_export_without_an_envelope_is_refused_by_default(sample_gov_path, tm
         + "\n",
         encoding="utf-8",
     )
-    with patch.object(pp.queries, "with_graph_state") as read:
-        with pytest.raises(pp.ProvenanceError, match="carries no envelope"):
-            run_propose(sample_gov_path, observed)
+    with (
+        patch.object(pp.queries, "with_graph_state") as read,
+        pytest.raises(pp.ProvenanceError, match="carries no envelope"),
+    ):
+        run_propose(sample_gov_path, observed)
     read.assert_not_called()
 
 
@@ -1210,7 +1218,8 @@ def test_current_revalidation_checks_all_strict_blockers_even_same_generation(
         session.run("MATCH (:MCPServer)-[e:EXPOSES]->(:Tool {key:'sample::retired'}) DELETE e")
         session.run("MATCH (t:Tool {key:'sample::deleted'}) DETACH DELETE t")
         session.run(
-            "MATCH (a:Agent {id:'bot'}), (t:Tool {key:'sample::already'}) CREATE (a)-[:CAN_CALL]->(t)"
+            "MATCH (a:Agent {id:'bot'}), (t:Tool {key:'sample::already'}) CREATE "
+            "(a)-[:CAN_CALL]->(t)"
         )
     args = export(
         {**envelope, "profile": profile},

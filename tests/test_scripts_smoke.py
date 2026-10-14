@@ -4,11 +4,11 @@ smoke's health counter, and how smoke runs install the dev group.
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
-import pytest
-import importlib.util
 
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 

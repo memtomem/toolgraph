@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
 import pytest
+from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
+from tests._helpers import mock_policy_review_inputs
 from toolgraph import cli
 from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
-from tests._helpers import mock_policy_review_inputs
 
-NOW = datetime(2026, 7, 14, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 14, tzinfo=UTC)
 ROOT = Path(__file__).parent.parent
 
 
@@ -88,8 +88,9 @@ def test_review_plan_refuses_a_graph_without_instance_id(monkeypatch):
 
 
 def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
-    from toolgraph import cli
     from typer.testing import CliRunner
+
+    from toolgraph import cli
 
     mock_policy_review_inputs(monkeypatch)
     monkeypatch.setattr(

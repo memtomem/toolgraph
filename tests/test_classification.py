@@ -10,7 +10,8 @@ unauthorized reach as ``violation`` so reviewers don't drown in noise.
 
 from __future__ import annotations
 
-from toolgraph.graph import loader, queries
+from tests._helpers import CSV, crawl_sample, seed_basic
+from toolgraph.graph import driver, loader, queries, schema
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
     AccessGrant,
@@ -22,9 +23,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from toolgraph.graph import driver
-from toolgraph.graph import schema
-from tests._helpers import CSV, crawl_sample, seed_basic
 
 
 def _seed(graph) -> None:
@@ -533,14 +531,16 @@ def test_colliding_exception_tuples_and_legacy_reingest(backend_graph):
     with driver.session() as session:
         rows = list(
             session.run(
-                "MATCH (e:ExpectedException) RETURN e.key AS key, e.agent AS agent, e.reason AS reason"
+                "MATCH (e:ExpectedException) RETURN e.key AS key, e.agent AS agent, e.reason AS "
+                "reason"
             )
         )
         assert len(rows) == 2
         assert {r["agent"]: r["reason"] for r in rows} == {"a|b": "first", "a": "last"}
         session.run("MATCH (e:ExpectedException {agent:'a'}) DELETE e")
         session.run(
-            "CREATE (:ExpectedException {key:'legacy|key', agent:'a', tool_key:'b|s::t', policy:'p', reason:'last'})"
+            "CREATE (:ExpectedException "
+            "{key:'legacy|key', agent:'a', tool_key:'b|s::t', policy:'p', reason:'last'})"
         )
     assert ingest_governance(gov).applied
     with driver.session() as session:

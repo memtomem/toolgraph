@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 
-from jsonschema import Draft202012Validator
 import pytest
+from jsonschema import Draft202012Validator, ValidationError
 
+from tests._helpers import control_plan_bracket, control_plan_raw
 from toolgraph.control_plan import (
     ControlPlanError,
     build_control_preflight,
     load_control_plan,
 )
-from tests._helpers import control_plan_bracket, control_plan_raw
-
 
 ROOT = Path(__file__).resolve().parent.parent
 CONTRACTS = ROOT / "contracts"
@@ -54,7 +53,7 @@ def test_output_graph_state_is_closed():
     schema = json.loads((CONTRACTS / "control-preflight.schema.json").read_text())
     fixture = json.loads((FIXTURES / "control-preflight-v1.json").read_text())
     fixture["graph_state"]["unexpected"] = True
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Draft202012Validator(schema).validate(fixture)
 
 

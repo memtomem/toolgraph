@@ -16,11 +16,11 @@ Run it against any interpreter that has toolgraph installed::
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import socket
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests" / "fixtures" / "sample_server.py"
@@ -287,8 +287,9 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
 
 
 async def main() -> int:
-    import mcp
     from importlib.metadata import version
+
+    import mcp
 
     print(f"verifying the MCP surface against mcp {version('mcp')}")
     del mcp

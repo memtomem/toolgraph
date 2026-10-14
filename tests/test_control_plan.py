@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator, ValidationError
 from typer.testing import CliRunner
 
-from toolgraph import cli
+from tests._helpers import control_plan_bracket, control_plan_document, control_plan_raw
+from toolgraph import cli, control_plan
 from toolgraph.control_plan import (
     ControlPlanError,
     build_control_preflight,
     lint_control_plan,
     load_control_plan,
 )
-from contextlib import contextmanager
-from jsonschema import Draft202012Validator, ValidationError
-from toolgraph import control_plan
-from tests._helpers import control_plan_bracket, control_plan_document, control_plan_raw
-
 
 ROOT = Path(__file__).resolve().parent.parent
-NOW = datetime(2026, 8, 11, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 11, tzinfo=UTC)
 
 
 def test_valid_plan_is_body_free_and_structurally_clean():

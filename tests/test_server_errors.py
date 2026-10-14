@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
 from mcp.types import CallToolRequestParams, CallToolResult
 from neo4j.exceptions import (
     ClientError,
@@ -13,7 +14,6 @@ from neo4j.exceptions import (
     ServiceUnavailable,
     SessionExpired,
 )
-import pytest
 
 from toolgraph.errors import ContractError
 from toolgraph.graph import driver
@@ -24,7 +24,6 @@ from toolgraph.graph.driver import (
     is_backend_unavailable,
 )
 from toolgraph.server import app
-
 
 _BACKEND_PAYLOAD = {
     "error_kind": "backend_unavailable",
@@ -94,9 +93,8 @@ def test_backend_unavailable_classifier_accepts_only_typed_outages(exc):
 )
 def test_native_outages_are_typed_at_the_driver_seam(native):
     """The narrow native taxonomy becomes BackendUnavailableError at the seam."""
-    with pytest.raises(BackendUnavailableError) as raised:
-        with driver._translating_backend_errors():
-            raise native
+    with pytest.raises(BackendUnavailableError) as raised, driver._translating_backend_errors():
+        raise native
     assert raised.value.__cause__ is native
     assert is_backend_unavailable(raised.value)
 
@@ -127,9 +125,8 @@ def test_outage_thrown_through_session_yield_is_typed(monkeypatch):
     monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
     monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
 
-    with pytest.raises(BackendUnavailableError) as raised:
-        with driver.session() as current:
-            current.run("MATCH (n) RETURN n")
+    with pytest.raises(BackendUnavailableError) as raised, driver.session() as current:
+        current.run("MATCH (n) RETURN n")
     assert raised.value.__cause__ is native
 
 
@@ -153,9 +150,8 @@ def test_client_error_through_session_yield_stays_loud(monkeypatch):
     monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
     monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
 
-    with pytest.raises(ClientError) as raised:
-        with driver.session() as current:
-            current.run("BAD")
+    with pytest.raises(ClientError) as raised, driver.session() as current:
+        current.run("BAD")
     assert not is_backend_unavailable(raised.value)
 
 
@@ -200,7 +196,7 @@ def test_backend_unavailable_classifier_follows_implicit_context():
         try:
             raise BackendUnavailableError("offline")
         except BackendUnavailableError:
-            raise RuntimeError("cleanup bug")
+            raise RuntimeError("cleanup bug")  # noqa: B904 - the implicit __context__ is under test
     except RuntimeError as exc:
         assert is_backend_unavailable(exc)
 

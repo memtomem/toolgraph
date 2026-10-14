@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 import errno
 import json
 import os
-from pathlib import Path
 import stat
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from tests._helpers import CSV
 from toolgraph import cli
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
@@ -27,15 +28,13 @@ from toolgraph.models import (
 )
 from toolgraph.preflight import build_preflight
 from toolgraph.review_candidates import (
-    ReviewCandidateError,
     ReviewCandidateDurabilityWarning,
+    ReviewCandidateError,
     _writer_lock,
     annotate_candidate,
     default_annotations_path,
     list_candidates,
 )
-from tests._helpers import CSV
-
 
 ROOT = Path(__file__).parents[1]
 GOLDEN = ROOT / "contracts" / "tracegraph" / "v1.json"
@@ -51,7 +50,7 @@ def _source(tmp_path: Path) -> Path:
 
 
 def _at(hour: int) -> datetime:
-    return datetime(2026, 7, 12, hour, tzinfo=timezone.utc)
+    return datetime(2026, 7, 12, hour, tzinfo=UTC)
 
 
 def test_list_without_sidecar_is_read_only_and_open(tmp_path):

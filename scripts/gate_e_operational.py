@@ -31,7 +31,6 @@ from ecosystem_smoke import (
     wait_for_neo4j,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_NAME = "governance-syncmill-smoke.yaml"
 REQUIRED_PROVIDERS = ("codex", "claude", "kimi")
@@ -604,7 +603,8 @@ def main() -> int:
         servers = workspace / "servers.yaml"
         servers.write_text(
             "servers:\n  - name: syncmill\n    transport: stdio\n"
-            f'    command: uv\n    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
+            "    command: uv\n"
+            f'    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
             encoding="utf-8",
         )
         crawl(clones["syncmill"], clones["toolgraph"], env, servers)
@@ -799,4 +799,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (SmokeError, subprocess.TimeoutExpired) as exc:
         print(f"Gate E operational harness failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

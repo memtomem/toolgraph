@@ -9,7 +9,6 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
-
 mcp = MCPServer("gate_e")
 
 

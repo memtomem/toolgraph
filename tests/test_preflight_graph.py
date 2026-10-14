@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from toolgraph.graph import loader
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import AccessGrant, CrawlResult, Governance, ToolRecord
 from toolgraph.preflight import build_preflight
 
-
-NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 11, tzinfo=UTC)
 
 
 def _seed() -> None:

@@ -25,7 +25,6 @@ from uuid import uuid4
 
 import jsonschema
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE = ROOT / "examples" / "governance-syncmill-smoke.yaml"
 # Pinned to the Community edition explicitly. The bare `neo4j:5.26` tag resolves
@@ -148,7 +147,8 @@ def write_stubs(bin_dir: Path) -> None:
         "#!/bin/sh\n"
         "sleep 1\n"
         "printf 'codex\\n' > winner.txt\n"
-        'printf \'%s\\n\' \'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\'\n',
+        "printf '%s\\n' "
+        '\'{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\'\n',
         encoding="utf-8",
     )
     kimi = bin_dir / "kimi"
@@ -393,7 +393,8 @@ def main() -> int:
         servers = workspace / "servers.yaml"
         servers.write_text(
             "servers:\n  - name: syncmill\n    transport: stdio\n"
-            f'    command: uv\n    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
+            "    command: uv\n"
+            f'    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
             encoding="utf-8",
         )
         run(
@@ -548,4 +549,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (SmokeError, subprocess.TimeoutExpired) as exc:
         print(f"ecosystem smoke failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

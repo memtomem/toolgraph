@@ -17,6 +17,7 @@ report at all, because Actions bills minutes there:
     uv lock --check
     uv sync --frozen --group dev --extra ladybug
     uv run ruff check .
+    uv run ruff format --check .
     uv run pytest -q                    # needs a Docker daemon: testcontainers
     scripts/audit-dependencies.sh runtime
     scripts/audit-dependencies.sh extras

@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from tests._helpers import CSV
 from toolgraph.crawler.client import crawl_server
 from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
@@ -19,7 +20,6 @@ from toolgraph.models import (
     ServerSpec,
     ToolRecord,
 )
-from tests._helpers import CSV
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
 # --- crawl: annotations surface on ToolRecord -----------------------------
