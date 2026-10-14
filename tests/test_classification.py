@@ -24,9 +24,7 @@ from toolgraph.models import (
 )
 from toolgraph.graph import driver
 from toolgraph.graph import schema
-
-CSV = "file:///data/customers.csv"
-
+from tests._helpers import CSV, crawl_sample, seed_basic
 
 def _seed(graph) -> None:
     loader.load_crawl_result(
@@ -274,37 +272,6 @@ def test_deny_rows_have_a_total_order_on_both_backends(backend_graph):
     ]
 
 
-def _seed_basic(graph) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-    ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
-            governed_by={CSV: ["pii-deny"]},
-        )
-    )
-
-
-def _crawl(graph):
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-
-
 def _governance_with_both_exceptions() -> Governance:
     return Governance(
         agents=["planner"],
@@ -328,7 +295,7 @@ def _governance_with_both_exceptions() -> Governance:
 def test_exception_with_unknown_agent_warns(graph):
     """A typo'd agent in expected_exceptions can't classify any row —
     surface it at ingest, not at audit time."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -354,7 +321,7 @@ def test_exception_with_unknown_agent_warns(graph):
 def test_exception_narrowed_to_missing_resource_warns(graph):
     """If the (tool, resource) combination isn't authored in this manifest's
     data_access, the exception can't match any deny_evidence row — warn."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -381,7 +348,7 @@ def test_exception_with_no_grant_for_tool_warns(graph):
     """Codex R3 critique: an exception that names an agent without a CAN_CALL
     grant on the tool is dead-on-arrival — no unsafe-tools row can ever
     match it. Warn at ingest, not at audit."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner", "loner"],  # loner declared, but no grants
@@ -409,7 +376,7 @@ def test_exception_with_wrong_policy_warns(graph):
     governed_by exc.policy, the exception can never match. Previous round
     only checked (tool, resource) ∈ data_access — missing the (resource,
     policy) binding check."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -441,7 +408,7 @@ def test_wildcard_exception_with_no_reachable_path_warns(graph):
     """Wildcard exception (resource=None) must still verify the tool reaches
     the policy via SOME path — either a touched resource governed by the
     policy, or tool-level GOVERNED_BY."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -470,7 +437,7 @@ def test_wildcard_exception_with_no_reachable_path_warns(graph):
 def test_exception_against_allow_policy_warns(graph):
     """Codex R3 final critique: classification only joins to DENY policies,
     so an exception against an ALLOW policy can never fire. Reject at ingest."""
-    _seed_basic(graph)
+    seed_basic(graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -497,7 +464,7 @@ def test_exception_against_allow_policy_warns(graph):
 
 
 def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
-    _crawl(graph)
+    crawl_sample(graph)
     assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     rows = queries.unsafe_callable_tools("planner")
@@ -509,7 +476,7 @@ def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
 
 
 def test_check_access_one_deny_row_when_wildcard_and_specific_both_match(graph):
-    _crawl(graph)
+    crawl_sample(graph)
     assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     res = queries.check_access("planner", "read_file")

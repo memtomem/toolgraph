@@ -21,9 +21,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-
-CSV = "file:///data/customers.csv"
-
+from tests._helpers import CSV
 
 def _seed(graph) -> None:
     loader.load_crawl_result(

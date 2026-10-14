@@ -9,6 +9,7 @@ from toolgraph.models import CrawlResult, ResourceRecord, ToolRecord
 from toolgraph.graph import queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import AccessGrant, Governance, Policy
+from tests._helpers import load_crawl
 
 
 def _sample() -> CrawlResult:
@@ -104,17 +105,6 @@ def test_tool_key_components_must_not_contain_delimiter():
         CrawlResult(server_name="a::b")
 
 
-def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name=server,
-            transport="stdio",
-            tools=[ToolRecord(name=n) for n in tool_names],
-            resources=[ResourceRecord(uri=u) for u in (resources or [])],
-        )
-    )
-
-
 def test_loader_never_persists_raw_endpoint(graph):
     loader.load_crawl_result(
         CrawlResult(
@@ -135,16 +125,16 @@ def test_loader_never_persists_raw_endpoint(graph):
 
 
 def test_recrawl_removes_stale_tool(graph):
-    _load("sample", ["read_file", "write_file"])
+    load_crawl("sample", ["read_file", "write_file"])
     assert loader.graph_counts()["tool"] == 2
-    _load("sample", ["read_file"])  # write_file gone
+    load_crawl("sample", ["read_file"])  # write_file gone
     counts = loader.graph_counts()
     assert counts["tool"] == 1
     assert counts["exposes"] == 1
 
 
 def test_recrawl_keeps_governed_tool_and_warns(graph):
-    _load("sample", ["read_file", "write_file"])
+    load_crawl("sample", ["read_file", "write_file"])
     ingest_governance(
         Governance(
             agents=["planner"],

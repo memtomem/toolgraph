@@ -22,9 +22,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-
-CSV = "file:///data/customers.csv"
-
+from tests._helpers import CSV, load_crawl, seed_basic
 
 @pytest.fixture
 def scenario(graph):
@@ -121,42 +119,11 @@ def test_blast_radius_policy_omits_governed_resource_with_no_tool(graph):
     }
 
 
-def _seed_basic(graph) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-    ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
-            governed_by={CSV: ["pii-deny"]},
-        )
-    )
-
-
-def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name=server,
-            transport="stdio",
-            tools=[ToolRecord(name=n) for n in tool_names],
-            resources=[ResourceRecord(uri=u) for u in (resources or [])],
-        )
-    )
-
-
 def test_check_access_returns_agent_not_found_for_unknown_agent(graph):
     """Typo'd agent must NOT collapse into NOT_GRANTED — that hides bugs.
     An operator iterating on names needs the distinct verdict to tell
     'this agent has no grant on this tool' from 'this agent doesn't exist'."""
-    _seed_basic(graph)
+    seed_basic(graph)
     res = queries.check_access("planer", "read_file")  # typo
     assert res["verdict"] == "AGENT_NOT_FOUND"
     assert res["agent_found"] is False
@@ -167,7 +134,7 @@ def test_check_access_returns_agent_not_found_for_unknown_agent(graph):
 
 
 def test_blast_radius_resource_marks_found_false_for_typo(graph):
-    _seed_basic(graph)
+    seed_basic(graph)
     res = queries.blast_radius("file:///does/not/exist")
     assert res["kind"] == "resource"
     assert res["found"] is False
@@ -180,7 +147,7 @@ def test_blast_radius_resource_marks_found_false_for_typo(graph):
 
 
 def test_blast_radius_policy_marks_found_false_for_typo(graph):
-    _seed_basic(graph)
+    seed_basic(graph)
     res = queries.blast_radius("no-such-policy")
     assert res["kind"] == "policy"
     assert res["found"] is False
@@ -194,7 +161,7 @@ def test_check_access_agent_found_is_set_on_every_branch(graph):
     """Callers using ``result['agent_found']`` shouldn't KeyError on the
     success branches just because the field was originally added only for
     the failure case."""
-    _seed_basic(graph)
+    seed_basic(graph)
     # DENY branch
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"
@@ -260,7 +227,7 @@ def test_check_access_agent_not_found_carries_found_none(graph):
     AGENT_NOT_FOUND the tool lookup didn't run, so `found` is None (not
     False — hard-coding False would lie about a tool that actually exists).
     Three-state contract; callers should use result.get('found')."""
-    _seed_basic(graph)
+    seed_basic(graph)
     res = queries.check_access("planer", "read_file")
     assert res["verdict"] == "AGENT_NOT_FOUND"
     assert res["agent_found"] is False
@@ -268,8 +235,8 @@ def test_check_access_agent_not_found_carries_found_none(graph):
 
 
 def test_ambiguous_bare_name_in_query(graph):
-    _load("alpha", ["read_file"])
-    _load("beta", ["read_file"])
+    load_crawl("alpha", ["read_file"])
+    load_crawl("beta", ["read_file"])
     # AGENT_NOT_FOUND is checked before tool resolution (outer concern), so we
     # need a real Agent for AMBIGUOUS_TOOL to actually surface.
     ingest_governance(Governance(agents=["planner"]))
@@ -279,7 +246,7 @@ def test_ambiguous_bare_name_in_query(graph):
 
 
 def test_tool_level_deny_is_honored(graph):
-    _load("sample", ["dangerous_tool"])
+    load_crawl("sample", ["dangerous_tool"])
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -298,7 +265,7 @@ def test_tool_level_deny_is_honored(graph):
 
 
 def test_blast_radius_includes_tool_without_caller(graph):
-    _load("sample", ["leak"])
+    load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
             data_access=[DataAccess(tool="sample::leak", resource="file:///secret", mode="WRITES")]
@@ -309,7 +276,7 @@ def test_blast_radius_includes_tool_without_caller(graph):
 
 
 def test_blast_radius_policy_rows_have_path_key(graph):
-    _load("sample", ["leak"])
+    load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
             policies=[Policy(id="deny", effect="DENY")],
@@ -322,7 +289,7 @@ def test_blast_radius_policy_rows_have_path_key(graph):
 
 
 def test_policy_blast_includes_ungranted_tool(graph):
-    _load("sample", ["leak"])
+    load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
             policies=[Policy(id="deny", effect="DENY")],

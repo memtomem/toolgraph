@@ -15,6 +15,7 @@ from toolgraph.control_plan import (
     build_control_preflight,
     load_control_plan,
 )
+from tests._helpers import control_plan_bracket, control_plan_raw
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,10 +65,8 @@ def test_producer_output_validates_against_the_published_result_schema(monkeypat
     drift — a field the model defaults but the schema requires, a naive
     timestamp — stays invisible to them.
     """
-    from tests.test_control_plan import _bracket, _raw
-
-    _bracket(monkeypatch)
-    artifact = build_control_preflight(_raw(), profile="review")
+    control_plan_bracket(monkeypatch)
+    artifact = build_control_preflight(control_plan_raw(), profile="review")
     schema = json.loads(
         (CONTRACTS / "control-preflight.schema.json").read_text(encoding="utf-8")
     )

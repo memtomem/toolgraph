@@ -106,16 +106,6 @@ def test_cli_doctor(backend_graph):
     assert len(parsed["checks"]) >= 3
 
 
-@pytest.fixture
-def embedded_path(tmp_path, monkeypatch):
-    path = tmp_path / 'missing-parent' / 'probe.lbug'
-    monkeypatch.setattr(config, 'settings', config.Settings(backend='ladybug', db_path=path))
-    monkeypatch.setenv('TOOLGRAPH_CONFIG', str(tmp_path / 'no-config.json'))
-    driver.close_driver()
-    yield path
-    driver.close_driver()
-
-
 @pytest.mark.parametrize('phase', ['inspection', 'settings', 'connectivity', 'schema', 'state'])
 def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
     info = {'path': 'probe.json', 'exists': True, 'valid_json': True,

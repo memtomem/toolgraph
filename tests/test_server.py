@@ -25,9 +25,7 @@ from toolgraph.models import (
     ToolRecord,
 )
 from toolgraph.models import ExpectedException
-
-CSV = "file:///data/customers.csv"
-
+from tests._helpers import CSV, seed_basic
 
 def _seed() -> None:
     loader.load_crawl_result(
@@ -224,26 +222,6 @@ async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
     assert got == expected
 
 
-def _seed_basic(graph) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name="sample",
-            transport="stdio",
-            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
-            resources=[ResourceRecord(uri=CSV)],
-        )
-    )
-    ingest_governance(
-        Governance(
-            agents=["planner"],
-            policies=[Policy(id="pii-deny", effect="DENY")],
-            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
-            governed_by={CSV: ["pii-deny"]},
-        )
-    )
-
-
 def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
     """The MCP wrapper must apply the same violation-only default as the CLI
     — agents querying over MCP shouldn't see authorized_but_governed
@@ -296,7 +274,7 @@ def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
 
 
 def test_mcp_unsafe_callable_tools_wrapper_signals_unknown_agent(graph):
-    _seed_basic(graph)
+    seed_basic(graph)
     from toolgraph.server.app import unsafe_callable_tools as wrap
     res = wrap.fn("planer") if hasattr(wrap, "fn") else wrap("planer")
     assert res["agent_found"] is False

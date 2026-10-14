@@ -30,6 +30,7 @@ from toolgraph.models import (
     ToolRecord,
 )
 from toolgraph.uris import is_resource_ref
+from tests._helpers import load_crawl
 
 GOLDEN = [
     # authority-only URL gains a trailing slash
@@ -92,17 +93,6 @@ def test_custom_non_url_identifier_falls_through_silently():
         assert normalize_resource_uri("§custom-id§") == "§custom-id§"
 
 
-def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
-    loader.load_crawl_result(
-        CrawlResult(
-            server_name=server,
-            transport="stdio",
-            tools=[ToolRecord(name=n) for n in tool_names],
-            resources=[ResourceRecord(uri=u) for u in (resources or [])],
-        )
-    )
-
-
 def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
     """IPv6 URL authorities contain ``::``. The resource/tool discriminator
     must only reserve the leading ``server::tool`` shape for tool refs."""
@@ -162,7 +152,7 @@ def test_non_hierarchical_uri_treated_as_resource(graph):
     assert not is_resource_ref("sample::read_file")
     assert not is_resource_ref("read_file")
 
-    _load("sample", ["read_file"])
+    load_crawl("sample", ["read_file"])
     ingest_governance(
         Governance(
             agents=["bot"],
