@@ -309,7 +309,9 @@ def _validate_events(
     for expected_sequence, event in enumerate(annotations.events, start=1):
         if event.sequence != expected_sequence:
             raise ReviewCandidateError(
-                "review annotation event sequence is not contiguous — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation event sequence is not contiguous — the sidecar no longer "
+                "satisfies its append-only contract; restore it from a backup, or delete the "
+                "sidecar file to reset review history"
             )
         source_candidate = candidates.get(event.candidate_id)
         if source_candidate is None:
@@ -319,11 +321,15 @@ def _validate_events(
             or candidate_id(event.candidate) != event.candidate_id
         ):
             raise ReviewCandidateError(
-                "review annotation candidate snapshot does not match its id — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation candidate snapshot does not match its id — the sidecar no "
+                "longer satisfies its append-only contract; restore it from a backup, or delete "
+                "the sidecar file to reset review history"
             )
         if event.from_disposition != states[event.candidate_id]:
             raise ReviewCandidateError(
-                "review annotation disposition chain is invalid — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+                "review annotation disposition chain is invalid — the sidecar no longer satisfies "
+                "its append-only contract; restore it from a backup, or delete the sidecar file to "
+                "reset review history"
             )
         states[event.candidate_id] = event.disposition
         histories[event.candidate_id].append(event)

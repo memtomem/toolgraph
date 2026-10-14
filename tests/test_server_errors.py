@@ -196,7 +196,7 @@ def test_backend_unavailable_classifier_follows_implicit_context():
         try:
             raise BackendUnavailableError("offline")
         except BackendUnavailableError:
-            raise RuntimeError("cleanup bug")
+            raise RuntimeError("cleanup bug")  # noqa: B904 - the implicit __context__ is under test
     except RuntimeError as exc:
         assert is_backend_unavailable(exc)
 

@@ -248,7 +248,8 @@ def graph_content() -> list[str]:
             nodes = [
                 (row["id"], sorted(row["labels"]), row["props"])
                 for row in session.run(
-                    "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props"
+                    "MATCH (n) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS "
+                    "props"
                 )
             ]
             edges = [

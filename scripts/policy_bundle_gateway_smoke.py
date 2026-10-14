@@ -484,7 +484,8 @@ def main() -> int:
             [
                 str(stm_python),
                 "-c",
-                "import importlib.util; raise SystemExit(importlib.util.find_spec('toolgraph') is not None)",
+                "import importlib.util; raise SystemExit(importlib.util.find_spec('toolgraph') is "
+                "not None)",
             ],
             cwd=stm_root,
             check=False,
@@ -779,4 +780,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (SmokeError, subprocess.TimeoutExpired, OSError) as exc:
         print(f"policy gateway smoke failed: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

@@ -332,7 +332,8 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
                 # transient (I/O, resources), and a typed outage is still
                 # handled by every caller.
                 raise BackendUnavailableError(
-                    "BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file integrity and format"
+                    "BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file "
+                    "integrity and format"
                 ) from exc
         try:
             current = LadybugSession(database)

@@ -121,5 +121,10 @@ line-length = 100
 extend-exclude = ["docs/reviews/"]
 
 [tool.ruff.lint]
-# ruff 0.15's default rule set, named so that newer releases keep it.
-select = ["E4", "E7", "E9", "F"]
+# Named explicitly so a newer ruff cannot change which rules run. RUF100 keeps
+# noqa markers honest: one that suppresses nothing fails lint.
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF100"]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer declares options as call defaults (typer.Option(...)); that is the API.
+"toolgraph/cli.py" = ["B008"]

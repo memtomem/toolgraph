@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import sys
-from enum import Enum
+from enum import StrEnum
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import NoReturn
@@ -50,12 +50,12 @@ from toolgraph.review_candidates import (
 )
 
 
-class AuditReportFormat(str, Enum):
+class AuditReportFormat(StrEnum):
     json = "json"
     markdown = "markdown"
 
 
-class ReviewDisposition(str, Enum):
+class ReviewDisposition(StrEnum):
     open = "open"
     accepted = "accepted"
     dismissed = "dismissed"
@@ -946,12 +946,14 @@ def policy_propose(
     unverified_provenance: bool = typer.Option(
         False,
         "--unverified-provenance",
-        help="Allow missing envelope/identity with explicitly unverified provenance; contradictions still fail.",
+        help="Allow missing envelope/identity with explicitly unverified provenance; "
+        "contradictions still fail.",
     ),
     revalidate_current: bool = typer.Option(
         False,
         "--revalidate-current",
-        help="Check proposed additions against the current strict catalog, even at the same generation.",
+        help="Check proposed additions against the current strict catalog, even at the same "
+        "generation.",
     ),
     output: Path | None = typer.Option(
         None, "--output", "-o", help="Write proposal markdown to file instead of stdout."

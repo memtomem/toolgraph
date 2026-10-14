@@ -98,7 +98,9 @@ def run_doctor() -> DoctorReport:
             DoctorCheck(
                 name="Configuration",
                 status="PASS",
-                message=f"Valid config at {cfg_info['path']} (mode {cfg_info['permissions'] or 'n/a'})",
+                message=(
+                    f"Valid config at {cfg_info['path']} (mode {cfg_info['permissions'] or 'n/a'})"
+                ),
                 details=cfg_info,
             )
         )
@@ -207,7 +209,8 @@ def run_doctor() -> DoctorReport:
                 DoctorCheck(
                     name="Graph State",
                     status="WARN",
-                    message="No instance_id initialized — run 'toolgraph init-schema' to initialize",
+                    message="No instance_id initialized — run 'toolgraph init-schema' to "
+                    "initialize",
                     details={"generation": state.generation},
                 )
             )

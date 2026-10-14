@@ -115,9 +115,11 @@ def test_dry_run_leaves_database_unmodified_and_detects_all_deltas(backend_graph
     # Proposed new manifest:
     # - Agent: agent-b removed, agent-c added
     # - Policy: pol-1 modified (effect ALLOW->DENY, description changed), pol-2 deleted, pol-3 added
-    # - Grant: agent-a sample::read_file granted_by changed to "team-lead", agent-b revoked, agent-c added
+    # - Grant: agent-a sample::read_file granted_by changed to "team-lead",
+    #   agent-b revoked, agent-c added
     # - Data access: sample::read_file READS removed, sample::exec_cmd WRITES added to file:///data/public.txt
-    # - Governed by: pol-2 removed, pol-3 added to file:///data/customers.csv, sample::exec_cmd governed by pol-1
+    # - Governed by: pol-2 removed, pol-3 added to file:///data/customers.csv,
+    #   sample::exec_cmd governed by pol-1
     # - Exceptions: old exception removed, new exception added for agent-c
     new_gov = Governance(
         agents=["agent-a", "agent-c"],
@@ -230,7 +232,8 @@ def test_whole_graph_final_degree_zero_pruning_semantics(backend_graph):
     assert ingest_governance(gov1).applied
 
     # 3. Crawler updates server: tool_orphan and res_orphan are no longer exposed/provided
-    # loader.py drops EXPOSES/PROVIDES, but keeps Tool and Resource nodes if they have authored edges
+    # loader.py drops EXPOSES/PROVIDES, but keeps Tool and Resource nodes if they have
+    # authored edges
     loader.load_crawl_result(
         CrawlResult(
             server_name="test_srv",
@@ -334,7 +337,8 @@ def test_nullable_exceptions_and_empty_bindings_match_real_ingest(backend_graph)
                 [
                     dict(row)
                     for row in session.run(
-                        "MATCH (e:ExpectedException) RETURN e.resource AS resource, e.reason AS reason"
+                        "MATCH (e:ExpectedException) RETURN e.resource AS resource, e.reason AS "
+                        "reason"
                     )
                 ],
                 sorted(row["uri"] for row in session.run("MATCH (r:Resource) RETURN r.uri AS uri")),

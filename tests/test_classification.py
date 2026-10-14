@@ -531,14 +531,16 @@ def test_colliding_exception_tuples_and_legacy_reingest(backend_graph):
     with driver.session() as session:
         rows = list(
             session.run(
-                "MATCH (e:ExpectedException) RETURN e.key AS key, e.agent AS agent, e.reason AS reason"
+                "MATCH (e:ExpectedException) RETURN e.key AS key, e.agent AS agent, e.reason AS "
+                "reason"
             )
         )
         assert len(rows) == 2
         assert {r["agent"]: r["reason"] for r in rows} == {"a|b": "first", "a": "last"}
         session.run("MATCH (e:ExpectedException {agent:'a'}) DELETE e")
         session.run(
-            "CREATE (:ExpectedException {key:'legacy|key', agent:'a', tool_key:'b|s::t', policy:'p', reason:'last'})"
+            "CREATE (:ExpectedException "
+            "{key:'legacy|key', agent:'a', tool_key:'b|s::t', policy:'p', reason:'last'})"
         )
     assert ingest_governance(gov).applied
     with driver.session() as session:

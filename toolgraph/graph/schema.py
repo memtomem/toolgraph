@@ -32,7 +32,8 @@ CONSTRAINTS: list[str] = [
     "CREATE CONSTRAINT resource_uri IF NOT EXISTS FOR (r:Resource) REQUIRE r.uri IS UNIQUE",
     "CREATE CONSTRAINT agent_id IF NOT EXISTS FOR (a:Agent) REQUIRE a.id IS UNIQUE",
     "CREATE CONSTRAINT policy_id IF NOT EXISTS FOR (p:Policy) REQUIRE p.id IS UNIQUE",
-    "CREATE CONSTRAINT exception_key IF NOT EXISTS FOR (e:ExpectedException) REQUIRE e.key IS UNIQUE",
+    "CREATE CONSTRAINT exception_key IF NOT EXISTS FOR (e:ExpectedException) REQUIRE e.key IS "
+    "UNIQUE",
     "CREATE CONSTRAINT graphmeta_id IF NOT EXISTS FOR (m:GraphMeta) REQUIRE m.id IS UNIQUE",
 ]
 
@@ -232,7 +233,8 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 raise
             except Exception as exc:
                 raise BackendConfigurationError(
-                    "cannot inspect backend schema catalog; check connectivity and catalog read permissions"
+                    "cannot inspect backend schema catalog; check connectivity and catalog read "
+                    "permissions"
                 ) from exc
             missing_tables = sorted(expected_all - set(live_tables))
             healthy = version_ok and not missing_tables
@@ -254,7 +256,8 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 raise
             except Exception as exc:
                 raise BackendConfigurationError(
-                    "cannot inspect backend schema catalog; check connectivity and catalog read permissions"
+                    "cannot inspect backend schema catalog; check connectivity and catalog read "
+                    "permissions"
                 ) from exc
             missing_constraints = sorted(expected_constraints - set(live_constraints))
             healthy = version_ok and not missing_constraints
