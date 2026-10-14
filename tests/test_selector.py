@@ -197,7 +197,7 @@ def test_rank_features_carries_facts_and_annotation_self_claims(graph):
     assert violation["destructive_hint"] is None
 
 
-def test_rank_features_unknown_agent_aborts_selection(graph):
+def test_rank_features_unknown_agent_aborts_selection(backend_graph):
     _seed()
     got = selector.rank_features("nobody", CANDIDATES)
     assert got == {"agent": "nobody", "agent_found": False, "features": []}
@@ -232,7 +232,7 @@ def _reasons(result: dict) -> dict[str, str]:
     return {r["candidate"]: r["reason"] for r in result["rejected"]}
 
 
-def test_strict_passes_only_clean_allow(graph):
+def test_strict_passes_only_clean_allow(backend_graph):
     _seed()
     got = selector.eligible_tools("planner", CANDIDATES, profile="strict")
     assert got["eligible"] == ["alpha::git_status", "alpha::unbacked"]
@@ -247,7 +247,7 @@ def test_strict_passes_only_clean_allow(graph):
     }
 
 
-def test_review_passes_exceptions_and_unmapped_but_not_violations(graph):
+def test_review_passes_exceptions_and_unmapped_but_not_violations(backend_graph):
     _seed()
     got = selector.eligible_tools("planner", CANDIDATES, profile="review")
     assert got["eligible"] == [
@@ -259,7 +259,7 @@ def test_review_passes_exceptions_and_unmapped_but_not_violations(graph):
     assert _reasons(got)["alpha::read_file"] == "DENY_VIOLATION"
 
 
-def test_explore_rejects_only_resolution_grant_and_drift(graph):
+def test_explore_rejects_only_resolution_grant_and_drift(backend_graph):
     _seed()
     got = selector.eligible_tools("planner", CANDIDATES, profile="explore")
     assert got["eligible"] == [
@@ -275,7 +275,7 @@ def test_explore_rejects_only_resolution_grant_and_drift(graph):
 
 
 @pytest.mark.parametrize("profile", sorted(selector.PROFILES))
-def test_ambiguous_bare_name_is_never_auto_selected(graph, profile):
+def test_ambiguous_bare_name_is_never_auto_selected(backend_graph, profile):
     _seed()
     got = selector.eligible_tools("planner", ["read_file"], profile=profile)
     assert got["eligible"] == []
@@ -285,7 +285,7 @@ def test_ambiguous_bare_name_is_never_auto_selected(graph, profile):
 
 
 @pytest.mark.parametrize("profile", sorted(selector.PROFILES))
-def test_drifted_tools_are_rejected_in_every_profile(graph, profile):
+def test_drifted_tools_are_rejected_in_every_profile(backend_graph, profile):
     _seed()
     got = selector.eligible_tools("planner", ["alpha::ghost_tool"], profile=profile)
     assert got["eligible"] == []

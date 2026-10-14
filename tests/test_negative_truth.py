@@ -532,7 +532,7 @@ def _seed_multi_agent_deny_graph() -> None:
     )
 
 
-def test_audit_report_matches_the_per_agent_composition_exactly(graph):
+def test_audit_report_matches_the_per_agent_composition_exactly(backend_graph):
     """The batched audit pass must equal looping unsafe_callable_tools().
 
     audit_report stopped calling unsafe_callable_tools once per agent and now
@@ -562,7 +562,7 @@ def test_audit_report_matches_the_per_agent_composition_exactly(graph):
     )
 
 
-def test_batched_audit_never_leaks_one_agents_exception_to_another(graph):
+def test_batched_audit_never_leaks_one_agents_exception_to_another(backend_graph):
     """Only beta declared exceptions; alpha and gamma must stay violations.
 
     The rewrite moved the agent predicate from an ExpectedException property
