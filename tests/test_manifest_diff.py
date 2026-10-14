@@ -18,6 +18,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+import json
 
 
 def _seed_sample_crawl() -> None:
@@ -273,3 +274,97 @@ grants:
     # Confirm database is still empty of authored nodes
     with driver.session() as s:
         assert s.run("MATCH (a:Agent) RETURN count(a) AS c").single()["c"] == 0
+
+
+def test_nullable_exceptions_and_empty_bindings_match_real_ingest(backend_graph):
+    loader.load_crawl_result(CrawlResult(server_name='sample', tools=[ToolRecord(name='read')]))
+
+    def gov(reason):
+        return Governance.model_validate({
+            'agents': ['bot'], 'policies': [{'id': 'deny', 'effect': 'DENY'}],
+            'grants': [{'agent': 'bot', 'tool': 'sample::read'}],
+            'data_access': [{'tool': 'sample::read', 'resource': 'file:///data', 'mode': 'READS'}],
+            'governed_by': {'file:///data': [{'policy': 'deny'}]},
+            'expected_exceptions': [
+                {'agent': 'bot', 'tool': 'sample::read', 'resource': resource, 'policy': 'deny', 'reason': reason}
+                for resource in (None, 'file:///data')
+            ],
+        })
+
+    def snapshot():
+        with driver.session() as session:
+            return (
+                queries.graph_state(),
+                [dict(row) for row in session.run('MATCH (e:ExpectedException) RETURN e.resource AS resource, e.reason AS reason')],
+                sorted(row['uri'] for row in session.run('MATCH (r:Resource) RETURN r.uri AS uri')),
+            )
+
+    def dry_unchanged(manifest):
+        before = snapshot()
+        diff = dry_run_ingest(manifest)
+        assert diff.applied, diff.warnings
+        assert snapshot() == before
+        return diff
+
+    first = gov('before')
+    assert [row['resource'] for row in dry_unchanged(first).expected_exceptions_added] == [None, 'file:///data']
+    assert ingest_governance(first).applied
+    updated = gov('after')
+    assert len(dry_unchanged(updated).expected_exceptions_reason_updated) == 2
+    assert ingest_governance(updated).applied
+    assert {row['reason'] for row in snapshot()[1]} == {'after'}
+    empty = Governance(governed_by={'file:///unused': [], 'file:///data': []})
+    with driver.session() as session:
+        session.run("CREATE (:Resource {uri:'file:///unused'})")
+    diff = dry_unchanged(empty)
+    assert len(diff.expected_exceptions_removed) == 2
+    assert diff.resources_created == []
+    assert set(diff.resources_pruned) == {'file:///data', 'file:///unused'}
+    assert ingest_governance(empty).applied
+    assert snapshot()[1:] == ([], [])
+    assert dry_unchanged(empty).resources_created == []
+
+
+def test_dry_run_json_exposes_full_delta_and_rejection(backend_graph, tmp_path):
+    loader.load_crawl_result(CrawlResult(server_name='sample', tools=[ToolRecord(name='read')]))
+    assert ingest_governance(Governance(agents=['bot'], grants=[AccessGrant(agent='bot', tool='sample::read')])).applied
+    before = queries.graph_state()
+    path = tmp_path / 'gov.yaml'
+    path.write_text('agents: [replacement]\n')
+    runner = CliRunner()
+    args = ['ingest-manifest', '--governance', str(path), '--dry-run', '--json']
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    delta = json.loads(result.stdout)
+    assert delta['grants_revoked'] == [{'agent': 'bot', 'tool': 'sample::read'}]
+    assert delta['agents_created'] == ['replacement']
+    assert delta['agents_deleted'] == ['bot']
+    assert queries.graph_state() == before
+    path.write_text('agents: [bot]\ngrants:\n  - agent: bot\n    tool: missing::tool\n')
+    rejected = runner.invoke(cli.app, args)
+    assert rejected.exit_code == 1
+    assert json.loads(rejected.stdout)['warnings']
+    assert not json.loads(rejected.stdout)['applied']
+    assert queries.graph_state() == before
+
+
+def test_dry_run_json_scrubs_uri_lists_nested_evidence_and_warnings(monkeypatch, tmp_path):
+    from toolgraph.manifest.ingest import GovernanceDiffReport
+
+    uri = 'https://user:password@host/path?token=secret'
+    report = GovernanceDiffReport(
+        applied=False, resources_pruned=[uri], resources_retained_crawled=[uri],
+        data_access_removed=[{'resource': uri}],
+        expected_exceptions_removed=[{'reason': f'see {uri}'}],
+        warnings=[f'invalid {uri}'],
+    )
+    monkeypatch.setattr(cli, 'dry_run_ingest', lambda *a, **k: report)
+    path = tmp_path / 'governance.yaml'
+    path.write_text('agents: [bot]\n')
+    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path), '--dry-run', '--json'])
+    assert result.exit_code == 1
+    rendered = json.loads(result.stdout)
+    assert rendered['resources_pruned'] == ['https://host/path']
+    assert rendered['expected_exceptions_removed'] == [{'reason': 'see https://host/path'}]
+    assert 'password' not in result.stdout and 'secret' not in result.stdout
+    assert report.resources_pruned == [uri]  # rendering does not change the delta

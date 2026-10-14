@@ -19,7 +19,7 @@ compromised build still publishes a compromised artifact — the split removes
 the much larger surface of build scripts and transitive build dependencies
 reaching the token.
 
-`tests/test_release_hardening.py` pins the shape of that job: only the two
+`tests/test_release_workflow.py` pins the shape of that job: only the two
 allowlisted, sha-pinned actions; exactly one shell step, before either
 publisher, whose commands come from a small allowlist; no `${{ }}` inside it;
 no `continue-on-error` and no `if:` at job or step level that could let a

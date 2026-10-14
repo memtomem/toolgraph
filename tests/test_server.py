@@ -24,6 +24,7 @@ from toolgraph.models import (
     ServerSpec,
     ToolRecord,
 )
+from toolgraph.models import ExpectedException
 
 CSV = "file:///data/customers.csv"
 
@@ -221,3 +222,83 @@ async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
         graph_state_verified=True,
     )
     assert got == expected
+
+
+def _seed_basic(graph) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+
+
+def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
+    """The MCP wrapper must apply the same violation-only default as the CLI
+    — agents querying over MCP shouldn't see authorized_but_governed
+    rows mixed in."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::read_file"),
+                AccessGrant(agent="planner", tool="sample::write_file"),
+            ],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource=CSV, mode="READS"),
+                DataAccess(tool="sample::write_file", resource=CSV, mode="WRITES"),
+            ],
+            governed_by={CSV: ["pii-deny"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                )
+            ],
+        )
+    )
+    # Direct invocation of the @mcp.tool() function (no MCP transport needed
+    # for this assertion — we're testing the wrapper, not the protocol).
+    from toolgraph.server.app import unsafe_callable_tools as wrap
+    default = wrap.fn("planner") if hasattr(wrap, "fn") else wrap("planner")
+    assert default["agent_found"] is True
+    assert default["count"] == 1
+    assert default["tools"][0]["tool"] == "write_file"
+    assert all(t["classification"] == "violation" for t in default["tools"])
+
+    full = wrap.fn("planner", include_authorized=True) if hasattr(wrap, "fn") else wrap("planner", include_authorized=True)
+    assert full["count"] == 2
+    classifications = {t["classification"] for t in full["tools"]}
+    assert classifications == {"violation", "authorized_but_governed"}
+
+
+def test_mcp_unsafe_callable_tools_wrapper_signals_unknown_agent(graph):
+    _seed_basic(graph)
+    from toolgraph.server.app import unsafe_callable_tools as wrap
+    res = wrap.fn("planer") if hasattr(wrap, "fn") else wrap("planer")
+    assert res["agent_found"] is False
+    assert res["count"] == 0
+    assert res["tools"] == []

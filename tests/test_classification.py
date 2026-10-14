@@ -22,6 +22,8 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+from toolgraph.graph import driver
+from toolgraph.graph import schema
 
 CSV = "file:///data/customers.csv"
 
@@ -270,3 +272,295 @@ def test_deny_rows_have_a_total_order_on_both_backends(backend_graph):
         (None, "admin-deny"),
         (None, "pii-deny"),
     ]
+
+
+def _seed_basic(graph) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+
+
+def _crawl(graph):
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+
+
+def _governance_with_both_exceptions() -> Governance:
+    return Governance(
+        agents=["planner"],
+        policies=[Policy(id="pii-deny", effect="DENY")],
+        grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+        data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+        governed_by={CSV: ["pii-deny"]},
+        expected_exceptions=[
+            ExpectedException(
+                agent="planner", tool="sample::read_file", policy="pii-deny",
+                reason="wildcard: legacy blanket sign-off",
+            ),
+            ExpectedException(
+                agent="planner", tool="sample::read_file", policy="pii-deny",
+                resource=CSV, reason="specific: DPA ticket COMP-42",
+            ),
+        ],
+    )
+
+
+def test_exception_with_unknown_agent_warns(graph):
+    """A typo'd agent in expected_exceptions can't classify any row —
+    surface it at ingest, not at audit time."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planer",  # typo of 'planner'
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any("planer" in w and "not declared" in w for w in warnings)
+
+
+def test_exception_narrowed_to_missing_resource_warns(graph):
+    """If the (tool, resource) combination isn't authored in this manifest's
+    data_access, the exception can't match any deny_evidence row — warn."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource="file:///wrong",  # not in data_access
+                    reason="x",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any("file:///wrong" in w and "no READS/WRITES" in w for w in warnings)
+
+
+def test_exception_with_no_grant_for_tool_warns(graph):
+    """Codex R3 critique: an exception that names an agent without a CAN_CALL
+    grant on the tool is dead-on-arrival — no unsafe-tools row can ever
+    match it. Warn at ingest, not at audit."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner", "loner"],  # loner declared, but no grants
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="loner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="will never match",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any("loner" in w and "no CAN_CALL grant" in w for w in warnings)
+
+
+def test_exception_with_wrong_policy_warns(graph):
+    """Codex R3 critique: when exc.resource is set but the resource is NOT
+    governed_by exc.policy, the exception can never match. Previous round
+    only checked (tool, resource) ∈ data_access — missing the (resource,
+    policy) binding check."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[
+                Policy(id="pii-deny", effect="DENY"),
+                Policy(id="other-deny", effect="DENY"),
+            ],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},  # NOT other-deny
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="other-deny",  # wrong policy
+                    resource=CSV,
+                    reason="dead-on-arrival",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any(
+        "other-deny" in w and "not governed_by" in w for w in warnings
+    )
+
+
+def test_wildcard_exception_with_no_reachable_path_warns(graph):
+    """Wildcard exception (resource=None) must still verify the tool reaches
+    the policy via SOME path — either a touched resource governed by the
+    policy, or tool-level GOVERNED_BY."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[
+                Policy(id="pii-deny", effect="DENY"),
+                Policy(id="unrelated-deny", effect="DENY"),
+            ],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},  # only pii-deny; unrelated-deny has no path
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="unrelated-deny",
+                    # resource omitted -> wildcard
+                    reason="will never fire",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any("dead-on-arrival" in w and "unrelated-deny" in w for w in warnings)
+
+
+def test_exception_against_allow_policy_warns(graph):
+    """Codex R3 final critique: classification only joins to DENY policies,
+    so an exception against an ALLOW policy can never fire. Reject at ingest."""
+    _seed_basic(graph)
+    warnings = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[
+                Policy(id="pii-deny", effect="DENY"),
+                Policy(id="legacy-allow", effect="ALLOW"),
+            ],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny", "legacy-allow"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="legacy-allow",  # ALLOW policy — can't ever fire
+                    resource=CSV,
+                    reason="dead-on-arrival",
+                )
+            ],
+        )
+    ).warnings
+    assert warnings
+    assert any("legacy-allow" in w and "ALLOW" in w for w in warnings)
+
+
+def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
+    _crawl(graph)
+    assert ingest_governance(_governance_with_both_exceptions()).warnings == []
+
+    rows = queries.unsafe_callable_tools("planner")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["classification"] == "authorized_but_governed"
+    # The resource-specific exception outranks the wildcard for the reason.
+    assert row["exception_reason"] == "specific: DPA ticket COMP-42"
+
+
+def test_check_access_one_deny_row_when_wildcard_and_specific_both_match(graph):
+    _crawl(graph)
+    assert ingest_governance(_governance_with_both_exceptions()).warnings == []
+
+    res = queries.check_access("planner", "read_file")
+    assert res["verdict"] == "DENY"
+    assert len(res["deny_evidence"]) == 1
+    assert res["deny_evidence"][0]["exception_reason"] == "specific: DPA ticket COMP-42"
+    assert res["all_authorized"] is True
+
+
+def test_exception_keys_cannot_collide():
+    assert schema.exception_key("a|b", "c", None, "p") != schema.exception_key(
+        "a", "b|c", None, "p"
+    )
+    assert schema.exception_key("a", "s::t", None, "p") != schema.exception_key(
+        "a", "s::t", "*", "p"
+    )
+    assert schema.exception_key("a", "s::t", None, "p").startswith("v2:")
+
+
+def test_colliding_exception_tuples_and_legacy_reingest(backend_graph):
+    from toolgraph.models import AccessGrant, ExpectedException, Policy
+
+    for server in ("s", "b|s"):
+        loader.load_crawl_result(
+            CrawlResult(server_name=server, tools=[ToolRecord(name="t")])
+        )
+    pairs = [("a|b", "s::t"), ("a", "b|s::t")]
+    gov = Governance(
+        policies=[Policy(id="p", effect="DENY")],
+        grants=[AccessGrant(agent=a, tool=k) for a, k in pairs],
+        governed_by={k: ["p"] for _, k in pairs},
+        expected_exceptions=[
+            ExpectedException(agent=a, tool=k, policy="p", reason="first")
+            for a, k in pairs
+        ]
+        + [ExpectedException(agent="a", tool="b|s::t", policy="p", reason="last")],
+    )
+    assert ingest_governance(gov).applied
+    with driver.session() as session:
+        rows = list(
+            session.run(
+                "MATCH (e:ExpectedException) RETURN e.key AS key, e.agent AS agent, e.reason AS reason"
+            )
+        )
+        assert len(rows) == 2
+        assert {r["agent"]: r["reason"] for r in rows} == {"a|b": "first", "a": "last"}
+        session.run("MATCH (e:ExpectedException {agent:'a'}) DELETE e")
+        session.run(
+            "CREATE (:ExpectedException {key:'legacy|key', agent:'a', tool_key:'b|s::t', policy:'p', reason:'last'})"
+        )
+    assert ingest_governance(gov).applied
+    with driver.session() as session:
+        rows = list(session.run("MATCH (e:ExpectedException) RETURN e.key AS key"))
+        assert len(rows) == 2 and all(r["key"].startswith("v2:") for r in rows)

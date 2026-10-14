@@ -119,3 +119,216 @@ def test_blast_radius_policy_omits_governed_resource_with_no_tool(graph):
         "found": True,
         "impacted": [],
     }
+
+
+def _seed_basic(graph) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+
+
+def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name=server,
+            transport="stdio",
+            tools=[ToolRecord(name=n) for n in tool_names],
+            resources=[ResourceRecord(uri=u) for u in (resources or [])],
+        )
+    )
+
+
+def test_check_access_returns_agent_not_found_for_unknown_agent(graph):
+    """Typo'd agent must NOT collapse into NOT_GRANTED — that hides bugs.
+    An operator iterating on names needs the distinct verdict to tell
+    'this agent has no grant on this tool' from 'this agent doesn't exist'."""
+    _seed_basic(graph)
+    res = queries.check_access("planer", "read_file")  # typo
+    assert res["verdict"] == "AGENT_NOT_FOUND"
+    assert res["agent_found"] is False
+
+    # known agent stays unaffected (verdict NOT_GRANTED / DENY / ALLOW)
+    res = queries.check_access("planner", "read_file")
+    assert res["verdict"] == "DENY"
+
+
+def test_blast_radius_resource_marks_found_false_for_typo(graph):
+    _seed_basic(graph)
+    res = queries.blast_radius("file:///does/not/exist")
+    assert res["kind"] == "resource"
+    assert res["found"] is False
+    assert res["impacted"] == []
+
+    # real resource: found=True
+    res = queries.blast_radius(CSV)
+    assert res["found"] is True
+    assert res["impacted"], "should report planner's reach to CSV"
+
+
+def test_blast_radius_policy_marks_found_false_for_typo(graph):
+    _seed_basic(graph)
+    res = queries.blast_radius("no-such-policy")
+    assert res["kind"] == "policy"
+    assert res["found"] is False
+    assert res["impacted"] == []
+
+    res = queries.blast_radius("pii-deny")
+    assert res["found"] is True
+
+
+def test_check_access_agent_found_is_set_on_every_branch(graph):
+    """Callers using ``result['agent_found']`` shouldn't KeyError on the
+    success branches just because the field was originally added only for
+    the failure case."""
+    _seed_basic(graph)
+    # DENY branch
+    res = queries.check_access("planner", "read_file")
+    assert res["verdict"] == "DENY"
+    assert res["agent_found"] is True
+
+    # NOT_GRANTED branch
+    ingest_governance(
+        Governance(
+            agents=["loner"],  # known agent, no grants
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+    res = queries.check_access("loner", "read_file")
+    assert res["verdict"] == "NOT_GRANTED"
+    assert res["agent_found"] is True
+
+    # TOOL_NOT_FOUND branch (still need a real agent)
+    res = queries.check_access("loner", "no_such_tool")
+    assert res["verdict"] == "TOOL_NOT_FOUND"
+    assert res["agent_found"] is True
+
+    # AGENT_NOT_FOUND
+    res = queries.check_access("planer", "read_file")
+    assert res["verdict"] == "AGENT_NOT_FOUND"
+    assert res["agent_found"] is False
+
+
+def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(graph):
+    """is_resource_ref is purely lexical: a policy id like 'urn:secret' looks
+    URI-shaped. If no Resource matches the URI, blast_radius now retries the
+    same string as a Policy id before declaring not-found."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="leak")],
+            resources=[],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["bot"],
+            policies=[Policy(id="urn:secret", effect="DENY")],
+            grants=[AccessGrant(agent="bot", tool="sample::leak")],
+            data_access=[
+                DataAccess(tool="sample::leak", resource="file:///x", mode="WRITES")
+            ],
+            governed_by={"sample::leak": ["urn:secret"]},
+        )
+    )
+    res = queries.blast_radius("urn:secret")
+    # Re-routed from resource-branch (no match) to policy-branch.
+    assert res["kind"] == "policy"
+    assert res["found"] is True
+    assert any(r["via"] == "tool" for r in res["impacted"])
+
+
+def test_check_access_agent_not_found_carries_found_none(graph):
+    """README promises every response carries agent_found AND found. For
+    AGENT_NOT_FOUND the tool lookup didn't run, so `found` is None (not
+    False — hard-coding False would lie about a tool that actually exists).
+    Three-state contract; callers should use result.get('found')."""
+    _seed_basic(graph)
+    res = queries.check_access("planer", "read_file")
+    assert res["verdict"] == "AGENT_NOT_FOUND"
+    assert res["agent_found"] is False
+    assert res["found"] is None
+
+
+def test_ambiguous_bare_name_in_query(graph):
+    _load("alpha", ["read_file"])
+    _load("beta", ["read_file"])
+    # AGENT_NOT_FOUND is checked before tool resolution (outer concern), so we
+    # need a real Agent for AMBIGUOUS_TOOL to actually surface.
+    ingest_governance(Governance(agents=["planner"]))
+    res = queries.check_access("planner", "read_file")
+    assert res["verdict"] == "AMBIGUOUS_TOOL"
+    assert sorted(res["candidates"]) == ["alpha::read_file", "beta::read_file"]
+
+
+def test_tool_level_deny_is_honored(graph):
+    _load("sample", ["dangerous_tool"])
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="block", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::dangerous_tool")],
+            governed_by={"sample::dangerous_tool": ["block"]},
+        )
+    )
+    res = queries.check_access("planner", "dangerous_tool")
+    assert res["verdict"] == "DENY"
+    assert res["deny_evidence"][0]["via"] == "tool"
+
+    unsafe = queries.unsafe_callable_tools("planner")
+    assert [u["tool"] for u in unsafe] == ["dangerous_tool"]
+    assert unsafe[0]["via"] == "tool"
+
+
+def test_blast_radius_includes_tool_without_caller(graph):
+    _load("sample", ["leak"])
+    ingest_governance(
+        Governance(
+            data_access=[DataAccess(tool="sample::leak", resource="file:///secret", mode="WRITES")]
+        )
+    )
+    rows = queries.blast_radius("file:///secret")["impacted"]
+    assert any(r["tool"] == "leak" and r["agent"] is None for r in rows)
+
+
+def test_blast_radius_policy_rows_have_path_key(graph):
+    _load("sample", ["leak"])
+    ingest_governance(
+        Governance(
+            policies=[Policy(id="deny", effect="DENY")],
+            data_access=[DataAccess(tool="sample::leak", resource="file:///secret", mode="WRITES")],
+            governed_by={"file:///secret": ["deny"]},
+        )
+    )
+    impacted = queries.blast_radius("deny")["impacted"]
+    assert impacted and all("path" in r for r in impacted)
+
+
+def test_policy_blast_includes_ungranted_tool(graph):
+    _load("sample", ["leak"])
+    ingest_governance(
+        Governance(
+            policies=[Policy(id="deny", effect="DENY")],
+            data_access=[DataAccess(tool="sample::leak", resource="file:///secret", mode="WRITES")],
+            governed_by={"file:///secret": ["deny"]},
+        )
+    )
+    impacted = queries.blast_radius("deny")["impacted"]
+    assert any(r["tool"] == "leak" and r["agent"] is None for r in impacted)

@@ -6,6 +6,9 @@ import json
 
 from toolgraph.graph import driver, loader
 from toolgraph.models import CrawlResult, ResourceRecord, ToolRecord
+from toolgraph.graph import queries
+from toolgraph.manifest.ingest import ingest_governance
+from toolgraph.models import AccessGrant, Governance, Policy
 
 
 def _sample() -> CrawlResult:
@@ -99,3 +102,62 @@ def test_tool_key_components_must_not_contain_delimiter():
         ToolRecord(name="b::c")
     with pytest.raises(ValueError, match="delimiter"):
         CrawlResult(server_name="a::b")
+
+
+def _load(server: str, tool_names: list[str], resources: list[str] | None = None) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name=server,
+            transport="stdio",
+            tools=[ToolRecord(name=n) for n in tool_names],
+            resources=[ResourceRecord(uri=u) for u in (resources or [])],
+        )
+    )
+
+
+def test_loader_never_persists_raw_endpoint(graph):
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="secret-test",
+            transport="streamable-http",
+            endpoint="https://alice:secret@example.test/mcp?token=super-secret",
+            tools=[ToolRecord(name="read")],
+        )
+    )
+
+    with driver.session() as current:
+        row = current.run(
+            "MATCH (s:MCPServer {name:'secret-test'})-[e:EXPOSES]->() "
+            "RETURN s.endpoint AS endpoint, e.evidence AS evidence"
+        ).single()
+    assert row["endpoint"] == "https://example.test"
+    assert row["evidence"] == "crawled from https://example.test"
+
+
+def test_recrawl_removes_stale_tool(graph):
+    _load("sample", ["read_file", "write_file"])
+    assert loader.graph_counts()["tool"] == 2
+    _load("sample", ["read_file"])  # write_file gone
+    counts = loader.graph_counts()
+    assert counts["tool"] == 1
+    assert counts["exposes"] == 1
+
+
+def test_recrawl_keeps_governed_tool_and_warns(graph):
+    _load("sample", ["read_file", "write_file"])
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::write_file")],
+            governed_by={"sample::write_file": ["deny"]},
+        )
+    )
+    warnings = loader.load_crawl_result(
+        CrawlResult(server_name="sample", transport="stdio", tools=[ToolRecord(name="read_file")])
+    )
+    assert any("write_file" in w for w in warnings)
+    # governance survived the recrawl rather than being silently dropped
+    res = queries.check_access("planner", "sample::write_file")
+    assert res["found"] is True
+    assert res["verdict"] == "DENY"

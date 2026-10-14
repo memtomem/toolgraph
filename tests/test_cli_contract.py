@@ -28,6 +28,13 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+import yaml
+from toolgraph.graph import driver
+from toolgraph.manifest.ingest import governance_counts
+import re
+import sys
+from toolgraph.cli import app
+from toolgraph import __version__
 
 CSV = "file:///data/customers.csv"
 
@@ -325,3 +332,221 @@ def test_init_warns_when_a_partial_database_cannot_be_removed(tmp_path, monkeypa
         f"WARNING: could not remove partial database {db_path}: Permission denied"
     ]
     assert db_path.exists()
+
+
+def _seed_basic(graph) -> None:
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="sample::read_file")],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
+            governed_by={CSV: ["pii-deny"]},
+        )
+    )
+
+
+def test_cli_ingest_manifest_says_rejected_on_warnings(graph, tmp_path):
+    """The CLI must NOT say 'Ingested' when ingest rejected the manifest —
+    that contradicts the atomicity guarantee directly to the user."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    manifest_path = tmp_path / "governance.yaml"
+    manifest_path.write_text(
+        yaml.safe_dump({
+            "agents": ["planner"],
+            "policies": [{"id": "real", "effect": "DENY"}],
+            "grants": [{"agent": "planner", "tool": "sample::read_file"}],
+            "governed_by": {CSV: ["typo-policy"]},  # forces rejection
+        })
+    )
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["ingest-manifest", "--governance", str(manifest_path)])
+    assert result.exit_code == 1
+    assert "REJECTED" in result.output
+    assert "graph unchanged" in result.output
+    assert "Ingested governance from" not in result.output
+    # And the graph was NOT mutated — counts stay zero
+    assert governance_counts()["governed_by"] == 0
+
+
+def test_cli_unsafe_tools_default_filters_to_violations(graph):
+    """`toolgraph unsafe-tools agent` defaults to violation-only output;
+    --all surfaces authorized_but_governed rows alongside."""
+    loader.load_crawl_result(
+        CrawlResult(
+            server_name="sample",
+            transport="stdio",
+            tools=[ToolRecord(name="read_file"), ToolRecord(name="write_file")],
+            resources=[ResourceRecord(uri=CSV)],
+        )
+    )
+    ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="pii-deny", effect="DENY")],
+            grants=[
+                AccessGrant(agent="planner", tool="sample::read_file"),
+                AccessGrant(agent="planner", tool="sample::write_file"),
+            ],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource=CSV, mode="READS"),
+                DataAccess(tool="sample::write_file", resource=CSV, mode="WRITES"),
+            ],
+            governed_by={CSV: ["pii-deny"]},
+            expected_exceptions=[
+                ExpectedException(
+                    agent="planner",
+                    tool="sample::read_file",
+                    policy="pii-deny",
+                    resource=CSV,
+                    reason="by design",
+                )
+            ],
+        )
+    )
+    runner = CliRunner()
+
+    default = runner.invoke(cli.app, ["unsafe-tools", "planner"])
+    assert default.exit_code == 0
+    assert "write_file" in default.output           # violation
+    assert "authorized_but_governed" not in default.output
+
+    full = runner.invoke(cli.app, ["unsafe-tools", "planner", "--all"])
+    assert "authorized_but_governed" in full.output
+    assert "write_file" in full.output
+
+
+def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(graph):
+    """A typo'd agent at the CLI must NOT silently return [] — that's the
+    exact false-clean the analyzer is supposed to prevent."""
+    _seed_basic(graph)
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["unsafe-tools", "planer"])
+    assert result.exit_code == 1
+    assert "AGENT_NOT_FOUND" in result.output
+
+
+def test_cli_unbacked_edges_default_excludes_can_call(graph):
+    """`toolgraph unbacked-edges` defaults to READS/WRITES/GOVERNED_BY;
+    --include-grants widens to CAN_CALL too."""
+    _seed_basic(graph)
+    runner = CliRunner()
+
+    default = runner.invoke(cli.app, ["unbacked-edges"])
+    assert default.exit_code == 0
+    assert "CAN_CALL" not in default.output
+
+    wider = runner.invoke(cli.app, ["unbacked-edges", "--include-grants"])
+    assert wider.exit_code == 0
+    assert "CAN_CALL" in wider.output
+
+
+def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(graph, tmp_path):
+    path = tmp_path / "governance.yaml"
+    path.write_text("agents: [existing]\nagents: [replacement]\n")
+    with driver.session() as current:
+        before = current.run("MATCH (n) RETURN count(n) AS count").single()["count"]
+
+    result = CliRunner().invoke(
+        app, ["ingest-manifest", "--governance", str(path)]
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid governance config" in result.output
+    assert "duplicate key 'agents'" in result.output
+    assert "Traceback" not in result.output
+    with driver.session() as current:
+        after = current.run("MATCH (n) RETURN count(n) AS count").single()["count"]
+    assert after == before
+
+
+def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_path):
+    destination = tmp_path / "quickstart"
+    runner = CliRunner()
+
+    created = runner.invoke(app, ["example", "init", str(destination)])
+    assert created.exit_code == 0, created.output
+    assert sorted(path.name for path in destination.iterdir()) == [
+        "README.md",
+        "governance.yaml",
+        "policy_gateway_server.py",
+        "servers.yaml",
+    ]
+    # The generated directory is the only guidance a PyPI user has on disk:
+    # `docs/` is excluded from the sdist, so the beginner guide is a URL away.
+    readme = (destination / "README.md").read_text()
+    assert "toolgraph init" in readme
+    assert "docs/beginner-guide.md" in readme
+    # The guide claims `unbacked-edges` comes back empty for this fixture; that
+    # only holds while every authored edge carries a non-blank evidence
+    # pointer. Counting the string would pass on an empty value, so parse it.
+    governance = yaml.safe_load((destination / "governance.yaml").read_text())
+    authored = [
+        *governance["grants"],
+        *governance["data_access"],
+        *(
+            binding
+            for bindings in governance["governed_by"].values()
+            for binding in bindings
+        ),
+    ]
+    assert len(authored) == 5
+    for edge in authored:
+        evidence = edge["provenance"]["evidence"]
+        assert isinstance(evidence, str) and evidence.strip(), edge
+
+    servers = (destination / "servers.yaml").read_text()
+    assert sys.executable in servers
+    assert "__TOOLGRAPH_PYTHON__" not in servers
+    assert f"Next: cd {destination} && toolgraph init" in created.output
+
+    collision = runner.invoke(app, ["example", "init", str(destination)])
+    assert collision.exit_code != 0
+    assert "already exists" in collision.output
+
+
+def test_version_flag_uses_package_version():
+    result = CliRunner().invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == f"toolgraph {__version__}"
+
+
+def test_json_options_are_rejected_before_graph_or_file_access(monkeypatch):
+    monkeypatch.setattr(cli, 'run_propose', lambda *a, **k: pytest.fail('must reject before graph access'))
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ['policy', 'propose', 'missing.yaml', 'missing.jsonl', '--json', '--output', 'unused.md'])
+    assert result.exit_code == 2
+    assert 'cannot be combined' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    result = runner.invoke(cli.app, ['ingest-manifest', '--json'])
+    assert result.exit_code == 2
+    assert 'requires --dry-run' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+def test_manifest_text_warnings_are_redacted(monkeypatch, tmp_path, dry_run):
+    from toolgraph.manifest.ingest import GovernanceDiffReport
+
+    report = GovernanceDiffReport(applied=False, warnings=['resource https://user:password@host/x?token=secret'])
+    monkeypatch.setattr(cli, 'dry_run_ingest' if dry_run else 'ingest_governance', lambda *a, **k: report)
+    monkeypatch.setattr(cli.schema, 'init_schema', lambda: None)
+    path = tmp_path / 'governance.yaml'
+    path.write_text('agents: [bot]\n')
+    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path)] + (['--dry-run'] if dry_run else []))
+    assert result.exit_code == 1
+    assert 'password' not in result.output and 'secret' not in result.output
+    assert 'https://host' in result.output

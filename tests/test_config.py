@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from toolgraph import cli, config
 from toolgraph.graph import driver
+from toolgraph.cli import app
 
 
 def _write_runtime(directory: Path, *, backend: str, db_path: Path) -> Path:
@@ -232,3 +233,59 @@ def test_doctor_reports_backend_source_without_a_config_file(
 
     assert info["exists"] is False
     assert info["backend_source"] == source
+
+
+def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path):
+    runtime = tmp_path / "config.json"
+    db_path = tmp_path / "isolated.lbug"
+    runtime.write_text(
+        json.dumps({"schema_version": 1, "backend": "ladybug", "db_path": str(db_path)})
+    )
+    monkeypatch.setenv("TOOLGRAPH_BACKEND", "neo4j")
+    monkeypatch.setenv("TOOLGRAPH_DB_PATH", str(tmp_path / "shared.lbug"))
+    monkeypatch.setattr(config, "_explicit_config_path", None)
+    monkeypatch.setattr(config, "settings", config.settings)
+
+    # check opens read-only and never creates the database, so make it first.
+    created = CliRunner().invoke(app, ["--config", str(runtime), "init-schema"])
+    assert created.exit_code == 0, created.output
+    result = CliRunner().invoke(app, ["--config", str(runtime), "check"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"OK: backend=ladybug path={db_path}\n"
+    assert not (tmp_path / "shared.lbug").exists()
+
+
+@pytest.mark.parametrize("mode", ["help", "version", "explicit", "invalid"])
+def test_broken_default_configuration_subprocess(tmp_path, mode):
+    (tmp_path / ".toolgraph").mkdir()
+    broken = tmp_path / ".toolgraph/config.json"
+    broken.write_text("{broken")
+    valid = tmp_path / "valid.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "backend": "ladybug",
+                "db_path": str(tmp_path / "graph.lbug"),
+            }
+        )
+    )
+    env = dict(os.environ, TOOLGRAPH_CONFIG=str(broken))
+    commands = {
+        "help": ["--help"],
+        "version": ["--version"],
+        "explicit": ["--config", str(valid), "init-schema"],
+        "invalid": ["--config", str(broken), "check"],
+    }
+    result = subprocess.run(
+        [sys.executable, "-c", "from toolgraph.cli import app; app()", *commands[mode]],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == (2 if mode == "invalid" else 0), (
+        result.stdout + result.stderr
+    )
+    assert "Traceback" not in result.stderr

@@ -18,6 +18,9 @@ from toolgraph.models import ServerSpec
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH  # noqa: E402
+from pydantic import ValidationError
+from toolgraph.crawler.crawl import load_servers_config
+from toolgraph.crawler.crawl import crawl_all
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
 
@@ -332,3 +335,18 @@ async def test_list_all_resources_refuses_runaway_cursor(monkeypatch):
     with pytest.raises(client.PaginationLimitError, match="continuation cursor"):
         await client._list_all_resources(session)
     assert session.calls == 5
+
+
+def test_servers_yaml_rejects_unknown_field(tmp_path):
+    path = tmp_path / "servers.yaml"
+    path.write_text("servers:\n  - command: python\n    argz: [server.py]\n")
+
+    with pytest.raises(ValidationError, match="servers.0.argz"):
+        load_servers_config(path)
+
+
+def test_crawl_timeout_is_isolated():
+    hang = ServerSpec(name="hang", transport="stdio", command="sleep", args=["30"])
+    results, failures = crawl_all([hang], timeout=1.0)
+    assert results == []
+    assert failures and "timeout" in failures[0][1]

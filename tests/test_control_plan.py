@@ -18,6 +18,9 @@ from toolgraph.control_plan import (
     lint_control_plan,
     load_control_plan,
 )
+from contextlib import contextmanager
+from jsonschema import Draft202012Validator, ValidationError
+from toolgraph import control_plan
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -594,3 +597,199 @@ def test_undeclared_principal_error_names_the_position_not_the_value():
         "invalid control plan at plan: Value error, nodes reference "
         "undeclared principals at nodes.1.principals.1"
     )
+
+
+class ExposureSession:
+    def __init__(self, reads=('file:///input',), writes=('file:///output',)):
+        self.rows = [{'tool_key': 't::read', 'mode': 'READS', 'resource_uri': uri} for uri in reads]
+        self.rows += [{'tool_key': 't::write', 'mode': 'WRITES', 'resource_uri': uri} for uri in writes]
+
+    def run(self, *_args, **_kwargs):
+        return self.rows
+
+
+def _chain(count, *, writers=True, all_readers=False):
+    nodes = [{'id': f'n{i}', 'kind': 'start' if i == 0 else 'end' if i == count-1 else 'join',
+              'principals': [], 'agent_call': False} for i in range(count)]
+    for i in (range(1, count-1) if all_readers else [1]):
+        nodes[i]['principals'] = ['reader']
+    if writers:
+        nodes[-2]['principals'] = ['writer']
+    raw = json.dumps({
+        'schema_version': 1, 'kind': 'toolgraph.control-plan', 'run_id': 'bounded',
+        'producer': {'name': 'test', 'version': '1'},
+        'principals': [{'id': 'reader', 'candidate_tools': ['t::read']}, {'id': 'writer', 'candidate_tools': ['t::write']}],
+        'nodes': nodes,
+        'edges': [{'from': f'n{i}', 'to': f'n{i+1}', 'kind': 'always', 'decided_by': 'code'} for i in range(count-1)],
+        'limits': {'maximum_agent_calls': 1, 'maximum_parallelism': 1, 'maximum_cycles': 0},
+    }).encode()
+    return raw, control_plan.load_control_plan(raw)
+
+
+EVALUATIONS = [{'principal': 'reader', 'eligible': ['t::read']}, {'principal': 'writer', 'eligible': ['t::write']}]
+
+
+def test_golden_exposure_fixture_matches_actual_producer(monkeypatch):
+    from tests.test_control_plan import _bracket
+
+    _bracket(monkeypatch)
+    fixture_dir = ROOT / 'contracts/fixtures'
+    expected = json.loads((fixture_dir / 'control-preflight-exposure-v1.json').read_text())
+    facts = ExposureSession()
+    facts.rows = [
+        {'tool_key': 'workspace::read', 'mode': 'READS', 'resource_uri': 'file:///workspace/input'},
+        {'tool_key': 'workspace::write', 'mode': 'WRITES', 'resource_uri': 'file:///workspace/output'},
+    ]
+
+    @contextmanager
+    def session():
+        yield facts
+
+    actual = control_plan.build_control_preflight(
+        (fixture_dir / 'control-plan-exposure-v1.json').read_bytes(), profile='review',
+        created_at=datetime.fromisoformat(expected['created_at']), session_factory=session,
+    )
+    assert actual == expected
+
+
+def test_real_4096_node_reader_only_plan_skips_forward_search(monkeypatch):
+    _, plan = _chain(4096, writers=False, all_readers=True)
+    assert not control_plan.lint_control_plan(plan)
+    monkeypatch.setattr(control_plan, 'deque', lambda *a: pytest.fail('no writer requires no traversal'))
+    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession(writes=()))
+    assert result == {'exposures': [], 'truncated': False, 'total_candidate_pairs_found': 0}
+
+
+def test_real_4096_node_witness_is_bounded():
+    _, plan = _chain(4096)
+    assert not control_plan.lint_control_plan(plan)
+    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession())
+    assert not result['truncated']
+    assert len(result['exposures']) == 1
+    witness = result['exposures'][0]['witness_path']
+    assert len(witness) == 32
+    assert witness[0] == 'n1' and witness[-1] == 'n4094'
+    assert '4063 intermediate nodes' in witness[16]
+
+
+def test_traversal_cutoff_warns_even_without_emitted_pairs(monkeypatch):
+    raw, _ = _chain(30)
+    monkeypatch.setattr(control_plan, 'MAX_EXPOSURE_TRAVERSAL_STEPS', 10)
+    monkeypatch.setattr(control_plan.selector, 'eligible_tools', lambda principal, candidates, **kw: {
+        'agent_found': True, 'eligible': candidates, 'rejected': [],
+    })
+    monkeypatch.setattr(control_plan.queries, 'with_graph_state', lambda fetch, **kw: {
+        **fetch(), 'graph_state': {'instance_id': 'test', 'generation': 1},
+    })
+    @contextmanager
+    def session():
+        yield ExposureSession()
+    artifact = control_plan.build_control_preflight(raw, session_factory=session)
+    assert artifact['potential_exposures'] == []
+    assert artifact['truncated'] is True
+    assert artifact['total_candidate_pairs_found'] == 0
+    assert artifact['decision'] == 'advisory_warn'
+    validator = Draft202012Validator(json.loads((ROOT / 'contracts/control-preflight.schema.json').read_text()))
+    validator.validate(artifact)
+    # Producer behavior is stricter than the backward-compatible v1 schema.
+    artifact['decision'] = 'advisory_allow'
+    validator.validate(artifact)
+
+
+def test_sanitized_array_byte_budget_and_lower_bound(monkeypatch):
+    _, plan = _chain(5)
+    session = ExposureSession(reads=('https://user:secret@host/input?token=' + 'x'*70_000,))
+    complete = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session)
+    assert len(complete['exposures']) == 1 and not complete['truncated']
+    assert complete['exposures'][0]['read_resource'] == 'https://host/input'
+    exact_size = len(json.dumps(complete['exposures']).encode())
+    monkeypatch.setattr(control_plan, 'MAX_AGGREGATE_EXPOSURE_BYTES', exact_size)
+    assert control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session) == complete
+    session = ExposureSession(writes=('file:///output', 'file:///second'))
+    bounded = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session)
+    assert bounded['truncated']
+    assert len(json.dumps(bounded['exposures']).encode()) <= exact_size
+    assert bounded['total_candidate_pairs_found'] > len(bounded['exposures'])
+
+
+def test_record_limit_counts_discovered_not_all_pairs(monkeypatch):
+    _, plan = _chain(5)
+    monkeypatch.setattr(control_plan, 'MAX_EXPOSURE_RECORDS', 2)
+    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, ExposureSession(writes=tuple(f'file:///{i}' for i in range(20))))
+    assert len(result['exposures']) == 2
+    assert result['truncated']
+    assert result['total_candidate_pairs_found'] == 3  # discovered lower bound, not 20
+
+
+@pytest.mark.parametrize('change', ['oversized_path', 'oversized_list', 'negative_count', 'missing_count'])
+def test_exposure_contract_rejects_invalid_results(change):
+    result = json.loads((ROOT / 'contracts/fixtures/control-preflight-exposure-v1.json').read_text())
+    if change == 'oversized_path':
+        result['potential_exposures'][0]['witness_path'] = ['node'] * 33
+    elif change == 'oversized_list':
+        result['potential_exposures'] *= 101
+    elif change == 'negative_count':
+        result['total_candidate_pairs_found'] = -1
+    else:
+        result['truncated'] = True
+    validator = Draft202012Validator(json.loads((ROOT / 'contracts/control-preflight.schema.json').read_text()))
+    with pytest.raises(ValidationError):
+        validator.validate(result)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_cycles",
+        "string_number",
+        "bool_number",
+        "bool_version",
+        "null_bound",
+        "false_string",
+        "null_edge",
+    ],
+)
+def test_control_loader_rejects_schema_invalid_mutations(mutation):
+    doc = _document()
+    agent = next(n for n in doc["nodes"] if n["kind"] == "agent")
+    if mutation == "missing_cycles":
+        del doc["limits"]["maximum_cycles"]
+    if mutation == "string_number":
+        agent["max_invocations"] = "2"
+    if mutation == "bool_number":
+        agent["max_invocations"] = True
+    if mutation == "bool_version":
+        doc["schema_version"] = True
+    if mutation == "null_bound":
+        doc["nodes"][0]["max_invocations"] = None
+    if mutation == "false_string":
+        doc["nodes"][0]["agent_call"] = "false"
+    if mutation == "null_edge":
+        doc["edges"][0]["max_fan_out"] = None
+    with pytest.raises(ControlPlanError):
+        load_control_plan(_raw(doc))
+
+
+def test_control_loader_accepts_json_integer_numbers():
+    doc = _document()
+    doc["schema_version"] = 1.0
+    doc["limits"]["maximum_cycles"] = 0.0
+    doc["limits"]["maximum_parallelism"] = 2.0
+    assert load_control_plan(_raw(doc)).limits.maximum_parallelism == 2
+
+
+def test_control_preflight_preserves_principal_identity(monkeypatch):
+    from toolgraph.control_plan import build_control_preflight
+    from tests.test_control_plan import _bracket
+
+    _bracket(monkeypatch)
+    doc = _document()
+    previous = doc["principals"][0]["id"]
+    identity = "https://id.test/agent?role=one#part"
+    doc["principals"][0]["id"] = identity
+    for node in doc["nodes"]:
+        node["principals"] = [
+            identity if p == previous else p for p in node["principals"]
+        ]
+    result = build_control_preflight(_raw(doc), profile="review")
+    assert any(row["principal"] == identity for row in result["evaluations"])
