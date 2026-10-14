@@ -63,6 +63,20 @@ jobs:
           fi
       - run: scripts/audit-dependencies.sh runtime
       - run: scripts/audit-dependencies.sh extras
+      # A tag can point at a commit CI never passed (pushed from a local
+      # branch, or tagged before the checks finished). Lint and the Docker-free
+      # tests gate the build of the tagged commit here. They are not all of CI:
+      # the Neo4j half runs in ci.yml and in the runbook's local release gate,
+      # and passing those stays a separate release requirement.
+      # The dev group is installed into the project environment only; `uv
+      # build` builds in its own isolated environment.
+      - run: uv sync --frozen --group dev --extra ladybug
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - name: Run the tests that need no Docker
+        env:
+          TOOLGRAPH_TEST_NO_DOCKER: "1"
+        run: uv run --frozen pytest -q -m "not neo4j"
       - run: uv build
       - run: uv run --frozen --group dev twine check dist/*
       - name: Verify the distributions
