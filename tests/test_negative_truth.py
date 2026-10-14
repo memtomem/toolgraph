@@ -507,9 +507,7 @@ def _seed_multi_agent_deny_graph() -> None:
                 for agent in ("alpha", "beta", "gamma")
                 for tool in ("sample::read_file", "sample::drop_table")
             ],
-            data_access=[
-                DataAccess(tool="sample::read_file", resource=csv, mode="READS")
-            ],
+            data_access=[DataAccess(tool="sample::read_file", resource=csv, mode="READS")],
             # csv reached transitively (via='resource'); drop_table bound
             # directly (via='tool') so both branches of the batched query run.
             governed_by={csv: ["pii"], "sample::drop_table": ["schema-freeze"]},
@@ -543,8 +541,7 @@ def test_audit_report_matches_the_per_agent_composition_exactly(backend_graph):
 
     report = queries.audit_report()
     batched = (
-        report["findings"]["unsafe_violations"]
-        + report["findings"]["authorized_but_governed"]
+        report["findings"]["unsafe_violations"] + report["findings"]["authorized_but_governed"]
     )
 
     per_agent = [

@@ -49,11 +49,21 @@ def run_doctor() -> DoctorReport:
         cfg_info = config.check_config_health()
     except Exception as exc:
         error = redact_text(exc)
-        return DoctorReport(healthy=False, checks=[DoctorCheck(
-            name="Configuration", status="FAIL",
-            message=f"Failed to inspect configuration: {error}", details={"error": error},
-        )])
-    cfg_info = {key: redact_text(value) if isinstance(value, str) else value for key, value in cfg_info.items()}
+        return DoctorReport(
+            healthy=False,
+            checks=[
+                DoctorCheck(
+                    name="Configuration",
+                    status="FAIL",
+                    message=f"Failed to inspect configuration: {error}",
+                    details={"error": error},
+                )
+            ],
+        )
+    cfg_info = {
+        key: redact_text(value) if isinstance(value, str) else value
+        for key, value in cfg_info.items()
+    }
     if not cfg_info["exists"]:
         # Missing config file is a non-fatal warning if running on environment defaults
         checks.append(
@@ -151,7 +161,9 @@ def run_doctor() -> DoctorReport:
             )
         else:
             missing = schema_info["missing_tables"] or schema_info["missing_constraints"]
-            msg = f"Schema issue detected: version_ok={schema_info['version_ok']}, missing={missing}"
+            msg = (
+                f"Schema issue detected: version_ok={schema_info['version_ok']}, missing={missing}"
+            )
             checks.append(
                 DoctorCheck(
                     name="Schema Integrity",

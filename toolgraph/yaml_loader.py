@@ -53,9 +53,7 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
     with path.open("rb") as handle:
         raw = handle.read(MAX_YAML_BYTES + 1)
     if len(raw) > MAX_YAML_BYTES:
-        raise ValueError(
-            f"refusing to load {path}: exceeds the {MAX_YAML_BYTES}-byte limit"
-        )
+        raise ValueError(f"refusing to load {path}: exceeds the {MAX_YAML_BYTES}-byte limit")
     loader = UniqueKeySafeLoader(raw.decode("utf-8"))
     try:
         value = loader.get_single_data()

@@ -78,8 +78,7 @@ def test_publishing_authority_is_isolated_from_build_code():
     assert top.get("__scalar__") != "write-all"
 
     privileged = [
-        name for name, job in jobs.items()
-        if _permissions(job).get("id-token") == "write"
+        name for name, job in jobs.items() if _permissions(job).get("id-token") == "write"
     ]
     assert privileged == ["publish"]
 
@@ -89,10 +88,7 @@ def test_publishing_authority_is_isolated_from_build_code():
     # workflow's, so silence here is not the same as "unprivileged".
     assert build_perms and "id-token" not in build_perms
     assert build_perms.get("__scalar__") != "write-all"
-    assert any(
-        "scripts/verify-artifacts.sh" in step.get("run", "")
-        for step in build["steps"]
-    )
+    assert any("scripts/verify-artifacts.sh" in step.get("run", "") for step in build["steps"])
 
     publish = jobs["publish"]
     needs = publish.get("needs")
@@ -158,8 +154,7 @@ def test_production_publish_does_not_skip_existing_versions():
     """
     steps = _release_workflow()["jobs"]["publish"]["steps"]
     publishers = [
-        step for step in steps
-        if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+        step for step in steps if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
     ]
     assert len(publishers) == 2
 
@@ -181,10 +176,7 @@ def test_release_build_toolchain_is_pinned():
     """
     jobs = _release_workflow()["jobs"]
     setups = [
-        step
-        for job in jobs.values()
-        for step in job["steps"]
-        if "setup-uv" in step.get("uses", "")
+        step for job in jobs.values() for step in job["steps"] if "setup-uv" in step.get("uses", "")
     ]
     assert setups, "the release workflow should install uv explicitly"
     for step in setups:

@@ -78,9 +78,9 @@ def backend_graph(request, tmp_path, monkeypatch):
         return
     import ladybug  # noqa: F401
 
-    monkeypatch.setattr(config, "settings", config.Settings(
-        backend="ladybug", db_path=tmp_path / "regression.lbug"
-    ))
+    monkeypatch.setattr(
+        config, "settings", config.Settings(backend="ladybug", db_path=tmp_path / "regression.lbug")
+    )
     driver.close_driver()
     schema.init_schema()
     try:
@@ -100,9 +100,9 @@ def artifact_format_checker():
 
 @pytest.fixture
 def embedded_path(tmp_path, monkeypatch):
-    path = tmp_path / 'missing-parent' / 'probe.lbug'
-    monkeypatch.setattr(config, 'settings', config.Settings(backend='ladybug', db_path=path))
-    monkeypatch.setenv('TOOLGRAPH_CONFIG', str(tmp_path / 'no-config.json'))
+    path = tmp_path / "missing-parent" / "probe.lbug"
+    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=path))
+    monkeypatch.setenv("TOOLGRAPH_CONFIG", str(tmp_path / "no-config.json"))
     driver.close_driver()
     yield path
     driver.close_driver()

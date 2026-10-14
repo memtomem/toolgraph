@@ -122,9 +122,7 @@ async def crawl_server(spec: ServerSpec) -> CrawlResult:
         caps = init.capabilities
 
         tools = await _list_all_tools(session) if caps.tools is not None else []
-        resources = (
-            await _list_all_resources(session) if caps.resources is not None else []
-        )
+        resources = await _list_all_resources(session) if caps.resources is not None else []
 
         return CrawlResult(
             server_name=spec.name or init.server_info.name,

@@ -22,9 +22,7 @@ ROOT = Path(__file__).parent.parent
 
 def test_review_plan_is_human_required_and_schema_valid(monkeypatch):
     mock_policy_review_inputs(monkeypatch)
-    plan = build_policy_review_plan(
-        report=Path("trace.json"), agent="planner", created_at=NOW
-    )
+    plan = build_policy_review_plan(report=Path("trace.json"), agent="planner", created_at=NOW)
     assert plan["decision_mode"] == "human_required"
     assert plan["graph_state"] == {"instance_id": "graph-1", "generation": 9}
     [candidate] = plan["candidates"]
@@ -81,16 +79,12 @@ def test_review_plan_refuses_a_graph_without_instance_id(monkeypatch):
         value["graph_state"] = {"instance_id": None, "generation": 0}
         return value
 
-    monkeypatch.setattr(
-        "toolgraph.policy_review.queries.with_graph_state", without_instance
-    )
+    monkeypatch.setattr("toolgraph.policy_review.queries.with_graph_state", without_instance)
 
     with pytest.raises(PolicyReviewPlanError) as raised:
         build_policy_review_plan(report=Path("trace.json"), agent="planner")
 
-    assert str(raised.value) == (
-        "graph has no instance id — run init-schema before planning"
-    )
+    assert str(raised.value) == ("graph has no instance id — run init-schema before planning")
 
 
 def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
@@ -110,9 +104,7 @@ def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
                     "paths": [
                         {
                             "resource": "https://user:secret@host/r?token=secret#secret",
-                            "provenance": {
-                                "evidence": "https://user:secret@host/r?token=secret"
-                            },
+                            "provenance": {"evidence": "https://user:secret@host/r?token=secret"},
                             "exception_reason": "see https://host/r?token=secret",
                         }
                     ],
@@ -135,6 +127,4 @@ def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
     )
     assert result.exit_code == 0, result.output
     assert "secret" not in output.read_text()
-    assert (
-        json.loads(output.read_text())["candidates"][0]["tool_key"] == "github::merge"
-    )
+    assert json.loads(output.read_text())["candidates"][0]["tool_key"] == "github::merge"

@@ -106,17 +106,14 @@ def tool_key(server_name: str, tool_name: str) -> str:
     check covers programmatic callers.
     """
     if "::" in server_name or "::" in tool_name:
-        raise ValueError(
-            "server and tool names must not contain '::' (the tool-key delimiter)"
-        )
+        raise ValueError("server and tool names must not contain '::' (the tool-key delimiter)")
     return f"{server_name}::{tool_name}"
 
 
 def _stored_backend_schema_version(s) -> int | None:
     try:
         record = s.run(
-            "MATCH (m:GraphMeta {id:'singleton'}) "
-            "RETURN m.backend_schema_version AS version"
+            "MATCH (m:GraphMeta {id:'singleton'}) RETURN m.backend_schema_version AS version"
         ).single()
     except RuntimeError as exc:
         # Fresh embedded database: Ladybug has no typed error for a missing
@@ -156,7 +153,9 @@ def check_backend_schema_version(s: Any = None) -> None:
     # A missing legacy version stamp is still readable when the physical schema
     # exists. Do not migrate it from a reader, or confuse it with missing tables.
     if info["missing_tables"] or info["missing_constraints"]:
-        raise BackendConfigurationError("backend schema is not initialized or incomplete — run 'toolgraph init-schema'")
+        raise BackendConfigurationError(
+            "backend schema is not initialized or incomplete — run 'toolgraph init-schema'"
+        )
 
 
 def init_schema() -> None:
@@ -186,18 +185,21 @@ def init_schema() -> None:
 
 def list_constraints() -> list[dict]:
     if backend_name() == "ladybug":
-        return [{"name": statement.split("EXISTS", 1)[1].split("(", 1)[0].strip()}
-                for statement in LADYBUG_SCHEMA]
+        return [
+            {"name": statement.split("EXISTS", 1)[1].split("(", 1)[0].strip()}
+            for statement in LADYBUG_SCHEMA
+        ]
     with session() as s:
         return [dict(r) for r in s.run("SHOW CONSTRAINTS")]
 
 
 def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
     """Inspect physical schema integrity via live catalog queries."""
+
     def _inspect(sess: Any) -> dict[str, Any]:
         backend = backend_name()
         version = _stored_backend_schema_version(sess)
-        version_ok = (version == BACKEND_SCHEMA_VERSION)
+        version_ok = version == BACKEND_SCHEMA_VERSION
         missing_tables: list[str] = []
         live_tables: list[str] = []
         missing_constraints: list[str] = []
@@ -205,11 +207,21 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
 
         if backend == "ladybug":
             expected_node_tables = {
-                "MCPServer", "Tool", "Resource", "Agent", "Policy",
-                "ExpectedException", "GraphMeta",
+                "MCPServer",
+                "Tool",
+                "Resource",
+                "Agent",
+                "Policy",
+                "ExpectedException",
+                "GraphMeta",
             }
             expected_rel_tables = {
-                "EXPOSES", "PROVIDES", "CAN_CALL", "READS", "WRITES", "GOVERNED_BY",
+                "EXPOSES",
+                "PROVIDES",
+                "CAN_CALL",
+                "READS",
+                "WRITES",
+                "GOVERNED_BY",
             }
             expected_all = expected_node_tables | expected_rel_tables
             try:
@@ -219,13 +231,20 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
             except BackendUnavailableError:
                 raise
             except Exception as exc:
-                raise BackendConfigurationError("cannot inspect backend schema catalog; check connectivity and catalog read permissions") from exc
+                raise BackendConfigurationError(
+                    "cannot inspect backend schema catalog; check connectivity and catalog read permissions"
+                ) from exc
             missing_tables = sorted(expected_all - set(live_tables))
             healthy = version_ok and not missing_tables
         else:  # neo4j
             expected_constraints = {
-                "mcpserver_name", "tool_key", "resource_uri", "agent_id",
-                "policy_id", "exception_key", "graphmeta_id",
+                "mcpserver_name",
+                "tool_key",
+                "resource_uri",
+                "agent_id",
+                "policy_id",
+                "exception_key",
+                "graphmeta_id",
             }
             try:
                 with _translating_backend_errors():
@@ -234,7 +253,9 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
             except BackendUnavailableError:
                 raise
             except Exception as exc:
-                raise BackendConfigurationError("cannot inspect backend schema catalog; check connectivity and catalog read permissions") from exc
+                raise BackendConfigurationError(
+                    "cannot inspect backend schema catalog; check connectivity and catalog read permissions"
+                ) from exc
             missing_constraints = sorted(expected_constraints - set(live_constraints))
             healthy = version_ok and not missing_constraints
 

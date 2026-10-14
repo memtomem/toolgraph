@@ -242,9 +242,7 @@ def test_invalid_event_chain_and_unknown_candidate_fail_closed(tmp_path):
         ("note", "access_token=do-not-echo"),
     ],
 )
-def test_externally_authored_sidecar_metadata_is_revalidated(
-    tmp_path, field, value
-):
+def test_externally_authored_sidecar_metadata_is_revalidated(tmp_path, field, value):
     source = _source(tmp_path)
     annotate_candidate(
         source,
@@ -270,9 +268,7 @@ def test_externally_authored_sidecar_metadata_is_revalidated(
     ("field", "value"),
     [("reviewer", " operator "), ("note", " prior decision ")],
 )
-def test_existing_event_whitespace_is_rejected_without_rewriting_history(
-    tmp_path, field, value
-):
+def test_existing_event_whitespace_is_rejected_without_rewriting_history(tmp_path, field, value):
     source = _source(tmp_path)
     annotate_candidate(
         source,
@@ -342,12 +338,16 @@ def test_nothing_after_the_replace_can_fail_a_persisted_event(tmp_path, monkeypa
 
     monkeypatch.setattr("toolgraph.artifacts.os.chmod", chmod_fails_on_the_published_sidecar)
     annotate_candidate(
-        source, CANDIDATE_ID, disposition="accepted", reviewer="operator",
+        source,
+        CANDIDATE_ID,
+        disposition="accepted",
+        reviewer="operator",
         recorded_at=_at(6),
     )
 
     assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
     assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
 
 def test_atomic_write_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
     source = _source(tmp_path)
@@ -380,9 +380,7 @@ def test_unsupported_directory_fsync_degrades_after_atomic_replace(tmp_path, mon
             raise OSError(errno.EINVAL, "directory fsync unsupported")
         return real_fsync(descriptor)
 
-    monkeypatch.setattr(
-        "toolgraph.review_candidates.os.fsync", unsupported_directory_fsync
-    )
+    monkeypatch.setattr("toolgraph.review_candidates.os.fsync", unsupported_directory_fsync)
     result = annotate_candidate(
         source,
         CANDIDATE_ID,
@@ -395,9 +393,7 @@ def test_unsupported_directory_fsync_degrades_after_atomic_replace(tmp_path, mon
 
 
 @pytest.mark.skipif(os.name == "nt", reason="directory fsync is POSIX-only")
-def test_directory_fsync_io_error_warns_but_reports_persisted_event(
-    tmp_path, monkeypatch
-):
+def test_directory_fsync_io_error_warns_but_reports_persisted_event(tmp_path, monkeypatch):
     source = _source(tmp_path)
     real_fsync = os.fsync
 
@@ -472,9 +468,7 @@ def test_concurrent_annotations_are_serialized_without_lost_events(tmp_path):
 
     candidate = list_candidates(source)["candidates"][0]
     assert [event["sequence"] for event in candidate["history"]] == [1, 2]
-    assert candidate["history"][1]["from_disposition"] == candidate["history"][0][
-        "disposition"
-    ]
+    assert candidate["history"][1]["from_disposition"] == candidate["history"][0]["disposition"]
     assert candidate["disposition"] in {"accepted", "dismissed"}
 
 
@@ -549,9 +543,7 @@ def test_review_workflow_does_not_mutate_governance_graph_or_manifest(graph, tmp
             agents=["planner"],
             policies=[Policy(id="pii-deny", effect="DENY")],
             grants=[AccessGrant(agent="planner", tool="sample::read_file")],
-            data_access=[
-                DataAccess(tool="sample::read_file", resource=CSV, mode="READS")
-            ],
+            data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],
             governed_by={CSV: ["pii-deny"]},
         )
     )

@@ -36,6 +36,7 @@ from toolgraph.cli import app
 from toolgraph import __version__
 from tests._helpers import CLICK_SPLITS_STREAMS, CSV, seed_basic
 
+
 def _seed(exceptions: list[ExpectedException] | None = None) -> None:
     """planner: read_file DENY-governed, free_tool ungoverned; loner: no grants."""
     loader.load_crawl_result(
@@ -89,9 +90,7 @@ def authorized(graph):
 
 def test_fail_on_deny_exits_1_on_real_violation(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "planner", "read_file", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "planner", "read_file", "--fail-on-deny"])
     assert result.exit_code == 1
     payload = json.loads(result.stdout)  # JSON printed before the gate fires
     assert payload["verdict"] == "DENY"
@@ -100,18 +99,14 @@ def test_fail_on_deny_exits_1_on_real_violation(violating):
 
 def test_fail_on_deny_exits_0_on_allow(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "planner", "free_tool", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "planner", "free_tool", "--fail-on-deny"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["verdict"] == "ALLOW"
 
 
 def test_fail_on_deny_exits_0_on_not_granted(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "loner", "read_file", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "loner", "read_file", "--fail-on-deny"])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["verdict"] == "NOT_GRANTED"
 
@@ -119,9 +114,7 @@ def test_fail_on_deny_exits_0_on_not_granted(violating):
 def test_fail_on_deny_exits_0_when_deny_is_all_authorized(authorized):
     """An operator-declared exception is by-design — it must not trip the gate."""
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "planner", "read_file", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "planner", "read_file", "--fail-on-deny"])
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["verdict"] == "DENY"
@@ -131,18 +124,14 @@ def test_fail_on_deny_exits_0_when_deny_is_all_authorized(authorized):
 def test_fail_on_deny_exits_2_on_unknown_tool(violating):
     """A typo'd tool must not pass a CI gate as a clean run."""
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "planner", "no_such_tool", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "planner", "no_such_tool", "--fail-on-deny"])
     assert result.exit_code == 2
     assert json.loads(result.stdout)["verdict"] == "TOOL_NOT_FOUND"
 
 
 def test_fail_on_deny_exits_2_on_unknown_agent(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["check-access", "planer", "read_file", "--fail-on-deny"]
-    )
+    result = runner.invoke(cli.app, ["check-access", "planer", "read_file", "--fail-on-deny"])
     assert result.exit_code == 2
     assert json.loads(result.stdout)["verdict"] == "AGENT_NOT_FOUND"
 
@@ -159,9 +148,7 @@ def test_check_access_without_flag_still_exits_0_on_deny(violating):
 
 def test_fail_on_violation_exits_1_with_violation(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["unsafe-tools", "planner", "--fail-on-violation"]
-    )
+    result = runner.invoke(cli.app, ["unsafe-tools", "planner", "--fail-on-violation"])
     assert result.exit_code == 1
     rows = json.loads(result.stdout)  # JSON printed before the gate fires
     assert any(r["classification"] == "violation" for r in rows)
@@ -169,29 +156,20 @@ def test_fail_on_violation_exits_1_with_violation(violating):
 
 def test_fail_on_violation_with_all_still_gates(violating):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["unsafe-tools", "planner", "--all", "--fail-on-violation"]
-    )
+    result = runner.invoke(cli.app, ["unsafe-tools", "planner", "--all", "--fail-on-violation"])
     assert result.exit_code == 1
 
 
 def test_fail_on_violation_exits_0_when_clean(authorized):
     runner = CliRunner()
-    result = runner.invoke(
-        cli.app, ["unsafe-tools", "planner", "--fail-on-violation"]
-    )
+    result = runner.invoke(cli.app, ["unsafe-tools", "planner", "--fail-on-violation"])
     assert result.exit_code == 0
     assert json.loads(result.stdout) == []
 
     # --all surfaces the authorized_but_governed row, but it's not a violation.
-    full = runner.invoke(
-        cli.app, ["unsafe-tools", "planner", "--all", "--fail-on-violation"]
-    )
+    full = runner.invoke(cli.app, ["unsafe-tools", "planner", "--all", "--fail-on-violation"])
     assert full.exit_code == 0
-    assert all(
-        r["classification"] == "authorized_but_governed"
-        for r in json.loads(full.stdout)
-    )
+    assert all(r["classification"] == "authorized_but_governed" for r in json.loads(full.stdout))
 
 
 def test_unsafe_tools_without_flag_still_exits_0_on_violation(violating):
@@ -281,9 +259,7 @@ def test_init_reports_unusable_state_dir_without_traceback(tmp_path):
     blocker = tmp_path / "a-file"
     blocker.write_text("")
 
-    result = CliRunner().invoke(
-        cli.app, ["init", "--state-dir", str(blocker / "state")]
-    )
+    result = CliRunner().invoke(cli.app, ["init", "--state-dir", str(blocker / "state")])
 
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
@@ -337,12 +313,14 @@ def test_cli_ingest_manifest_says_rejected_on_warnings(graph, tmp_path):
     )
     manifest_path = tmp_path / "governance.yaml"
     manifest_path.write_text(
-        yaml.safe_dump({
-            "agents": ["planner"],
-            "policies": [{"id": "real", "effect": "DENY"}],
-            "grants": [{"agent": "planner", "tool": "sample::read_file"}],
-            "governed_by": {CSV: ["typo-policy"]},  # forces rejection
-        })
+        yaml.safe_dump(
+            {
+                "agents": ["planner"],
+                "policies": [{"id": "real", "effect": "DENY"}],
+                "grants": [{"agent": "planner", "tool": "sample::read_file"}],
+                "governed_by": {CSV: ["typo-policy"]},  # forces rejection
+            }
+        )
     )
     runner = CliRunner()
     result = runner.invoke(cli.app, ["ingest-manifest", "--governance", str(manifest_path)])
@@ -434,9 +412,7 @@ def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(graph, tmp_
     with driver.session() as current:
         before = current.run("MATCH (n) RETURN count(n) AS count").single()["count"]
 
-    result = CliRunner().invoke(
-        app, ["ingest-manifest", "--governance", str(path)]
-    )
+    result = CliRunner().invoke(app, ["ingest-manifest", "--governance", str(path)])
 
     assert result.exit_code == 1
     assert "Invalid governance config" in result.output
@@ -471,11 +447,7 @@ def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_pa
     authored = [
         *governance["grants"],
         *governance["data_access"],
-        *(
-            binding
-            for bindings in governance["governed_by"].values()
-            for binding in bindings
-        ),
+        *(binding for bindings in governance["governed_by"].values() for binding in bindings),
     ]
     assert len(authored) == 5
     for edge in authored:
@@ -499,26 +471,37 @@ def test_version_flag_uses_package_version():
 
 
 def test_json_options_are_rejected_before_graph_or_file_access(monkeypatch):
-    monkeypatch.setattr(cli, 'run_propose', lambda *a, **k: pytest.fail('must reject before graph access'))
+    monkeypatch.setattr(
+        cli, "run_propose", lambda *a, **k: pytest.fail("must reject before graph access")
+    )
     runner = CliRunner()
-    result = runner.invoke(cli.app, ['policy', 'propose', 'missing.yaml', 'missing.jsonl', '--json', '--output', 'unused.md'])
+    result = runner.invoke(
+        cli.app,
+        ["policy", "propose", "missing.yaml", "missing.jsonl", "--json", "--output", "unused.md"],
+    )
     assert result.exit_code == 2
-    assert 'cannot be combined' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
-    result = runner.invoke(cli.app, ['ingest-manifest', '--json'])
+    assert "cannot be combined" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    result = runner.invoke(cli.app, ["ingest-manifest", "--json"])
     assert result.exit_code == 2
-    assert 'requires --dry-run' in re.sub(r'\x1b\[[0-9;]*m', '', result.output)
+    assert "requires --dry-run" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
 
 
-@pytest.mark.parametrize('dry_run', [False, True])
+@pytest.mark.parametrize("dry_run", [False, True])
 def test_manifest_text_warnings_are_redacted(monkeypatch, tmp_path, dry_run):
     from toolgraph.manifest.ingest import GovernanceDiffReport
 
-    report = GovernanceDiffReport(applied=False, warnings=['resource https://user:password@host/x?token=secret'])
-    monkeypatch.setattr(cli, 'dry_run_ingest' if dry_run else 'ingest_governance', lambda *a, **k: report)
-    monkeypatch.setattr(cli.schema, 'init_schema', lambda: None)
-    path = tmp_path / 'governance.yaml'
-    path.write_text('agents: [bot]\n')
-    result = CliRunner().invoke(cli.app, ['ingest-manifest', '--governance', str(path)] + (['--dry-run'] if dry_run else []))
+    report = GovernanceDiffReport(
+        applied=False, warnings=["resource https://user:password@host/x?token=secret"]
+    )
+    monkeypatch.setattr(
+        cli, "dry_run_ingest" if dry_run else "ingest_governance", lambda *a, **k: report
+    )
+    monkeypatch.setattr(cli.schema, "init_schema", lambda: None)
+    path = tmp_path / "governance.yaml"
+    path.write_text("agents: [bot]\n")
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path)] + (["--dry-run"] if dry_run else [])
+    )
     assert result.exit_code == 1
-    assert 'password' not in result.output and 'secret' not in result.output
-    assert 'https://host' in result.output
+    assert "password" not in result.output and "secret" not in result.output
+    assert "https://host" in result.output

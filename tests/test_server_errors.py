@@ -61,9 +61,7 @@ async def _wire_call(name: str, arguments: dict) -> CallToolResult:
     """
     entry = app.mcp._lowlevel_server.get_request_handler("tools/call")
     assert entry is not None, "the server registered no tools/call handler"
-    result = await entry.handler(
-        None, CallToolRequestParams(name=name, arguments=arguments)
-    )
+    result = await entry.handler(None, CallToolRequestParams(name=name, arguments=arguments))
     assert isinstance(result, CallToolResult)
     return result
 
@@ -208,9 +206,7 @@ def test_backend_unavailable_classifier_follows_implicit_context():
 
 
 @pytest.mark.parametrize("name,arguments", _TOOLS)
-async def test_every_mcp_tool_returns_typed_backend_unavailable(
-    monkeypatch, name, arguments
-):
+async def test_every_mcp_tool_returns_typed_backend_unavailable(monkeypatch, name, arguments):
     def unavailable(_fetch):
         raise BackendUnavailableError(
             "bolt://alice:secret@example.test password=hunter2 sentinel-detail"
@@ -402,6 +398,7 @@ def test_read_only_tool_rejects_conflicting_annotations():
 
 async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
     """A ContractError says what the caller passed, so it is worth forwarding."""
+
     def invalid(_fetch):
         raise ContractError("unknown profile 'production'")
 
@@ -436,13 +433,12 @@ async def test_unexpected_exception_text_never_reaches_the_caller(monkeypatch, e
     exception text after scrubbing therefore leaks, which is why only errors
     this repo raises on purpose are forwarded.
     """
+
     def boom(_fetch):
         raise exc
 
     monkeypatch.setattr(app, "_with_generation", boom)
-    result = await _wire_call(
-        "eligible_tools", {"agent": "agent", "candidates": []}
-    )
+    result = await _wire_call("eligible_tools", {"agent": "agent", "candidates": []})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -453,9 +449,7 @@ async def test_unexpected_exception_text_never_reaches_the_caller(monkeypatch, e
 
 async def test_success_wire_shape_is_unchanged(monkeypatch):
     monkeypatch.setattr(app, "_with_generation", lambda _fetch: {"ok": True})
-    result = await _wire_call(
-        "check_access", {"agent": "agent", "tool": "server::tool"}
-    )
+    result = await _wire_call("check_access", {"agent": "agent", "tool": "server::tool"})
 
     assert result.is_error is False
     assert result.structured_content is None

@@ -30,7 +30,18 @@ VALID_FIXTURES = [
 
 # Keys whose PRESENCE anywhere in an artifact violates the data-classification
 # contract — bodies and secrets live outside the artifact, referenced by digest.
-_FORBIDDEN_KEYS = {"prompt", "output", "stdout", "stderr", "patch", "env", "credential", "password", "token", "api_key"}
+_FORBIDDEN_KEYS = {
+    "prompt",
+    "output",
+    "stdout",
+    "stderr",
+    "patch",
+    "env",
+    "credential",
+    "password",
+    "token",
+    "api_key",
+}
 
 # Credential shapes that must never appear in an artifact, per the ecosystem
 # redaction contract (resource URIs may embed userinfo/query secrets).

@@ -12,6 +12,7 @@ from toolgraph.graph import queries, selector
 SCHEMA_VERSION = 1
 KIND = "toolgraph.preflight"
 
+
 def build_preflight(
     *,
     agent: str,

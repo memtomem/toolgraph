@@ -24,9 +24,7 @@ GOLDEN = TRACEGRAPH / "v1.json"
 
 
 def test_vendored_tracegraph_golden_validates_and_has_producer_digest():
-    schema = json.loads(
-        (TRACEGRAPH / "review-candidates.schema.json").read_text(encoding="utf-8")
-    )
+    schema = json.loads((TRACEGRAPH / "review-candidates.schema.json").read_text(encoding="utf-8"))
     golden = json.loads(GOLDEN.read_text(encoding="utf-8"))
     jsonschema.Draft202012Validator.check_schema(schema)
     jsonschema.Draft202012Validator(schema).validate(golden)
@@ -36,33 +34,27 @@ def test_vendored_tracegraph_golden_validates_and_has_producer_digest():
 
 
 def test_annotation_golden_validates_and_round_trips():
-    schema = json.loads(
-        (CONTRACTS / "review-annotations.schema.json").read_text(encoding="utf-8")
-    )
+    schema = json.loads((CONTRACTS / "review-annotations.schema.json").read_text(encoding="utf-8"))
     fixture = json.loads(
-        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(encoding="utf-8")
     )
     jsonschema.Draft202012Validator.check_schema(schema)
-    jsonschema.Draft202012Validator(
-        schema, format_checker=jsonschema.FormatChecker()
-    ).validate(fixture)
+    jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(
+        fixture
+    )
     assert AnnotationReport.model_validate(fixture).model_dump(mode="json") == fixture
 
     without_note = json.loads(json.dumps(fixture))
     without_note["events"][0].pop("note")
-    jsonschema.Draft202012Validator(
-        schema, format_checker=jsonschema.FormatChecker()
-    ).validate(without_note)
+    jsonschema.Draft202012Validator(schema, format_checker=jsonschema.FormatChecker()).validate(
+        without_note
+    )
     assert AnnotationReport.model_validate(without_note).events[0].note is None
 
 
 def test_toolgraph_sidecar_rejects_unknown_fields():
     fixture = json.loads(
-        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(encoding="utf-8")
     )
     fixture["events"][0]["candidate"]["prompt"] = "must not survive"
     with pytest.raises(ValidationError):
@@ -71,13 +63,9 @@ def test_toolgraph_sidecar_rejects_unknown_fields():
 
 @pytest.mark.parametrize("field", ["reviewer", "note"])
 def test_sidecar_schema_rejects_surrounding_metadata_whitespace(field):
-    schema = json.loads(
-        (CONTRACTS / "review-annotations.schema.json").read_text(encoding="utf-8")
-    )
+    schema = json.loads((CONTRACTS / "review-annotations.schema.json").read_text(encoding="utf-8"))
     fixture = json.loads(
-        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(encoding="utf-8")
     )
     fixture["events"][0][field] = " padded "
 
@@ -119,9 +107,7 @@ def test_required_candidate_and_event_collections_cannot_be_omitted(tmp_path):
         load_report(source)
 
     annotations = json.loads(
-        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(
-            encoding="utf-8"
-        )
+        (CONTRACTS / "fixtures" / "review-annotations-v1.json").read_text(encoding="utf-8")
     )
     annotations.pop("events")
     with pytest.raises(ValidationError):

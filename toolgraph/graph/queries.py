@@ -117,14 +117,13 @@ def resolve_tool_refs(s: Session, refs: list[str]) -> dict[str, list[str]]:
     for start in range(0, len(qualified), RESOLVE_BATCH_SIZE):
         for row in s.run(
             "MATCH (t:Tool) WHERE t.key IN $keys RETURN t.key AS key",
-            keys=qualified[start:start + RESOLVE_BATCH_SIZE],
+            keys=qualified[start : start + RESOLVE_BATCH_SIZE],
         ):
             resolved[row["key"]].append(row["key"])
     for start in range(0, len(bare), RESOLVE_BATCH_SIZE):
         for row in s.run(
-            "MATCH (t:Tool) WHERE t.name IN $names "
-            "RETURN t.name AS name, t.key AS key",
-            names=bare[start:start + RESOLVE_BATCH_SIZE],
+            "MATCH (t:Tool) WHERE t.name IN $names RETURN t.name AS name, t.key AS key",
+            names=bare[start : start + RESOLVE_BATCH_SIZE],
         ):
             resolved[row["name"]].append(row["key"])
     return {ref: sorted(keys) for ref, keys in resolved.items()}
@@ -145,8 +144,7 @@ def graph_generation() -> int:
     """
     with session() as s:
         rec = s.run(
-            "MATCH (m:GraphMeta {id:'singleton'}) "
-            "RETURN coalesce(m.generation, 0) AS generation"
+            "MATCH (m:GraphMeta {id:'singleton'}) RETURN coalesce(m.generation, 0) AS generation"
         ).single()
         return rec["generation"] if rec else 0
 
@@ -203,9 +201,7 @@ def exposed_tool_contracts() -> list[dict]:
 
 
 def _agent_present(s: Session, agent: str) -> bool:
-    return s.run(
-        "RETURN EXISTS { MATCH (:Agent {id:$agent}) } AS ok", agent=agent
-    ).single()["ok"]
+    return s.run("RETURN EXISTS { MATCH (:Agent {id:$agent}) } AS ok", agent=agent).single()["ok"]
 
 
 def agent_exists(agent: str) -> bool:
@@ -229,7 +225,9 @@ def _tool_path(tool: str, policy: str) -> str:
     return f"({tool}) -GOVERNED_BY-> ({policy}:DENY)"
 
 
-def _radius_path(agent: str | None, tool: str | None, mode: str | None, resource: str) -> str | None:
+def _radius_path(
+    agent: str | None, tool: str | None, mode: str | None, resource: str
+) -> str | None:
     if agent and tool:
         return f"({agent}) -CAN_CALL-> ({tool}) -{mode}-> ({resource})"
     if tool:
@@ -586,11 +584,7 @@ def audit_report(include_grants: bool = False) -> dict:
         "annotation_contradictions": annotation_contradictions(),
     }
     counts = {name: len(rows) for name, rows in findings.items()}
-    blocking = [
-        name
-        for name in ("unsafe_violations", "drifted_tools")
-        if counts[name] > 0
-    ]
+    blocking = [name for name in ("unsafe_violations", "drifted_tools") if counts[name] > 0]
     if blocking:
         status = "fail"
     elif any(counts.values()):
@@ -629,11 +623,7 @@ def unmapped_tools(only_granted: bool = True) -> list[dict]:
         MATCH (t:Tool)
         WHERE NOT EXISTS { MATCH (t)-[:READS|WRITES]->() }
         """
-        + (
-            "  AND EXISTS { MATCH (:Agent)-[:CAN_CALL]->(t) }\n"
-            if only_granted
-            else ""
-        )
+        + ("  AND EXISTS { MATCH (:Agent)-[:CAN_CALL]->(t) }\n" if only_granted else "")
         + """
         OPTIONAL MATCH (a:Agent)-[:CAN_CALL]->(t)
         RETURN t.key AS tool_key, t.name AS tool, t.server AS server,
@@ -689,8 +679,7 @@ def unbacked_edges(include_grants: bool = False) -> list[dict]:
     what the world does or which policy applies, and SHOULD carry evidence.
     """
     edge_types = (
-        "CAN_CALL|READS|WRITES|GOVERNED_BY" if include_grants
-        else "READS|WRITES|GOVERNED_BY"
+        "CAN_CALL|READS|WRITES|GOVERNED_BY" if include_grants else "READS|WRITES|GOVERNED_BY"
     )
     cypher = f"""
     MATCH (src)-[r:{edge_types}]->(dst)
@@ -820,9 +809,7 @@ def annotation_contradictions() -> list[dict]:
                     "server": r["server"],
                     "resource": r["resource"],
                     "annotation_claim": "readOnlyHint: true",
-                    "annotation_provenance": _annotation_provenance(
-                        r["exposes_evidence"]
-                    ),
+                    "annotation_provenance": _annotation_provenance(r["exposes_evidence"]),
                     "authored_claim": f"WRITES {r['resource']}",
                     "authored_provenance": row_provenance(r),
                 }
@@ -845,9 +832,9 @@ def blast_radius(node: str) -> dict:
     if is_resource_ref(node):
         uri = normalize_resource_uri(node)
         with session() as s:
-            found = s.run(
-                "RETURN EXISTS { MATCH (:Resource {uri:$uri}) } AS ok", uri=uri
-            ).single()["ok"]
+            found = s.run("RETURN EXISTS { MATCH (:Resource {uri:$uri}) } AS ok", uri=uri).single()[
+                "ok"
+            ]
             if not found:
                 # is_resource_ref is purely lexical: a policy id like 'mailto:foo'
                 # or 'urn:bar' looks like a URI scheme. If no Resource matches,
@@ -890,9 +877,7 @@ def _blast_radius_resource(s: Session, uri: str) -> dict:
 
 
 def _blast_radius_policy(s: Session, node: str) -> dict:
-    found = s.run(
-        "RETURN EXISTS { MATCH (:Policy {id:$node}) } AS ok", node=node
-    ).single()["ok"]
+    found = s.run("RETURN EXISTS { MATCH (:Policy {id:$node}) } AS ok", node=node).single()["ok"]
     if not found:
         return {"kind": "policy", "node": node, "found": False, "impacted": []}
     impacted = []
@@ -933,9 +918,7 @@ def _blast_radius_policy(s: Session, node: str) -> dict:
     ):
         d = dict(r)
         d["path"] = (
-            f"({d['agent']}) -CAN_CALL-> ({d['tool']}) [GOVERNED_BY {node}]"
-            if d["agent"]
-            else None
+            f"({d['agent']}) -CAN_CALL-> ({d['tool']}) [GOVERNED_BY {node}]" if d["agent"] else None
         )
         d["provenance"] = row_provenance(r)
         for k in ("source", "confidence", "evidence"):

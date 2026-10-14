@@ -49,7 +49,7 @@ def check_config_health() -> dict[str, Any]:
     if os.name != "nt":
         mode = path.stat().st_mode & 0o777
         perms_octal = oct(mode)
-        permissions_ok = (mode == 0o600)
+        permissions_ok = mode == 0o600
 
     valid_json = False
     detail = "ok"
@@ -95,7 +95,9 @@ def _runtime_config() -> dict:
             )
         value = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise RuntimeConfigurationError(f"invalid Toolgraph runtime config at {path}: {exc}") from exc
+        raise RuntimeConfigurationError(
+            f"invalid Toolgraph runtime config at {path}: {exc}"
+        ) from exc
     if not isinstance(value, dict) or value.get("schema_version") != 1:
         raise RuntimeConfigurationError(f"unsupported Toolgraph runtime config at {path}")
     return value
@@ -178,7 +180,9 @@ class Settings:
     # their own Settings; the module-level singleton reads it once on first access).
     neo4j_uri: str = field(default_factory=lambda: os.getenv("NEO4J_URI", "bolt://localhost:7687"))
     neo4j_user: str = field(default_factory=lambda: os.getenv("NEO4J_USER", "neo4j"))
-    neo4j_password: str = field(default_factory=lambda: os.getenv("NEO4J_PASSWORD", "toolgraph-dev"))
+    neo4j_password: str = field(
+        default_factory=lambda: os.getenv("NEO4J_PASSWORD", "toolgraph-dev")
+    )
     neo4j_database: str = field(default_factory=lambda: os.getenv("NEO4J_DATABASE", "neo4j"))
     backend: str = field(default_factory=_backend_default)
     db_path: Path = field(default_factory=_db_path_default)

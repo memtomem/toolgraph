@@ -24,6 +24,7 @@ from toolgraph.models import (
 )
 from tests._helpers import CSV, load_crawl, seed_basic
 
+
 @pytest.fixture
 def scenario(graph):
     loader.load_crawl_result(
@@ -209,9 +210,7 @@ def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(graph):
             agents=["bot"],
             policies=[Policy(id="urn:secret", effect="DENY")],
             grants=[AccessGrant(agent="bot", tool="sample::leak")],
-            data_access=[
-                DataAccess(tool="sample::leak", resource="file:///x", mode="WRITES")
-            ],
+            data_access=[DataAccess(tool="sample::leak", resource="file:///x", mode="WRITES")],
             governed_by={"sample::leak": ["urn:secret"]},
         )
     )

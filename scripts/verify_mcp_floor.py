@@ -43,32 +43,39 @@ async def server_boundary() -> None:
     check("tools/call handler is registered", entry is not None)
 
     async def call(name, arguments):
-        result = await entry.handler(None, CallToolRequestParams(
-            name=name, arguments=arguments))
+        result = await entry.handler(None, CallToolRequestParams(name=name, arguments=arguments))
         assert isinstance(result, CallToolResult), type(result)
         return result
 
     original = app._with_generation
     try:
         app._with_generation = lambda _fetch: (_ for _ in ()).throw(
-            ContractError("unknown profile 'floor-probe'"))
+            ContractError("unknown profile 'floor-probe'")
+        )
         forwarded = await call("eligible_tools", {"agent": "a", "candidates": []})
-        check("ContractError reaches the caller", forwarded.is_error
-              and "floor-probe" in forwarded.content[0].text)
+        check(
+            "ContractError reaches the caller",
+            forwarded.is_error and "floor-probe" in forwarded.content[0].text,
+        )
 
         app._with_generation = lambda _fetch: (_ for _ in ()).throw(
-            RuntimeError("SENTINEL_/srv/private/db.lbug"))
+            RuntimeError("SENTINEL_/srv/private/db.lbug")
+        )
         masked = await call("eligible_tools", {"agent": "a", "candidates": []})
-        check("an unexpected exception stays masked", masked.is_error
-              and "SENTINEL_" not in masked.content[0].text,
-              masked.content[0].text[:60])
+        check(
+            "an unexpected exception stays masked",
+            masked.is_error and "SENTINEL_" not in masked.content[0].text,
+            masked.content[0].text[:60],
+        )
     finally:
         app._with_generation = original
 
     tools = await app.mcp.list_tools()
-    check("annotations are readable", bool(tools)
-          and any(t.annotations and t.annotations.read_only_hint for t in tools),
-          f"{len(tools)} tools")
+    check(
+        "annotations are readable",
+        bool(tools) and any(t.annotations and t.annotations.read_only_hint for t in tools),
+        f"{len(tools)} tools",
+    )
 
 
 async def pagination() -> None:
@@ -104,10 +111,12 @@ async def pagination() -> None:
 
     session = Session()
     records = await client._list_all_tools(session)
-    check('an "" cursor continues the listing',
-          [r.name for r in records] == ["first", "second"])
-    check("the empty cursor is sent back verbatim, not dropped",
-          session.cursors == [None, ""], f"cursors={session.cursors!r}")
+    check('an "" cursor continues the listing', [r.name for r in records] == ["first", "second"])
+    check(
+        "the empty cursor is sent back verbatim, not dropped",
+        session.cursors == [None, ""],
+        f"cursors={session.cursors!r}",
+    )
 
 
 def _rejections(port: int) -> int:
@@ -117,9 +126,7 @@ def _rejections(port: int) -> int:
     sys.path.insert(0, str(FIXTURE.parent))
     from sample_server import RECEIPT_PATH
 
-    with urllib.request.urlopen(
-        f"http://127.0.0.1:{port}{RECEIPT_PATH}", timeout=5
-    ) as response:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{RECEIPT_PATH}", timeout=5) as response:
         return int(response.read())
 
 
@@ -169,9 +176,10 @@ async def http_transport(mode: str, transport: str, path: str) -> None:
                     async with open_session(spec) as session:
                         await session.initialize()
                         listed = await session.list_tools()
-                        check(f"{transport} lists tools",
-                              {t.name for t in listed.tools}
-                              == {"read_file", "write_file"})
+                        check(
+                            f"{transport} lists tools",
+                            {t.name for t in listed.tools} == {"read_file", "write_file"},
+                        )
                         return
             except Exception:
                 if time.monotonic() > deadline:
@@ -206,8 +214,9 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
     proc = subprocess.Popen([sys.executable, str(FIXTURE), mode, str(port)])
     try:
         url = f"http://127.0.0.1:{port}{path}"
-        authorized = ServerSpec(name="floor", transport=transport, url=url,
-                                headers={AUTH_HEADER: AUTH_TOKEN})
+        authorized = ServerSpec(
+            name="floor", transport=transport, url=url, headers={AUTH_HEADER: AUTH_TOKEN}
+        )
         deadline = time.monotonic() + 30
         while True:
             if proc.poll() is not None:
@@ -220,9 +229,10 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
                     async with open_session(authorized) as session:
                         await session.initialize()
                         listed = await session.list_tools()
-                        check(f"{transport} headers reach the server",
-                              {t.name for t in listed.tools}
-                              == {"read_file", "write_file"})
+                        check(
+                            f"{transport} headers reach the server",
+                            {t.name for t in listed.tools} == {"read_file", "write_file"},
+                        )
                         break
             except Exception:
                 # The retry loop is here to wait out server STARTUP. A rejection
@@ -230,9 +240,11 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
                 # away, so retrying just burns the deadline and buries the
                 # cause under a transport traceback. Fail now, and say why.
                 if _rejections_or_none(port):
-                    check(f"{transport} headers reach the server", False,
-                          "the server refused an authorized request -- "
-                          "headers are not reaching it")
+                    check(
+                        f"{transport} headers reach the server",
+                        False,
+                        "the server refused an authorized request -- headers are not reaching it",
+                    )
                 if time.monotonic() > deadline:
                     raise
                 await asyncio.sleep(0.5)
@@ -251,8 +263,9 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
         # The authorized loop above retries, so pin that none of its attempts
         # were turned away. Without this the comparison below could start from
         # a non-zero baseline and still look like a clean refusal.
-        check("authorized requests were never rejected", before == 0,
-              f"rejections so far: {before}")
+        check(
+            "authorized requests were never rejected", before == 0, f"rejections so far: {before}"
+        )
         crawled_anonymously = False
         try:
             async with asyncio.timeout(10):
@@ -263,8 +276,7 @@ async def header_forwarding(mode: str, transport: str, path: str) -> None:
             pass
         after = _rejections(port)
         check("an unauthenticated crawl does not succeed", not crawled_anonymously)
-        check("the server actually refused it", after > before,
-              f"rejections {before} -> {after}")
+        check("the server actually refused it", after > before, f"rejections {before} -> {after}")
     finally:
         proc.terminate()
         try:
@@ -288,10 +300,11 @@ async def main() -> int:
         ("pagination", pagination),
         ("streamable-http", lambda: http_transport("http", "streamable-http", "/mcp")),
         ("sse", lambda: http_transport("sse", "sse", "/sse")),
-        ("header forwarding (streamable-http)",
-         lambda: header_forwarding("http-auth", "streamable-http", "/mcp")),
-        ("header forwarding (sse)",
-         lambda: header_forwarding("sse-auth", "sse", "/sse")),
+        (
+            "header forwarding (streamable-http)",
+            lambda: header_forwarding("http-auth", "streamable-http", "/mcp"),
+        ),
+        ("header forwarding (sse)", lambda: header_forwarding("sse-auth", "sse", "/sse")),
     ):
         print(f"{name}:")
         await make_coro()

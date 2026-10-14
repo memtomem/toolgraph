@@ -40,9 +40,7 @@ DISPOSITIONS = frozenset({"open", "accepted", "dismissed"})
 # SyncMill PR #57 made this exact-tuple UUIDv5 the ecosystem review-item
 # identity.  Reusing it lets operators correlate a Toolgraph disposition with
 # the corresponding SyncMill human-required board item without sharing state.
-_ITEM_NAMESPACE = uuid.uuid5(
-    uuid.NAMESPACE_URL, "https://syncmill.dev/review-items/tracegraph"
-)
+_ITEM_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://syncmill.dev/review-items/tracegraph")
 _CREDENTIAL_ASSIGNED = re.compile(rf"\b(?:{CREDENTIAL_KEYWORDS})\s*=", re.IGNORECASE)
 
 
@@ -63,9 +61,7 @@ def _normalized_reviewer(value: str) -> str:
         or "\r" in reviewer
         or "\0" in reviewer
     ):
-        raise ValueError(
-            "reviewer must be a non-empty single line of at most 256 characters"
-        )
+        raise ValueError("reviewer must be a non-empty single line of at most 256 characters")
     return reviewer
 
 
@@ -73,16 +69,8 @@ def _normalized_note(value: str | None) -> str | None:
     if value is None:
         return None
     note = value.strip()
-    if (
-        not note
-        or len(note) > 500
-        or "\n" in note
-        or "\r" in note
-        or "\0" in note
-    ):
-        raise ValueError(
-            "note must be a non-empty single line of at most 500 characters"
-        )
+    if not note or len(note) > 500 or "\n" in note or "\r" in note or "\0" in note:
+        raise ValueError("note must be a non-empty single line of at most 500 characters")
     if CREDENTIAL_URI.search(note) or _CREDENTIAL_ASSIGNED.search(note):
         raise ValueError("note must not contain credentials")
     return note
@@ -218,9 +206,7 @@ def _read_capped(path: Path, kind: str) -> bytes:
         detail = exc.strerror or type(exc).__name__
         raise ReviewCandidateError(f"cannot read {kind}: {detail}") from exc
     if len(raw) > MAX_REPORT_BYTES:
-        raise ReviewCandidateError(
-            f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit"
-        )
+        raise ReviewCandidateError(f"{kind} exceeds the {MAX_REPORT_BYTES}-byte input limit")
     return raw
 
 
@@ -318,12 +304,12 @@ def _validate_events(
     states: dict[str, Disposition] = {item_id: "open" for item_id in candidates}
     histories: dict[str, list[AnnotationEvent]] = {item_id: [] for item_id in candidates}
     # Dump each source candidate once, not once per referencing event.
-    source_dumps = {
-        item_id: candidate.model_dump() for item_id, candidate in candidates.items()
-    }
+    source_dumps = {item_id: candidate.model_dump() for item_id, candidate in candidates.items()}
     for expected_sequence, event in enumerate(annotations.events, start=1):
         if event.sequence != expected_sequence:
-            raise ReviewCandidateError("review annotation event sequence is not contiguous — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
+            raise ReviewCandidateError(
+                "review annotation event sequence is not contiguous — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+            )
         source_candidate = candidates.get(event.candidate_id)
         if source_candidate is None:
             raise ReviewCandidateError("review annotation references an unknown candidate")
@@ -331,9 +317,13 @@ def _validate_events(
             event.candidate.model_dump() != source_dumps[event.candidate_id]
             or candidate_id(event.candidate) != event.candidate_id
         ):
-            raise ReviewCandidateError("review annotation candidate snapshot does not match its id — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
+            raise ReviewCandidateError(
+                "review annotation candidate snapshot does not match its id — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+            )
         if event.from_disposition != states[event.candidate_id]:
-            raise ReviewCandidateError("review annotation disposition chain is invalid — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history")
+            raise ReviewCandidateError(
+                "review annotation disposition chain is invalid — the sidecar no longer satisfies its append-only contract; restore it from a backup, or delete the sidecar file to reset review history"
+            )
         states[event.candidate_id] = event.disposition
         histories[event.candidate_id].append(event)
     return states, histories
@@ -388,9 +378,7 @@ def list_candidates(
     for candidate in report.candidates:
         item_id = candidate_id(candidate)
         if status is None or states[item_id] == status:
-            candidates.append(
-                _candidate_payload(candidate, states[item_id], histories[item_id])
-            )
+            candidates.append(_candidate_payload(candidate, states[item_id], histories[item_id]))
     return {
         "schema_version": ANNOTATION_SCHEMA_VERSION,
         "kind": LIST_KIND,
@@ -488,9 +476,7 @@ def annotate_candidate(
         annotation_file.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         detail = exc.strerror or type(exc).__name__
-        raise ReviewCandidateError(
-            f"cannot create review annotation directory: {detail}"
-        ) from exc
+        raise ReviewCandidateError(f"cannot create review annotation directory: {detail}") from exc
 
     with _writer_lock(annotation_file):
         report = load_report(report_file)

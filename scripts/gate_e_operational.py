@@ -36,7 +36,14 @@ ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_NAME = "governance-syncmill-smoke.yaml"
 REQUIRED_PROVIDERS = ("codex", "claude", "kimi")
 FORBIDDEN_BODY_KEYS = {
-    "prompt", "patch", "stdout", "stderr", "arguments", "input", "result", "output",
+    "prompt",
+    "patch",
+    "stdout",
+    "stderr",
+    "arguments",
+    "input",
+    "result",
+    "output",
 }
 FORBIDDEN_TEXT = ("SENTINEL", "api_key=", "password=", "authorization:")
 
@@ -100,8 +107,7 @@ def syncmill_env(
     json_env(
         env,
         "SYNCMILL_INTEGRATION__TOOLGRAPH__COMMAND",
-        command
-        or ["uv", "run", "--project", str(toolgraph), "toolgraph", "preflight"],
+        command or ["uv", "run", "--project", str(toolgraph), "toolgraph", "preflight"],
     )
     return env
 
@@ -141,8 +147,17 @@ def strict_scenario(
     )
     proc = run(
         [
-            "uv", "run", "syncmill", "run", f"gate-e-{name}",
-            "--repo", str(target), "--strategy", "route", "--agent", agent,
+            "uv",
+            "run",
+            "syncmill",
+            "run",
+            f"gate-e-{name}",
+            "--repo",
+            str(target),
+            "--strategy",
+            "route",
+            "--agent",
+            agent,
         ],
         cwd=syncmill,
         env=env,
@@ -173,8 +188,18 @@ def crawl(syncmill: Path, toolgraph: Path, env: dict[str, str], servers: Path) -
 def preflight_snapshot(toolgraph: Path, env: dict[str, str], out: Path) -> dict[str, Any]:
     run(
         [
-            "uv", "run", "toolgraph", "preflight", "codex", "syncmill::shared_read",
-            "--profile", "review", "--run-id", "nonmutation", "--out", str(out),
+            "uv",
+            "run",
+            "toolgraph",
+            "preflight",
+            "codex",
+            "syncmill::shared_read",
+            "--profile",
+            "review",
+            "--run-id",
+            "nonmutation",
+            "--out",
+            str(out),
         ],
         cwd=toolgraph,
         env=env,
@@ -214,8 +239,14 @@ def p4_pipeline(
         raise SmokeError("Tracegraph query did not isolate the qualified failing tool")
     run(
         [
-            "uv", "run", "tracegraph", "export-review-candidates", "tool-failure",
-            str(normalized), "--out", str(report),
+            "uv",
+            "run",
+            "tracegraph",
+            "export-review-candidates",
+            "tool-failure",
+            str(normalized),
+            "--out",
+            str(report),
         ],
         cwd=tracegraph,
         env=env,
@@ -247,9 +278,7 @@ def p4_pipeline(
     )
     listed_doc = json.loads(listed.stdout)
     candidate_id = listed_doc["candidates"][0]["candidate_id"]
-    board_list = run(
-        ["uv", "run", "syncmill", "board", "list"], cwd=syncmill, env=board_env
-    ).stdout
+    board_list = run(["uv", "run", "syncmill", "board", "list"], cwd=syncmill, env=board_env).stdout
     if candidate_id not in board_list or "human" not in board_list.lower():
         raise SmokeError("SyncMill board item identity/human-required state mismatch")
 
@@ -264,9 +293,21 @@ def p4_pipeline(
     )
     annotated = run(
         [
-            "uv", "run", "toolgraph", "review-candidates", "annotate", str(report),
-            candidate_id, "--status", "dismissed", "--reviewer", "gate-e-smoke",
-            "--note", "synthetic expected failure", "--annotations", str(annotations),
+            "uv",
+            "run",
+            "toolgraph",
+            "review-candidates",
+            "annotate",
+            str(report),
+            candidate_id,
+            "--status",
+            "dismissed",
+            "--reviewer",
+            "gate-e-smoke",
+            "--note",
+            "synthetic expected failure",
+            "--annotations",
+            str(annotations),
         ],
         cwd=toolgraph,
         env=env,
@@ -285,9 +326,10 @@ def p4_pipeline(
         raise SmokeError("Toolgraph annotation rewrote immutable candidate evidence")
     if preflight_before != preflight_after or blast_before != blast_after:
         raise SmokeError("review annotation mutated graph/preflight/blast-radius behavior")
-    if candidate_id not in run(
-        ["uv", "run", "syncmill", "board", "list"], cwd=syncmill, env=board_env
-    ).stdout:
+    if (
+        candidate_id
+        not in run(["uv", "run", "syncmill", "board", "list"], cwd=syncmill, env=board_env).stdout
+    ):
         raise SmokeError("Toolgraph annotation changed independent SyncMill board state")
 
     return {
@@ -350,23 +392,41 @@ def _provider_command(provider: str, workdir: Path, spool: Path) -> list[str]:
     if provider == "codex":
         entry = config["mcpServers"]["gate_e"]
         return [
-            "codex", "exec", prompt, "--json", "--skip-git-repo-check",
-            "--sandbox", "workspace-write", "--ignore-user-config",
-            "-c", f"mcp_servers.gate_e.command={json.dumps(entry['command'])}",
-            "-c", f"mcp_servers.gate_e.args={json.dumps(entry['args'])}",
-            "-c", (
+            "codex",
+            "exec",
+            prompt,
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            "--ignore-user-config",
+            "-c",
+            f"mcp_servers.gate_e.command={json.dumps(entry['command'])}",
+            "-c",
+            f"mcp_servers.gate_e.args={json.dumps(entry['args'])}",
+            "-c",
+            (
                 "mcp_servers.gate_e.env.GATE_E_MCP_SPOOL="
                 + json.dumps(entry["env"]["GATE_E_MCP_SPOOL"])
             ),
-            "-c", 'mcp_servers.gate_e.default_tools_approval_mode="approve"',
+            "-c",
+            'mcp_servers.gate_e.default_tools_approval_mode="approve"',
         ]
     if provider == "claude":
         path = workdir / "claude-mcp.json"
         path.write_text(json.dumps(config), encoding="utf-8")
         return [
-            "claude", "-p", prompt, "--output-format", "stream-json", "--verbose",
-            "--mcp-config", str(path), "--strict-mcp-config",
-            "--dangerously-skip-permissions", "--no-session-persistence",
+            "claude",
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--mcp-config",
+            str(path),
+            "--strict-mcp-config",
+            "--dangerously-skip-permissions",
+            "--no-session-persistence",
         ]
     if provider == "kimi":
         path = workdir / ".mcp.json"
@@ -378,18 +438,18 @@ def _provider_command(provider: str, workdir: Path, spool: Path) -> list[str]:
 def provider_scope() -> dict[str, Any]:
     return {
         "required": list(REQUIRED_PROVIDERS),
-        "excluded": [{
-            "provider": "agy",
-            "classification": "compatibility_only",
-            "reason": "not_syncmill_agent_runner",
-        }],
+        "excluded": [
+            {
+                "provider": "agy",
+                "classification": "compatibility_only",
+                "reason": "not_syncmill_agent_runner",
+            }
+        ],
     }
 
 
 def _has_exact_outcomes(observed: list[dict[str, str]]) -> bool:
-    return [
-        (row.get("tool_key"), row.get("outcome")) for row in observed
-    ] == [
+    return [(row.get("tool_key"), row.get("outcome")) for row in observed] == [
         ("gate_e::always_ok", "succeeded"),
         ("gate_e::always_fail", "failed"),
     ]
@@ -516,97 +576,185 @@ def main() -> int:
         port = free_port()
         run(
             [
-                "docker", "run", "-d", "--name", container,
-                "-p", f"127.0.0.1:{port}:7687", "-e", "NEO4J_AUTH=neo4j/" + PASSWORD,
+                "docker",
+                "run",
+                "-d",
+                "--name",
+                container,
+                "-p",
+                f"127.0.0.1:{port}:7687",
+                "-e",
+                "NEO4J_AUTH=neo4j/" + PASSWORD,
                 NEO4J_IMAGE,
             ],
             timeout=120,
         )
         env = dict(os.environ)
-        env.update({
-            "NEO4J_URI": f"bolt://127.0.0.1:{port}",
-            "NEO4J_USER": "neo4j",
-            "NEO4J_PASSWORD": PASSWORD,
-            "TOOLGRAPH_ROOT": str(clones["toolgraph"]),
-            "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/private/tmp/gate-e-uv-cache"),
-        })
+        env.update(
+            {
+                "NEO4J_URI": f"bolt://127.0.0.1:{port}",
+                "NEO4J_USER": "neo4j",
+                "NEO4J_PASSWORD": PASSWORD,
+                "TOOLGRAPH_ROOT": str(clones["toolgraph"]),
+                "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/private/tmp/gate-e-uv-cache"),
+            }
+        )
         wait_for_neo4j(env)
         run(["uv", "run", "toolgraph", "init-schema"], cwd=clones["toolgraph"], env=env)
         servers = workspace / "servers.yaml"
         servers.write_text(
             "servers:\n  - name: syncmill\n    transport: stdio\n"
-            f"    command: uv\n    args: [\"run\", \"--project\", \"{clones['syncmill']}\", \"syncmill\", \"serve\"]\n",
+            f'    command: uv\n    args: ["run", "--project", "{clones["syncmill"]}", "syncmill", "serve"]\n',
             encoding="utf-8",
         )
         crawl(clones["syncmill"], clones["toolgraph"], env, servers)
         governance = clones["toolgraph"] / "examples" / GOVERNANCE_NAME
         run(
             ["uv", "run", "toolgraph", "ingest-manifest", "--governance", str(governance)],
-            cwd=clones["toolgraph"], env=env,
+            cwd=clones["toolgraph"],
+            env=env,
         )
         target = workspace / "target"
         make_target(target)
         bin_dir = workspace / "bin"
         write_agent_stubs(bin_dir)
         matrix = []
-        matrix.append(strict_scenario(
-            name="known-allow", expected_dispatch=True, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::shared_read"],
-        ))
-        matrix.append(strict_scenario(
-            name="expected-exception", expected_dispatch=True, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, agent="kimi-code", mapped_agent="kimi",
-            candidates=["syncmill::board_stats"],
-        ))
-        matrix.append(strict_scenario(
-            name="explicit-violation", expected_dispatch=False, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::board_stats"],
-        ))
-        matrix.append(strict_scenario(
-            name="unknown-tool", expected_dispatch=False, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["ghost::missing"],
-        ))
+        matrix.append(
+            strict_scenario(
+                name="known-allow",
+                expected_dispatch=True,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::shared_read"],
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="expected-exception",
+                expected_dispatch=True,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                agent="kimi-code",
+                mapped_agent="kimi",
+                candidates=["syncmill::board_stats"],
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="explicit-violation",
+                expected_dispatch=False,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::board_stats"],
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="unknown-tool",
+                expected_dispatch=False,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["ghost::missing"],
+            )
+        )
         empty_servers = workspace / "servers-empty.yaml"
         empty_servers.write_text("servers: []\n", encoding="utf-8")
         crawl(clones["syncmill"], clones["toolgraph"], env, empty_servers)
-        matrix.append(strict_scenario(
-            name="drift-default-warn", expected_dispatch=True, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::shared_read"],
-        ))
-        matrix.append(strict_scenario(
-            name="drift-block-override", expected_dispatch=False, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::shared_read"],
-            drift_policy="block",
-        ))
+        matrix.append(
+            strict_scenario(
+                name="drift-default-warn",
+                expected_dispatch=True,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::shared_read"],
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="drift-block-override",
+                expected_dispatch=False,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::shared_read"],
+                drift_policy="block",
+            )
+        )
         crawl(clones["syncmill"], clones["toolgraph"], env, servers)
-        matrix.append(strict_scenario(
-            name="unavailable-default-block", expected_dispatch=False, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::shared_read"],
-            command=["/usr/bin/false"],
-        ))
-        matrix.append(strict_scenario(
-            name="unavailable-warn-override", expected_dispatch=True, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=["syncmill::shared_read"],
-            command=["/usr/bin/false"], unavailable_policy="warn",
-        ))
-        matrix.append(strict_scenario(
-            name="enabled-false-rollback", expected_dispatch=True, base_env=env,
-            syncmill=clones["syncmill"], toolgraph=clones["toolgraph"], bin_dir=bin_dir,
-            target=target, workspace=workspace, candidates=[], enabled=False,
-            command=["/usr/bin/false"],
-        ))
+        matrix.append(
+            strict_scenario(
+                name="unavailable-default-block",
+                expected_dispatch=False,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::shared_read"],
+                command=["/usr/bin/false"],
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="unavailable-warn-override",
+                expected_dispatch=True,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=["syncmill::shared_read"],
+                command=["/usr/bin/false"],
+                unavailable_policy="warn",
+            )
+        )
+        matrix.append(
+            strict_scenario(
+                name="enabled-false-rollback",
+                expected_dispatch=True,
+                base_env=env,
+                syncmill=clones["syncmill"],
+                toolgraph=clones["toolgraph"],
+                bin_dir=bin_dir,
+                target=target,
+                workspace=workspace,
+                candidates=[],
+                enabled=False,
+                command=["/usr/bin/false"],
+            )
+        )
         providers = run_provider_canaries(workspace)
         p4 = p4_pipeline(
-            syncmill=clones["syncmill"], tracegraph=clones["tracegraph"],
-            toolgraph=clones["toolgraph"], env=env, workspace=workspace,
+            syncmill=clones["syncmill"],
+            tracegraph=clones["tracegraph"],
+            toolgraph=clones["toolgraph"],
+            env=env,
+            workspace=workspace,
         )
         retained = p4.pop("retained")
         summary = {
@@ -615,10 +763,12 @@ def main() -> int:
             "provider_scope": provider_scope(),
             "providers": providers,
             "gate_e": {
-                "verdict": "go" if (
+                "verdict": "go"
+                if (
                     all(row["actual_dispatch"] == row["expected_dispatch"] for row in matrix)
                     and all(row["live_canary"] == "pass" for row in providers.values())
-                ) else "no-go",
+                )
+                else "no-go",
                 "scenarios": matrix,
                 "automatic_approval": False,
             },

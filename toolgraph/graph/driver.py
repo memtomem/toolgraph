@@ -112,12 +112,8 @@ class _LadybugResult:
 _IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
 _DATETIME_CALL = re.compile(r"(?<![A-Za-z0-9_])datetime\s*\(\s*\)")
 _TYPE_CALL = re.compile(rf"(?<![A-Za-z0-9_])type\s*\(\s*({_IDENTIFIER})\s*\)")
-_LABELS_HEAD = re.compile(
-    rf"(?<![A-Za-z0-9_])labels\s*\(\s*({_IDENTIFIER})\s*\)\s*\[\s*0\s*\]"
-)
-_UNSUPPORTED_NEO4J_EXPRESSION = re.compile(
-    r"(?<![A-Za-z0-9_])(?:datetime|type|labels)\s*\("
-)
+_LABELS_HEAD = re.compile(rf"(?<![A-Za-z0-9_])labels\s*\(\s*({_IDENTIFIER})\s*\)\s*\[\s*0\s*\]")
+_UNSUPPORTED_NEO4J_EXPRESSION = re.compile(r"(?<![A-Za-z0-9_])(?:datetime|type|labels)\s*\(")
 
 
 def _ladybug_query(query: str) -> str:
@@ -265,9 +261,7 @@ def session() -> Iterator[Session | LadybugSession]:
     """
     with _translating_backend_errors():
         if backend_name() == "neo4j":
-            with get_driver().session(
-                database=config.settings.neo4j_database
-            ) as current:
+            with get_driver().session(database=config.settings.neo4j_database) as current:
                 yield current
             return
         current = LadybugSession(_get_ladybug_database())
@@ -316,20 +310,28 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
             try:
                 import ladybug as lb
             except ImportError as exc:
-                raise BackendConfigurationError("backend=ladybug requires the 'ladybug' extra") from exc
+                raise BackendConfigurationError(
+                    "backend=ladybug requires the 'ladybug' extra"
+                ) from exc
             try:
                 owned = database = lb.Database(path, read_only=True)
             except RuntimeError as exc:
                 if "lock" in str(exc).lower() or "another process" in str(exc).lower():
-                    raise BackendLockedError(f"BACKEND_LOCKED: Ladybug database {path} already has an owner") from exc
+                    raise BackendLockedError(
+                        f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
+                    ) from exc
                 if not path.is_file():
-                    raise BackendUnavailableError(f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist") from exc
+                    raise BackendUnavailableError(
+                        f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist"
+                    ) from exc
                 if _NOT_A_DATABASE in str(exc):
                     raise _not_a_database(path) from exc
                 # Unclassified open failures stay retryable: they may be
                 # transient (I/O, resources), and a typed outage is still
                 # handled by every caller.
-                raise BackendUnavailableError("BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file integrity and format") from exc
+                raise BackendUnavailableError(
+                    "BACKEND_UNAVAILABLE: cannot open Ladybug database read-only; check file integrity and format"
+                ) from exc
         try:
             current = LadybugSession(database)
             try:

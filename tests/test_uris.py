@@ -111,9 +111,7 @@ def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
             agents=["planner"],
             policies=[Policy(id="secret-deny", effect="DENY")],
             grants=[AccessGrant(agent="planner", tool="sample::read_url")],
-            data_access=[
-                DataAccess(tool="sample::read_url", resource=uri, mode="READS")
-            ],
+            data_access=[DataAccess(tool="sample::read_url", resource=uri, mode="READS")],
             governed_by={uri: ["secret-deny"]},
         )
     ).warnings
@@ -138,7 +136,9 @@ def test_resource_uri_normalized_across_crawl_and_manifest(graph):
             agents=["bot"],
             policies=[Policy(id="deny", effect="DENY")],
             grants=[AccessGrant(agent="bot", tool="api::call")],
-            data_access=[DataAccess(tool="api::call", resource="https://svc.example.com", mode="READS")],
+            data_access=[
+                DataAccess(tool="api::call", resource="https://svc.example.com", mode="READS")
+            ],
             governed_by={"https://svc.example.com": ["deny"]},
         )
     )
@@ -158,7 +158,9 @@ def test_non_hierarchical_uri_treated_as_resource(graph):
             agents=["bot"],
             policies=[Policy(id="deny", effect="DENY")],
             grants=[AccessGrant(agent="bot", tool="sample::read_file")],
-            data_access=[DataAccess(tool="sample::read_file", resource="memory:secret", mode="READS")],
+            data_access=[
+                DataAccess(tool="sample::read_file", resource="memory:secret", mode="READS")
+            ],
             governed_by={"memory:secret": ["deny"]},
         )
     )

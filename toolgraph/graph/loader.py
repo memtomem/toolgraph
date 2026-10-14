@@ -175,8 +175,7 @@ def load_crawl_result(result: CrawlResult) -> list[str]:
 
 def _retire_unlisted(tx: ManagedTransaction, keep: list[str]) -> tuple[list[str], list[str]]:
     rec = tx.run(
-        "MATCH (s:MCPServer) WHERE NOT s.name IN $keep "
-        "RETURN collect(s.name) AS retired",
+        "MATCH (s:MCPServer) WHERE NOT s.name IN $keep RETURN collect(s.name) AS retired",
         keep=keep,
     ).single()
     retired = sorted((rec["retired"] if rec else None) or [])

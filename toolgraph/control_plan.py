@@ -104,9 +104,14 @@ class _AdditiveModel(BaseModel):
             # JSON Schema treats integral JSON numbers as integers, but never
             # booleans. Pydantic Literal[0/1] alone accepts bool equality.
             numeric = name in {
-                "schema_version", "maximum_cycles", "maximum_agent_calls",
-                "maximum_parallelism", "max_invocations", "max_parallelism",
-                "timeout_seconds", "max_fan_out",
+                "schema_version",
+                "maximum_cycles",
+                "maximum_agent_calls",
+                "maximum_parallelism",
+                "max_invocations",
+                "max_parallelism",
+                "timeout_seconds",
+                "max_fan_out",
             }
             if numeric:
                 if isinstance(item, bool):
@@ -164,9 +169,7 @@ class ControlNode(_AdditiveModel):
     @model_validator(mode="after")
     def _coherent_execution_shape(self) -> "ControlNode":
         if (self.kind == "agent") != self.agent_call:
-            raise ValueError(
-                f"node {self.id!r} kind='agent' and agent_call must agree"
-            )
+            raise ValueError(f"node {self.id!r} kind='agent' and agent_call must agree")
         if len(set(self.principals)) != len(self.principals):
             raise ValueError(f"node {self.id!r} principals must be unique")
         if self.agent_call:
@@ -182,28 +185,20 @@ class ControlNode(_AdditiveModel):
                 if value is None
             ]
             if missing:
-                raise ValueError(
-                    f"agent-call node {self.id!r} requires {', '.join(missing)}"
-                )
+                raise ValueError(f"agent-call node {self.id!r} requires {', '.join(missing)}")
             assert self.max_invocations is not None
             assert self.max_parallelism is not None
             if self.max_parallelism > self.max_invocations:
-                raise ValueError(
-                    f"node {self.id!r} max_parallelism cannot exceed max_invocations"
-                )
+                raise ValueError(f"node {self.id!r} max_parallelism cannot exceed max_invocations")
         elif any(
             value is not None
             for value in (self.max_invocations, self.max_parallelism, self.timeout_seconds)
         ):
-            raise ValueError(
-                f"non-agent-call node {self.id!r} cannot declare execution bounds"
-            )
+            raise ValueError(f"non-agent-call node {self.id!r} cannot declare execution bounds")
         if self.kind == "validator" and self.validator_scope is None:
             raise ValueError(f"validator node {self.id!r} requires validator_scope")
         if self.kind != "validator" and self.validator_scope is not None:
-            raise ValueError(
-                f"non-validator node {self.id!r} cannot declare validator_scope"
-            )
+            raise ValueError(f"non-validator node {self.id!r} cannot declare validator_scope")
         return self
 
 
@@ -258,9 +253,7 @@ class ControlPlan(_AdditiveModel):
             if principal not in known
         ]
         if missing:
-            raise ValueError(
-                "nodes reference undeclared principals at " + ", ".join(missing)
-            )
+            raise ValueError("nodes reference undeclared principals at " + ", ".join(missing))
         return self
 
 
@@ -268,9 +261,7 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
     # A 1MB plan can still nest thousands of levels deep; cap the walk so a
     # pathological plan fails as a typed error instead of a RecursionError.
     if len(path) > _MAX_PLAN_DEPTH:
-        raise ControlPlanError(
-            f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit"
-        )
+        raise ControlPlanError(f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit")
     if isinstance(value, dict):
         for key, child in value.items():
             lowered = str(key).lower()
@@ -306,9 +297,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
 def load_control_plan(raw: bytes) -> ControlPlan:
     """Parse one size-bounded, body-free, same-major additive plan."""
     if len(raw) > MAX_PLAN_BYTES:
-        raise ControlPlanError(
-            f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit"
-        )
+        raise ControlPlanError(f"control plan exceeds the {MAX_PLAN_BYTES}-byte input limit")
     try:
         decoded = json.loads(raw, object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -328,9 +317,7 @@ def load_control_plan(raw: bytes) -> ControlPlan:
         # operator input and its values are echoed nowhere else.
         first = exc.errors(include_input=False)[0]
         location = ".".join(str(part) for part in first.get("loc", ())) or "plan"
-        raise ControlPlanError(
-            f"invalid control plan at {location}: {first['msg']}"
-        ) from exc
+        raise ControlPlanError(f"invalid control plan at {location}: {first['msg']}") from exc
 
 
 def _finding(code: str, *, nodes: list[str] | None = None, edges: list[int] | None = None) -> dict:
@@ -417,13 +404,9 @@ def lint_control_plan(plan: ControlPlan) -> list[dict]:
         if edge.kind == "fanout" and edge.decided_by == "model" and edge.max_fan_out is None
     ]
     if unbounded_model_fanout:
-        findings.append(
-            _finding("MODEL_FANOUT_UNBOUNDED", edges=unbounded_model_fanout)
-        )
+        findings.append(_finding("MODEL_FANOUT_UNBOUNDED", edges=unbounded_model_fanout))
 
-    planned_calls = sum(
-        node.max_invocations or 0 for node in plan.nodes if node.agent_call
-    )
+    planned_calls = sum(node.max_invocations or 0 for node in plan.nodes if node.agent_call)
     if planned_calls > plan.limits.maximum_agent_calls:
         findings.append(
             {
@@ -557,13 +540,19 @@ def compute_control_plan_exposures(
                                 path.append(cursor)
                                 cursor = parents[cursor]
                             witness = _compress_witness_path(list(reversed(path)))
-                        record = safe_artifact({
-                            "reader_node": root, "reader_principal": r_pid,
-                            "read_tool": r_tool, "read_resource": r_res,
-                            "writer_node": current, "writer_principal": w_pid,
-                            "write_tool": w_tool, "write_resource": w_res,
-                            "witness_path": witness,
-                        })
+                        record = safe_artifact(
+                            {
+                                "reader_node": root,
+                                "reader_principal": r_pid,
+                                "read_tool": r_tool,
+                                "read_resource": r_res,
+                                "writer_node": current,
+                                "writer_principal": w_pid,
+                                "write_tool": w_tool,
+                                "write_resource": w_res,
+                                "witness_path": witness,
+                            }
+                        )
                         record_bytes = len(json.dumps(record).encode("utf-8"))
                         added_bytes = record_bytes + (2 if exposures else 0)
                         if current_aggregate_bytes + added_bytes > MAX_AGGREGATE_EXPOSURE_BYTES:

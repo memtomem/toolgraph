@@ -44,6 +44,7 @@ class ServerSpec(StrictInputModel):
     @classmethod
     def _name_is_key_safe(cls, value: str | None) -> str | None:
         return value if value is None else _no_key_delimiter("server name", value)
+
     # stdio
     command: str | None = None
     args: list[str] = Field(default_factory=list)
@@ -68,6 +69,7 @@ class ToolRecord(BaseModel):
     @classmethod
     def _name_is_key_safe(cls, value: str) -> str:
         return _no_key_delimiter("tool name", value)
+
     input_schema: dict | None = None
     # MCP tool annotations (ADR-0006): the server's self-claims about its own
     # behavior. Crawlable, but unverified by anyone — they surface with
@@ -101,6 +103,7 @@ class CrawlResult(BaseModel):
     @classmethod
     def _server_name_is_key_safe(cls, value: str) -> str:
         return _no_key_delimiter("server name", value)
+
     transport: Transport = "stdio"
     endpoint: str | None = None  # command line or url, for provenance
     tools: list[ToolRecord] = Field(default_factory=list)

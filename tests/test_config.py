@@ -20,9 +20,7 @@ def _write_runtime(directory: Path, *, backend: str, db_path: Path) -> Path:
     state = directory / ".toolgraph"
     state.mkdir(parents=True, exist_ok=True)
     path = state / "config.json"
-    path.write_text(
-        json.dumps({"schema_version": 1, "backend": backend, "db_path": str(db_path)})
-    )
+    path.write_text(json.dumps({"schema_version": 1, "backend": backend, "db_path": str(db_path)}))
     return path
 
 
@@ -120,7 +118,12 @@ def _run(code: str, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("TOOLGRAPH_")}
     return subprocess.run(
         [sys.executable, "-c", code, *args],
-        cwd=cwd, env=env, capture_output=True, text=True, timeout=120, check=False,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
 
 
@@ -285,7 +288,5 @@ def test_broken_default_configuration_subprocess(tmp_path, mode):
         text=True,
         capture_output=True,
     )
-    assert result.returncode == (2 if mode == "invalid" else 0), (
-        result.stdout + result.stderr
-    )
+    assert result.returncode == (2 if mode == "invalid" else 0), result.stdout + result.stderr
     assert "Traceback" not in result.stderr

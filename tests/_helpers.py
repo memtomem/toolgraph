@@ -31,9 +31,7 @@ CONTROL_PLAN_FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
 # click >= 8.2 always splits streams (result.stdout / result.stderr);
 # older click mixes stderr into stdout by default, so purity can't be
 # asserted there.
-CLICK_SPLITS_STREAMS = tuple(
-    int(p) for p in version("click").split(".")[:2]
-) >= (8, 2)
+CLICK_SPLITS_STREAMS = tuple(int(p) for p in version("click").split(".")[:2]) >= (8, 2)
 
 
 def seed_basic(graph) -> None:
@@ -89,8 +87,7 @@ class FakeBundleReader:
 
     def exposed_tool_contracts(self):
         return [
-            {"tool_key": k, "server": "s", "name": k.split("::")[1]}
-            for k in reversed(self.keys)
+            {"tool_key": k, "server": "s", "name": k.split("::")[1]} for k in reversed(self.keys)
         ]
 
     def evaluate(self, agent, candidates, profile):
@@ -211,7 +208,6 @@ def mock_policy_review_inputs(monkeypatch, *, accepted: bool = True) -> None:
     monkeypatch.setattr("toolgraph.policy_review.queries.with_graph_state", with_state)
 
 
-
 def _ladybug_id(value: dict) -> str:
     return json.dumps(value, sort_keys=True)
 
@@ -240,10 +236,15 @@ def graph_content() -> list[str]:
             edges = []
             for row in session.run("MATCH ()-[r]->() RETURN label(r) AS type, r AS r"):
                 r = row["r"]
-                edges.append((
-                    _ladybug_id(r["_ID"]), row["type"], _ladybug_id(r["_SRC"]),
-                    _ladybug_id(r["_DST"]), _ladybug_properties(r),
-                ))
+                edges.append(
+                    (
+                        _ladybug_id(r["_ID"]),
+                        row["type"],
+                        _ladybug_id(r["_SRC"]),
+                        _ladybug_id(r["_DST"]),
+                        _ladybug_properties(r),
+                    )
+                )
         else:
             nodes = [
                 (row["id"], sorted(row["labels"]), row["props"])

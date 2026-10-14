@@ -87,9 +87,7 @@ def duplicate_name_overrides(specs: list[ServerSpec]) -> set[str]:
     return {n for n in names if names.count(n) > 1}
 
 
-def duplicate_identities(
-    results: list[CrawlResult], failures: list[CrawlFailure]
-) -> set[str]:
+def duplicate_identities(results: list[CrawlResult], failures: list[CrawlFailure]) -> set[str]:
     """Graph names claimed by more than one server this pass.
 
     Two specs resolving to the same ``server_name`` would silently MERGE into

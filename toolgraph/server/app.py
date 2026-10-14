@@ -30,9 +30,7 @@ from toolgraph.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
-_BACKEND_UNAVAILABLE_MESSAGE = (
-    "Toolgraph backend is temporarily unavailable; retry later."
-)
+_BACKEND_UNAVAILABLE_MESSAGE = "Toolgraph backend is temporarily unavailable; retry later."
 
 
 class _ToolgraphMCP(MCPServer):
@@ -305,21 +303,15 @@ def eligible_tools(
     learned consumer may rerank ``eligible`` but may never resurrect a
     rejected row (ADR-0005).
     """
-    return _with_generation(
-        lambda: selector.eligible_tools(agent, candidates, profile=profile)
-    )
+    return _with_generation(lambda: selector.eligible_tools(agent, candidates, profile=profile))
 
 
 @mcp.read_only_tool()
-def selection_explain(
-    agent: str, tool: str, profile: str = selector.DEFAULT_PROFILE
-) -> dict:
+def selection_explain(agent: str, tool: str, profile: str = selector.DEFAULT_PROFILE) -> dict:
     """Compact human-readable reasons why `tool` is eligible/rejected for
     `agent` under `profile` — a view over the same facts ``rank_features``
     returns, for operators and end users."""
-    return _with_generation(
-        lambda: selector.selection_explain(agent, tool, profile=profile)
-    )
+    return _with_generation(lambda: selector.selection_explain(agent, tool, profile=profile))
 
 
 if __name__ == "__main__":
