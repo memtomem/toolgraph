@@ -126,5 +126,6 @@ extend-exclude = ["docs/reviews/"]
 select = ["E", "F", "I", "B", "UP", "SIM", "RUF100"]
 
 [tool.ruff.lint.per-file-ignores]
-# Typer declares options as call defaults (typer.Option(...)); that is the API.
+# Typer declares parameters as call defaults (typer.Option / typer.Argument);
+# that is its API, not a bug.
 "toolgraph/cli.py" = ["B008"]
