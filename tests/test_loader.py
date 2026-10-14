@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 
-from toolgraph.graph import driver, loader
-from toolgraph.models import CrawlResult, ResourceRecord, ToolRecord
-from toolgraph.graph import queries
-from toolgraph.manifest.ingest import ingest_governance
-from toolgraph.models import AccessGrant, Governance, Policy
 from tests._helpers import load_crawl
+from toolgraph.graph import driver, loader, queries
+from toolgraph.manifest.ingest import ingest_governance
+from toolgraph.models import (
+    AccessGrant,
+    CrawlResult,
+    Governance,
+    Policy,
+    ResourceRecord,
+    ToolRecord,
+)
 
 
 def _sample() -> CrawlResult:

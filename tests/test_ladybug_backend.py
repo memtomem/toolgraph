@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from toolgraph import cli, config
 from toolgraph.graph import driver, loader, queries, schema, selector
-from toolgraph.manifest.ingest import ingest_governance
+from toolgraph.manifest.ingest import dry_run_ingest, ingest_governance
 from toolgraph.models import (
     AccessGrant,
     CrawlResult,
@@ -21,12 +26,6 @@ from toolgraph.models import (
     ToolRecord,
 )
 from toolgraph.policy_bundle import build_policy_bundle
-from contextlib import contextmanager
-import hashlib
-import json
-from pathlib import Path
-import threading
-from toolgraph.manifest.ingest import dry_run_ingest
 
 SECRET = "file:///secret.txt"
 
@@ -270,9 +269,8 @@ def test_readonly_native_open_cannot_recreate_a_disappearing_file(embedded_path,
         return original(path, **kwargs)
 
     monkeypatch.setattr(ladybug, "Database", disappear)
-    with pytest.raises(driver.BackendUnavailableError):
-        with driver.acquire_readonly_session():
-            pytest.fail("must refuse missing database")
+    with pytest.raises(driver.BackendUnavailableError), driver.acquire_readonly_session():
+        pytest.fail("must refuse missing database")
     assert not embedded_path.exists()
 
 

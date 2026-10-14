@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from typer.testing import CliRunner
 
+from tests._helpers import graph_content
 from toolgraph import cli, config
 from toolgraph.graph import driver, loader, queries, schema
 from toolgraph.manifest.ingest import dry_run_ingest, ingest_governance
@@ -18,9 +21,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-import json
-
-from tests._helpers import graph_content
 
 
 def _seed_sample_crawl() -> None:

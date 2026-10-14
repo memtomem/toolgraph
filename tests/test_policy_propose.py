@@ -7,24 +7,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from toolgraph import cli
 from toolgraph import policy_propose as pp
-from toolgraph.graph import driver, schema
+from toolgraph.graph import driver, loader, queries, schema, selector
+from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.manifest.parser import governance_digest, load_governance
+from toolgraph.models import CrawlResult, Governance, ResourceRecord, ToolRecord
 from toolgraph.policy_propose import (
+    ProvenanceError,
     StateChurnError,
     StateMismatchError,
     propose,
     resolve_grants_from_graph,
     run_propose,
 )
-import yaml
-from toolgraph.graph import loader, queries, selector
-from toolgraph.manifest.ingest import ingest_governance
-from toolgraph.models import CrawlResult, Governance, ResourceRecord, ToolRecord
-from toolgraph.policy_propose import ProvenanceError
 
 
 @pytest.fixture

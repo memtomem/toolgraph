@@ -10,7 +10,8 @@ unauthorized reach as ``violation`` so reviewers don't drown in noise.
 
 from __future__ import annotations
 
-from toolgraph.graph import loader, queries
+from tests._helpers import CSV, crawl_sample, seed_basic
+from toolgraph.graph import driver, loader, queries, schema
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
     AccessGrant,
@@ -22,9 +23,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from toolgraph.graph import driver
-from toolgraph.graph import schema
-from tests._helpers import CSV, crawl_sample, seed_basic
 
 
 def _seed(graph) -> None:

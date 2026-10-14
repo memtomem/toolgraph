@@ -31,7 +31,6 @@ from ecosystem_smoke import (
     wait_for_neo4j,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE_NAME = "governance-syncmill-smoke.yaml"
 REQUIRED_PROVIDERS = ("codex", "claude", "kimi")

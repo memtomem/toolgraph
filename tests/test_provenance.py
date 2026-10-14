@@ -8,6 +8,7 @@ find supporting evidence for each assertion. EXPOSES/PROVIDES carry
 
 from __future__ import annotations
 
+from tests._helpers import CSV
 from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
@@ -21,7 +22,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from tests._helpers import CSV
 
 
 def _seed(graph) -> None:

@@ -9,19 +9,20 @@ are evidence for this fixture and machine, not a latency SLA or backend ranking.
 from __future__ import annotations
 
 import argparse
-from contextlib import ExitStack
 import importlib.util
 import json
 import logging
-from pathlib import Path
 import statistics
 import sys
 import tempfile
 import time
 import tracemalloc
 import types
+from contextlib import ExitStack
+from pathlib import Path
 
 from ecosystem_smoke import NEO4J_IMAGE, exact_sha, run
+
 from toolgraph import config
 from toolgraph.graph import driver, loader, schema
 from toolgraph.manifest import ingest

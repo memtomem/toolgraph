@@ -7,11 +7,11 @@ explicit embedded backend and never runs in the gateway call path.
 
 from __future__ import annotations
 
+import re
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-import re
-import threading
 from typing import Any
 
 from neo4j import READ_ACCESS, Driver, GraphDatabase, Session
@@ -291,12 +291,14 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
     overrides it, and it does not replace a read-only database role.
     """
     if backend_name() != "ladybug":
-        with _translating_backend_errors():
-            with get_driver().session(
+        with (
+            _translating_backend_errors(),
+            get_driver().session(
                 database=config.settings.neo4j_database,
                 default_access_mode=READ_ACCESS,
-            ) as current:
-                yield current
+            ) as current,
+        ):
+            yield current
         return
     path = Path(config.settings.db_path)
     if not path.is_file():

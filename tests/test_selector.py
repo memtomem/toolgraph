@@ -16,6 +16,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
+from tests._helpers import CLICK_SPLITS_STREAMS
 from toolgraph import cli
 from toolgraph.graph import loader, selector
 from toolgraph.manifest.ingest import ingest_governance
@@ -30,7 +31,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from tests._helpers import CLICK_SPLITS_STREAMS
 
 REPO = "repo:///work"
 SECRETS = "file:///secrets.env"

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from importlib.metadata import version
 import json
+from importlib.metadata import version
 from pathlib import Path
 
 from toolgraph.graph import driver, loader, queries
@@ -17,7 +17,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-
 
 ROOT = Path(__file__).resolve().parent.parent
 

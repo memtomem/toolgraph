@@ -5,11 +5,12 @@ ones are refused before any graph read, evidence is redacted.
 from __future__ import annotations
 
 import pytest
+
+from tests._helpers import FakeBundleReader
 from toolgraph.artifact_safety import safe_artifact
 from toolgraph.graph import queries
 from toolgraph.policy_bundle import build_policy_bundle
 from toolgraph.preflight import build_preflight
-from tests._helpers import FakeBundleReader
 
 
 def test_identity_preservation_and_evidence_redaction():

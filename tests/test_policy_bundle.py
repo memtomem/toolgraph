@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone, tzinfo
 import json
 import os
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
-from jsonschema import Draft202012Validator, ValidationError
 import pytest
+from jsonschema import Draft202012Validator, ValidationError
 from typer.testing import CliRunner
 
+from tests._helpers import FakeBundleReader
 from toolgraph import cli
 from toolgraph.artifacts import canonical_json_bytes, sha256_bytes
 from toolgraph.graph import loader, queries
@@ -22,9 +23,8 @@ from toolgraph.policy_bundle import (
     tool_contract_digest,
 )
 from toolgraph.preflight import build_preflight
-from tests._helpers import FakeBundleReader
 
-NOW = datetime(2026, 7, 14, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 14, tzinfo=UTC)
 ROOT = Path(__file__).parent.parent
 
 
@@ -406,8 +406,8 @@ def test_chunk_state_change_retries_whole_catalog(monkeypatch, always):
 
 
 def test_uri_identities_keep_opposite_decisions_in_export(backend_graph, tmp_path):
-    from toolgraph.models import AccessGrant, Policy
     from toolgraph.artifacts import atomic_write_private, canonical_json_bytes
+    from toolgraph.models import AccessGrant, Policy
 
     agent = "https://id.test/a?role=one#part"
     keys = ["s::https://id.test/t?role=one#part", "s::https://id.test/t?role=two#part"]
@@ -470,8 +470,9 @@ def test_empty_catalog_unknown_agent_fails():
 
 
 def test_generation_exhaustion_preserves_existing_output(monkeypatch, tmp_path):
-    from toolgraph import cli
     from typer.testing import CliRunner
+
+    from toolgraph import cli
 
     output = tmp_path / "bundle.json"
     output.write_bytes(b"previous artifact")

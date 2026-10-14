@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from toolgraph.crawler.client import crawl_server
-from toolgraph.models import CrawlResult, ServerSpec, ServersConfig
+from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
 from toolgraph.redaction import endpoint_label, redact_text
 from toolgraph.yaml_loader import load_yaml_mapping
 

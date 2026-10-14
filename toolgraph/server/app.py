@@ -27,7 +27,6 @@ from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import is_backend_unavailable
 from toolgraph.redaction import redact_text
 
-
 logger = logging.getLogger(__name__)
 
 _BACKEND_UNAVAILABLE_MESSAGE = "Toolgraph backend is temporarily unavailable; retry later."

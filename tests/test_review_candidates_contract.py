@@ -16,7 +16,6 @@ from toolgraph.review_candidates import (
     load_report,
 )
 
-
 ROOT = Path(__file__).parents[1]
 CONTRACTS = ROOT / "contracts"
 TRACEGRAPH = CONTRACTS / "tracegraph"

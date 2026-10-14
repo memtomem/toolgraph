@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import datetime
 import json
-from pathlib import Path
 import re
 import textwrap
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import yaml

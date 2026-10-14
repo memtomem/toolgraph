@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 SIGNATURES_KEY = "signedContributors"
 CLA_BOT_LOGINS = {"github-actions[bot]", "cla-assistant[bot]"}
 MISSING_MARKER = "Before we can merge, please sign"

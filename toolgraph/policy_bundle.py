@@ -9,9 +9,10 @@ the same schema without importing Toolgraph Python code.
 from __future__ import annotations
 
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
+from toolgraph.artifact_safety import safe_artifact, validate_identity
 from toolgraph.artifacts import (
     canonical_json_bytes,
     rfc3339_offset_error,
@@ -19,7 +20,6 @@ from toolgraph.artifacts import (
 )
 from toolgraph.graph import queries, selector
 from toolgraph.graph.store import GraphReader, RuntimeGraphStore
-from toolgraph.artifact_safety import safe_artifact, validate_identity
 
 SCHEMA_VERSION = 1
 KIND = "toolgraph.policy-bundle"
@@ -189,7 +189,7 @@ def build_policy_bundle(
                 item["paths"] = rejection["paths"]
         tools.append(item)
 
-    timestamp = created_at or datetime.now(timezone.utc)
+    timestamp = created_at or datetime.now(UTC)
     return safe_artifact(
         {
             "schema_version": SCHEMA_VERSION,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests._helpers import CSV
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
@@ -21,7 +22,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from tests._helpers import CSV
 
 
 def _crawl() -> CrawlResult:

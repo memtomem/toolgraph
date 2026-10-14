@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from toolgraph import cli, config
-from toolgraph.graph import driver
 from toolgraph.cli import app
+from toolgraph.graph import driver
 
 
 def _write_runtime(directory: Path, *, backend: str, db_path: Path) -> Path:
@@ -191,9 +191,8 @@ def test_a_file_that_is_not_a_database_is_a_configuration_error(ambient, monkeyp
     monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=path))
     opener = driver.acquire_readonly_session if read_only else driver.session
 
-    with pytest.raises(driver.BackendConfigurationError) as raised:
-        with opener() as s:
-            s.run("RETURN 1")
+    with pytest.raises(driver.BackendConfigurationError) as raised, opener() as s:
+        s.run("RETURN 1")
 
     assert not driver.is_backend_unavailable(raised.value)
     assert str(raised.value) == (
@@ -206,9 +205,8 @@ def test_a_file_that_is_not_a_database_is_a_configuration_error(ambient, monkeyp
 def test_neo4j_read_only_session_rejects_writes(graph):
     from neo4j.exceptions import ClientError
 
-    with pytest.raises(ClientError):
-        with driver.acquire_readonly_session() as s:
-            s.run("CREATE (:Agent {id: 'should-not-exist'})").consume()
+    with pytest.raises(ClientError), driver.acquire_readonly_session() as s:
+        s.run("CREATE (:Agent {id: 'should-not-exist'})").consume()
 
     with driver.session() as s:
         count = s.run("MATCH (a:Agent {id: 'should-not-exist'}) RETURN count(a) AS n").single()["n"]

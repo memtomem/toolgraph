@@ -25,7 +25,6 @@ from uuid import uuid4
 
 import jsonschema
 
-
 ROOT = Path(__file__).resolve().parents[1]
 GOVERNANCE = ROOT / "examples" / "governance-syncmill-smoke.yaml"
 # Pinned to the Community edition explicitly. The bare `neo4j:5.26` tag resolves

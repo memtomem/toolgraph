@@ -16,16 +16,15 @@ vs a policy id.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 import json
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 
 from neo4j import Session
 
 from toolgraph.graph.driver import session
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
-
 
 _GENERATION_RETRIES = 5
 # Exponential backoff between bracket retries (0.05/0.1/0.2/0.4s). Without

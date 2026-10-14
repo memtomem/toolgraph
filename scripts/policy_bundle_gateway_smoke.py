@@ -15,19 +15,17 @@ import hashlib
 import json
 import os
 import re
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any
 
+import yaml
+from ecosystem_smoke import SmokeError, dependency_evidence, require_clean_checkout
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import yaml
-
-from ecosystem_smoke import SmokeError, dependency_evidence, require_clean_checkout
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "examples" / "policy_gateway_server.py"
@@ -338,47 +336,47 @@ async def strict_live_reload(
     publish_deny: Any,
 ) -> None:
     with errlog.open("w", encoding="utf-8") as errors:
-        async with stdio_client(
-            stm_params(stm_python, config, observability=False), errlog=errors
-        ) as (
-            read_stream,
-            write_stream,
+        async with (
+            stdio_client(stm_params(stm_python, config, observability=False), errlog=errors) as (
+                read_stream,
+                write_stream,
+            ),
+            ClientSession(read_stream, write_stream) as session,
         ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                names = {tool.name for tool in (await session.list_tools()).tools}
-                if "demo__read_note" not in names or "demo__publish_note" in names:
-                    raise SmokeError("strict startup advertised the wrong policy-gated tools")
-                first = await session.call_tool("demo__read_note", {"note_id": "first"})
-                if first.is_error:
-                    raise SmokeError("eligible strict call failed")
-                if spool_count(spool, "read_note") != 1:
-                    raise SmokeError("eligible call did not reach the upstream exactly once")
+            await session.initialize()
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            if "demo__read_note" not in names or "demo__publish_note" in names:
+                raise SmokeError("strict startup advertised the wrong policy-gated tools")
+            first = await session.call_tool("demo__read_note", {"note_id": "first"})
+            if first.is_error:
+                raise SmokeError("eligible strict call failed")
+            if spool_count(spool, "read_note") != 1:
+                raise SmokeError("eligible call did not reach the upstream exactly once")
 
-                publish_deny()
-                explained = mms_json(
-                    stm_python,
-                    stm_root,
-                    [
-                        "gateway",
-                        "explain",
-                        "policy-gateway::read_note",
-                        "--config",
-                        str(config),
-                        "--json",
-                    ],
-                    env=stm_process_env(config, observability=False),
-                )
-                if (explained.get("decision"), explained.get("reason")) != (
-                    "rejected",
-                    "NOT_GRANTED",
-                ):
-                    raise SmokeError("gateway explain did not expose the fresh denial")
-                denied = await session.call_tool("demo__read_note", {"note_id": "first"})
-                if not denied.is_error:
-                    raise SmokeError("fresh strict denial did not beat the warm cache")
-                if spool_count(spool, "read_note") != 1:
-                    raise SmokeError("strict denial reached the upstream")
+            publish_deny()
+            explained = mms_json(
+                stm_python,
+                stm_root,
+                [
+                    "gateway",
+                    "explain",
+                    "policy-gateway::read_note",
+                    "--config",
+                    str(config),
+                    "--json",
+                ],
+                env=stm_process_env(config, observability=False),
+            )
+            if (explained.get("decision"), explained.get("reason")) != (
+                "rejected",
+                "NOT_GRANTED",
+            ):
+                raise SmokeError("gateway explain did not expose the fresh denial")
+            denied = await session.call_tool("demo__read_note", {"note_id": "first"})
+            if not denied.is_error:
+                raise SmokeError("fresh strict denial did not beat the warm cache")
+            if spool_count(spool, "read_note") != 1:
+                raise SmokeError("strict denial reached the upstream")
 
 
 async def assert_list(
@@ -392,36 +390,38 @@ async def assert_list(
     expected_would_block: int | None = 1,
 ) -> int:
     with errlog.open("w", encoding="utf-8") as errors:
-        async with stdio_client(
-            stm_params(stm_python, config, observability=review_call), errlog=errors
-        ) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                names = {tool.name for tool in (await session.list_tools()).tools}
-                if ("demo__read_note" in names) is not expected_present:
-                    raise SmokeError("restart did not apply the expected tools/list policy")
-                if not review_call:
-                    return 0
-                if spool is None:
-                    raise SmokeError("review call requires an invocation sentinel")
-                before = spool_count(spool, "read_note")
-                called = await session.call_tool(
-                    "demo__read_note", {"note_id": "review" if expected_would_block else "disabled"}
-                )
-                if called.is_error:
-                    raise SmokeError("review mode blocked a would-block call")
-                if spool_count(spool, "read_note") != before + 1:
-                    raise SmokeError("review call did not reach the upstream exactly once")
-                if "stm_admin" in names:
-                    health = await session.call_tool("stm_admin", {"action": "proxy_health"})
-                else:
-                    health = await session.call_tool("stm_proxy_health", {})
-                if health.is_error:
-                    raise SmokeError("review health surface was not callable")
-                if expected_would_block is None:
-                    return 0
-                health_text = "\n".join(c.text for c in health.content if c.type == "text")
-                return review_counter(health_text, expected_would_block)
+        async with (
+            stdio_client(
+                stm_params(stm_python, config, observability=review_call), errlog=errors
+            ) as (read_stream, write_stream),
+            ClientSession(read_stream, write_stream) as session,
+        ):
+            await session.initialize()
+            names = {tool.name for tool in (await session.list_tools()).tools}
+            if ("demo__read_note" in names) is not expected_present:
+                raise SmokeError("restart did not apply the expected tools/list policy")
+            if not review_call:
+                return 0
+            if spool is None:
+                raise SmokeError("review call requires an invocation sentinel")
+            before = spool_count(spool, "read_note")
+            called = await session.call_tool(
+                "demo__read_note", {"note_id": "review" if expected_would_block else "disabled"}
+            )
+            if called.is_error:
+                raise SmokeError("review mode blocked a would-block call")
+            if spool_count(spool, "read_note") != before + 1:
+                raise SmokeError("review call did not reach the upstream exactly once")
+            if "stm_admin" in names:
+                health = await session.call_tool("stm_admin", {"action": "proxy_health"})
+            else:
+                health = await session.call_tool("stm_proxy_health", {})
+            if health.is_error:
+                raise SmokeError("review health surface was not callable")
+            if expected_would_block is None:
+                return 0
+            health_text = "\n".join(c.text for c in health.content if c.type == "text")
+            return review_counter(health_text, expected_would_block)
 
 
 def review_counter(health_text: str, expected: int) -> int:
@@ -435,11 +435,13 @@ def review_counter(health_text: str, expected: int) -> int:
 async def expect_start_failure(*, stm_python: Path, config: Path, errlog: Path) -> None:
     async def initialize() -> None:
         with errlog.open("w", encoding="utf-8") as errors:
-            async with stdio_client(
-                stm_params(stm_python, config, observability=False), errlog=errors
-            ) as (read_stream, write_stream):
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
+            async with (
+                stdio_client(
+                    stm_params(stm_python, config, observability=False), errlog=errors
+                ) as (read_stream, write_stream),
+                ClientSession(read_stream, write_stream) as session,
+            ):
+                await session.initialize()
 
     failed = False
     try:

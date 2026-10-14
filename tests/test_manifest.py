@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from toolgraph.graph import driver, loader
+import pytest
+import yaml
+from pydantic import ValidationError
+
+from tests._helpers import CSV, crawl_sample, load_crawl, seed_basic
+from toolgraph.graph import driver, loader, queries
+from toolgraph.manifest import ingest
 from toolgraph.manifest.ingest import governance_counts, ingest_governance
+from toolgraph.manifest.parser import load_governance
 from toolgraph.models import (
     AccessGrant,
     CrawlResult,
@@ -13,13 +20,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-import pytest
-import yaml
-from pydantic import ValidationError
-from toolgraph.graph import queries
-from toolgraph.manifest.parser import load_governance
-from toolgraph.manifest import ingest
-from tests._helpers import CSV, crawl_sample, load_crawl, seed_basic
 
 
 def _seed_crawl() -> None:
@@ -467,8 +467,8 @@ def test_empty_collection_combinations(backend_graph, tools, resources, policies
 
 
 def test_revocation_and_failed_ingest_preserve_state(backend_graph, monkeypatch):
-    from toolgraph.models import AccessGrant
     from toolgraph.manifest import ingest
+    from toolgraph.models import AccessGrant
 
     loader.load_crawl_result(CrawlResult(server_name="s", tools=[ToolRecord(name="t")]))
     gov = Governance(agents=["a"], grants=[AccessGrant(agent="a", tool="s::t")])

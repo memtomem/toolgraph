@@ -2,25 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 
+import pytest
+from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
+from tests._helpers import mock_policy_review_inputs
 from toolgraph import cli
-from toolgraph.preflight import build_preflight, redact
-from datetime import timedelta, tzinfo
-from jsonschema import Draft202012Validator
-import pytest
 from toolgraph.graph import queries
 from toolgraph.policy_review import build_policy_review_plan
-from tests._helpers import mock_policy_review_inputs
+from toolgraph.preflight import build_preflight, redact
 
-
-NOW = datetime(2026, 7, 11, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 11, tzinfo=UTC)
 
 
 def _bracket(monkeypatch, payload, generation=42):
@@ -313,7 +311,7 @@ class NoOffset(tzinfo):
         None,
         NoOffset(),
         timezone(timedelta(seconds=30)),
-        timezone.utc,
+        UTC,
         timezone(timedelta(hours=5, minutes=30)),
     ],
 )

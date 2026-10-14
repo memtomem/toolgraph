@@ -10,13 +10,18 @@ not-found/ambiguous verdicts so a typo can't pass as a clean run.
 from __future__ import annotations
 
 import json
+import re
+import sys
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
-from toolgraph import cli
-from toolgraph.graph import loader
-from toolgraph.manifest.ingest import ingest_governance
+from tests._helpers import CLICK_SPLITS_STREAMS, CSV, seed_basic
+from toolgraph import __version__, cli
+from toolgraph.cli import app
+from toolgraph.graph import driver, loader
+from toolgraph.manifest.ingest import governance_counts, ingest_governance
 from toolgraph.models import (
     AccessGrant,
     CrawlResult,
@@ -27,14 +32,6 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-import yaml
-from toolgraph.graph import driver
-from toolgraph.manifest.ingest import governance_counts
-import re
-import sys
-from toolgraph.cli import app
-from toolgraph import __version__
-from tests._helpers import CLICK_SPLITS_STREAMS, CSV, seed_basic
 
 
 def _seed(exceptions: list[ExpectedException] | None = None) -> None:
