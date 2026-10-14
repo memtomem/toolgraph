@@ -1,0 +1,40 @@
+name: Dependency audit
+
+# ci.yml audits the lock only when something is pushed, so an advisory
+# published against an unchanged lock surfaced nowhere until the next push.
+# This runs the same three audits weekly against main. It is a separate
+# workflow so ci.yml's required-check aggregation does not change.
+#
+# A red run means "the audit failed", which is not always "a vulnerability
+# was found": `uv export --locked`, package installation and the advisory
+# service can each fail for their own reasons. Read the log before acting.
+#
+# GitHub addresses a scheduled run's notifications to whoever last edited the
+# cron line below (or, once the workflow has been re-enabled, to whoever
+# re-enabled it), subject to that person's notification settings. It disables
+# schedules on a public repository after 60 days without activity; re-enable
+# the workflow before running it by hand with `workflow_dispatch`.
+
+on:
+  schedule:
+    # Monday 06:17 UTC; off the hour, where GitHub delays or drops runs.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: audit-${{ matrix.scope }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scope: [runtime, extras, dev]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+      - run: scripts/audit-dependencies.sh ${{ matrix.scope }}
