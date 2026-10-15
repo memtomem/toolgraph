@@ -6,6 +6,10 @@
 
 영어판: [`docs/beginner-guide.md`](beginner-guide.md)
 
+같은 과정을 한 단계씩 실행하며 출력을 바로 보려면 영어 노트북
+[`docs/notebooks/01-first-policy-bundle.ipynb`](notebooks/01-first-policy-bundle.ipynb)를
+여세요.
+
 Toolgraph는 런타임 프록시가 아니라 정책 분석기이자 컴파일러입니다. MCP
 도구 계약을 크롤링하고 운영자가 작성한 권한·데이터 흐름을 결합해
 `Agent -> Tool -> Resource -> Policy` 경로를 설명합니다. 실제 호출 차단은

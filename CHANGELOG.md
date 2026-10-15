@@ -2,6 +2,17 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Added
+
+- **A first-run notebook**, `docs/notebooks/01-first-policy-bundle.ipynb`,
+  walks the Beginner Guide path one command at a time inside a temporary
+  directory. It goes from the quickstart to a compiled bundle, then removes and
+  restores an evidence pointer and runs the audits. It is committed with its
+  outputs. `tests/test_notebooks.py` checks those outputs row by row, and a new
+  CI `notebooks` job re-executes the notebook from a wheel install.
+
 ## 0.2.0 - 2026-10-15
 
 Third alpha. Read **Upgrading from 0.1.0** below before installing: it lists

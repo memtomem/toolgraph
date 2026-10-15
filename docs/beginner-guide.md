@@ -6,6 +6,10 @@ default path needs no repository clone, Docker, or Node.js.
 
 Korean version: [`docs/ko-beginner-guide.md`](ko-beginner-guide.md)
 
+To run the same path one step at a time with the outputs in front of you, open
+the notebook
+[`docs/notebooks/01-first-policy-bundle.ipynb`](notebooks/01-first-policy-bundle.ipynb).
+
 Toolgraph is an advisory analyzer and policy compiler, not a runtime proxy. It
 crawls MCP tool contracts, combines them with operator-authored grants and data
 flows, and explains `Agent -> Tool -> Resource -> Policy` paths. A gateway such

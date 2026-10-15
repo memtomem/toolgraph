@@ -70,6 +70,8 @@ For observed-usage grant proposals and provenance checks, see the
 New to Toolgraph? Start with the first-time user guides:
 [English](https://github.com/memtomem/toolgraph/blob/main/docs/beginner-guide.md) or
 [Korean](https://github.com/memtomem/toolgraph/blob/main/docs/ko-beginner-guide.md).
+To run the same path one step at a time with the outputs in front of you, open the
+[first-run notebook](https://github.com/memtomem/toolgraph/blob/main/docs/notebooks/01-first-policy-bundle.ipynb).
 
 For the context-engineering and tool-selection roadmap, see
 the [context-engineering report](https://github.com/memtomem/toolgraph/blob/main/docs/context-engineering-tool-selection-report.md).
