@@ -28,6 +28,20 @@ toolgraph init
 `.toolgraph/config.json`과 로컬 Ladybug DB가 생성됩니다. Toolgraph 명령이
 이 DB를 순차적으로 소유하며 gateway는 DB를 직접 열지 않습니다.
 
+다음 단계로 가기 전에 설정을 점검합니다.
+
+```bash
+toolgraph doctor
+```
+
+`doctor`는 설정 파일, DB 연결, 스키마, 그래프 상태 네 가지를 확인합니다.
+`init` 직후에는 네 항목이 모두 `PASS`이고 마지막 줄이
+`Overall status: HEALTHY`입니다. `Configuration` 항목의 `backend_source`는
+백엔드 선택이 어디서 왔는지 알려 주며, 여기서는 `config-file`입니다.
+`FAIL`이 하나라도 있으면 `doctor`는 1로 종료합니다.
+[자주 막히는 지점](#자주-막히는-지점)을 보세요. `toolgraph doctor --json`은
+같은 보고서를 JSON으로 출력합니다.
+
 ## 2. 오프라인 MCP fixture 크롤링
 
 ```bash
@@ -41,6 +55,21 @@ fixture는 두 도구를 노출합니다.
 
 ## 3. 운영자 정책 적재
 
+먼저 미리 봅니다. `--dry-run`은 manifest를 그래프와 대조해 무엇이 바뀔지
+출력할 뿐 아무것도 쓰지 않습니다.
+
+```bash
+toolgraph ingest-manifest \
+  --governance governance.yaml \
+  --strict-drift \
+  --dry-run
+```
+
+`DRY-RUN: manifest at governance.yaml would apply cleanly`와 함께 추가될
+변경 요약(agent 1, 정책 1, grant 2, 데이터 접근 edge 2, 정책 binding 1)이
+출력됩니다. 거부될 manifest라면 `DRY-RUN REJECTED`와 이유를 출력하고 1로
+종료하며, 도구 이름 오타가 흔한 원인입니다. 확인했으면 실제로 적재합니다.
+
 ```bash
 toolgraph ingest-manifest \
   --governance governance.yaml \
@@ -50,7 +79,10 @@ toolgraph ingest-manifest \
 예제는 `vibe-coder`에게 두 도구의 호출 권한을 주지만 draft 리소스에는
 DENY 정책을 적용합니다. 작성한 모든 edge에 `provenance` 근거 포인터가 있어서
 `toolgraph unbacked-edges` 결과가 비어 있습니다. `data_access` 항목 하나에서
-`provenance` 블록을 지우고 다시 적재한 뒤 실행하면 그 edge가 목록에 나타납니다.
+`provenance` 블록을 지우고 `--dry-run`으로 다시 실행하면 변경 요약에
+`Provenance modified: 1`이 보입니다. `--dry-run` 없이 다시 적재한 뒤
+`unbacked-edges`를 실행하면 그 edge가 목록에 나타납니다. 계속하기 전에 블록을
+되돌리고 다시 적재하세요. 이 가이드의 나머지는 원래 manifest를 전제로 합니다.
 grant는 `unbacked-edges --include-grants`로 따로 감사합니다.
 
 결과가 비어 있다는 것은 모든 edge에 포인터가 있다는 뜻이지 그 주장이 사실이라는
@@ -64,7 +96,8 @@ READS/WRITES 항목은 예제용이며 evidence에 그렇게 적혀 있습니다
 toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note \
   --profile review
-toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note \
+  --profile review
 ```
 
 `read_note`는 eligible이고 `publish_note`는 정책 경로와 함께 rejected로
@@ -118,7 +151,7 @@ toolgraph blast-radius draft-publish-deny
 이 예제에서는 결과가 비어 있지 않은 쪽이 맞습니다. 나머지 셋은 비어 있습니다.
 
 `read_note` grant를 제거하거나 draft 정책 binding을 바꾼 뒤 다시 적재·컴파일해
-보세요. 잘못된 manifest는 이전 그래프 상태를 유지한 채 거부되고, 컴파일
+보세요. 컴파일 전에는 항상 `ingest-manifest`를 먼저 다시 실행하세요. 잘못된 manifest는 이전 그래프 상태를 유지한 채 거부되고, 컴파일
 실패도 마지막 정상 번들을 덮어쓰지 않습니다.
 
 ## 팀·공유 환경
@@ -146,6 +179,30 @@ fleet 설정에서는 모든 서버에 고유한 `name`을 지정하세요. 이�
 
 ## 자주 막히는 지점
 
+먼저 `toolgraph doctor`를 실행하고 `Configuration` 아래의 `backend_source`
+줄을 확인하세요.
+
+- `backend_source: default`이고 백엔드 `neo4j`에 대한 `Connectivity`가 FAIL:
+  설정 파일도 환경 변수도 백엔드를 고르지 않아 Neo4j로 넘어간 것입니다.
+  `Configuration` 항목에 `exists: False`도 보이면 quickstart 디렉터리 밖에
+  있거나 `toolgraph init`을 건너뛴 것입니다. 디렉터리로 `cd`하거나 `init`을
+  실행하세요.
+- 두 번째 `Configuration` 항목이 `conflicting backend configuration`으로
+  FAIL: 셸이나 이 디렉터리의 `.env`에 설정된 `TOOLGRAPH_BACKEND` 또는
+  `TOOLGRAPH_DB_PATH`가 `.toolgraph/config.json`과 다릅니다. 메시지에 변수
+  이름이 나옵니다. (`backend_source`는 `TOOLGRAPH_BACKEND`가 설정된 경우에만
+  `env`로 표시됩니다.) 셸에서 해제하거나 `.env`에서 지우세요. 다음 명령이
+  `.env`를 다시 읽기 때문입니다. 또는 명령 앞에
+  `--config .toolgraph/config.json`을 붙이세요
+  (`toolgraph --config .toolgraph/config.json doctor`). 그때까지 `crawl`,
+  `eligible-tools` 같은 명령은 같은 메시지로 멈춥니다.
+- `Schema Integrity`가 FAIL: `toolgraph init-schema`를 실행하세요. 누락된
+  테이블이나 constraint를 만들고, 스키마 버전이 없는 DB에는 버전을 기록합니다.
+  `backend schema version N does not match this build's M`으로 거부하면 다른
+  Toolgraph 버전이 만든 DB입니다. DB는 바뀌지 않았으니 그 버전을 쓰거나 새
+  DB를 사용하세요.
+- `DRY-RUN REJECTED` 또는 `REJECTED`: 경고가 문제를 알려 주며 그래프는 바뀌지
+  않았습니다.
 - `AGENT_NOT_FOUND`: 같은 agent가 `agents`와 관련 grant에 있어야 합니다.
 - `TOOL_NOT_FOUND`: crawl을 다시 실행하고 `server::tool` 이름을 사용합니다.
 - `DRIFTED`: governance가 최신 crawl에 없는 도구를 참조하고 있습니다.

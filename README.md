@@ -118,7 +118,7 @@ toolgraph crawl --servers servers.yaml
 toolgraph ingest-manifest --governance governance.yaml --strict-drift
 toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note --profile review
-toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note --profile review
 toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
@@ -145,8 +145,8 @@ bash scripts/demo-public.sh
 `.env` selects Neo4j. Do not also run `toolgraph init` in the same directory
 unless both say the same thing: when `TOOLGRAPH_BACKEND` or `TOOLGRAPH_DB_PATH`
 disagrees with `.toolgraph/config.json`, commands stop with a configuration
-error instead of picking one silently. Pass `--config` to choose the file.
-Only the CLI reads `.env`; importing `toolgraph` as a library does not.
+error instead of picking one silently. See
+[Configuration and `.env`](#configuration-and-env) for the full order.
 
 The compose file is development-only, uses a known password, and binds Neo4j
 to loopback. It is not an authenticated production deployment. The demo
@@ -176,12 +176,18 @@ uv run toolgraph ingest-manifest --governance examples/governance-gate.yaml
 uv run toolgraph check-access helper "memtomem-stm::langchain__search_docs_by_lang_chain"
 ```
 
-Or step by step:
+Or step by step, on the base example: `examples/servers.yaml` crawls the public
+filesystem MCP server through `npx` (network on first run), and
+`examples/governance.yaml` authors two agents over it, `ops-agent` and
+`public-bot`, with a DENY policy on `file:///private/secrets.env`. Run it from
+the repository root against the backend `.env` selects:
 
 ```bash
 uv run toolgraph check                                   # verify the configured backend (read-only)
-uv run toolgraph init-schema                             # uniqueness constraints
+uv run toolgraph init-schema                             # constraints (Neo4j) or tables (Ladybug); idempotent
+uv run toolgraph doctor                                  # config source, connectivity, schema, graph state
 uv run toolgraph crawl --servers examples/servers.yaml   # crawl -> load factual graph
+uv run toolgraph ingest-manifest --governance examples/governance.yaml --dry-run   # preview; writes nothing
 uv run toolgraph ingest-manifest --governance examples/governance.yaml
 # refs to tools no server currently exposes emit a non-fatal DRIFT notice;
 # add --strict-drift to reject the manifest instead (CI gating, ADR-0002)
@@ -204,31 +210,72 @@ uv run toolgraph audit-report                       # whole-graph operational au
 uv run toolgraph audit-report --format markdown     # human-readable audit report
 
 # selector surface (ADR-0005) — batch, deterministic, no relevance scoring
-uv run toolgraph rank-features planner git_status read_file export_data
-uv run toolgraph eligible-tools planner git_status read_file --profile strict
-uv run toolgraph selection-explain planner git_status
-
-# advisory run artifact for syncmill/tracegraph correlation
-uv run toolgraph preflight planner git_status read_file \
-  --profile review --run-id "$RUN_ID" --out preflight.json
-
-# body-free orchestration topology + principal/tool-surface preflight
-uv run toolgraph control-preflight control-plan.json \
-  --profile review --out control-preflight.json
+uv run toolgraph rank-features public-bot \
+  filesystem::read_file filesystem::list_directory filesystem::write_file
+uv run toolgraph eligible-tools public-bot \
+  filesystem::read_file filesystem::list_directory --profile strict
+uv run toolgraph selection-explain public-bot filesystem::list_directory --profile strict
 
 # portable control-plane artifact for memtomem-stm or another MCP gateway
-uv run toolgraph policy compile --agent planner --profile strict \
+uv run toolgraph policy compile --agent public-bot --profile strict \
   --output policy-bundle.json
+```
 
-# human review of Tracegraph T3 findings (no Neo4j or policy mutation)
-uv run toolgraph review-candidates list candidates.json
-uv run toolgraph review-candidates annotate candidates.json CANDIDATE_ID \
+On this example `public-bot` reaches the governed secret through `read_file`,
+so `unsafe-tools public-bot` returns one `violation` row and `audit-report`
+reports `status: fail`. `list_directory` has a grant but no authored
+READS/WRITES, so `strict` rejects it as `UNMAPPED`; `--profile review` lets it
+through. The strict bundle compiled for `public-bot` therefore marks every
+crawled tool rejected: most have no grant at all.
+
+`policy compile` evaluates every currently exposed qualified tool, fingerprints
+the crawled tool contract, and writes canonical JSON with private permissions
+and atomic replacement. Each tool appears exactly once in the bundle; a
+duplicated catalog row fails compilation instead of shipping. The bundle
+carries a collision-safe
+`graph_state: {instance_id, generation}` plus governance and catalog digests.
+Toolgraph still does not claim that it blocked a call: a gateway consumes the
+bundle, chooses review or strict behavior, and records the enforcement action
+(ADR-0010). Re-run `ingest-manifest` before compilation when upgrading a graph
+that predates the governance-digest field.
+
+### Artifact workflows
+
+These commands exchange files with other systems, so each needs an input the
+step-by-step block does not produce:
+
+- `<run-id>` is the run identifier of the orchestrator that will run the
+  agent (SyncMill, or any stable string you use to correlate the run).
+- `<control-plan.json>` is a body-free `toolgraph.control-plan` document
+  written by an orchestrator such as SyncMill. The repository ships a valid
+  sample at `contracts/fixtures/control-plan-v1.json`.
+- `<report.json>` is a Tracegraph review-candidate report. The vendored sample
+  is `contracts/tracegraph/v1.json`. `<candidate-id>` is printed by
+  `review-candidates list`.
+
+```bash
+# advisory run artifact for syncmill/tracegraph correlation
+uv run toolgraph preflight public-bot filesystem::read_file filesystem::list_directory \
+  --profile review --run-id <run-id> --out preflight.json
+
+# body-free orchestration topology + principal/tool-surface preflight
+uv run toolgraph control-preflight <control-plan.json> \
+  --profile review --out control-preflight.json
+
+# human review of Tracegraph T3 findings (no graph or policy mutation)
+uv run toolgraph review-candidates list <report.json>
+uv run toolgraph review-candidates annotate <report.json> <candidate-id> \
   --status accepted --reviewer operator --note "manual policy review approved"
 
 # accepted evidence -> current-policy work plan (still no policy mutation)
-uv run toolgraph policy review-plan candidates.json --agent planner \
+uv run toolgraph policy review-plan <report.json> --agent public-bot \
   --profile review --output policy-review-plan.json
 ```
+
+The two samples name principals and tools that the base example graph does not
+contain, so against it they produce `advisory_warn` and a review-plan row whose
+current reason is `TOOL_NOT_FOUND`. They show the commands work; real inputs
+come from the orchestrator and Tracegraph runs against your own fleet.
 
 `preflight` wraps the same deterministic selector rules and stamps the result
 with a bracketed `graph_generation`. It remains advisory: rejected candidates
@@ -254,17 +301,6 @@ SyncMill decides whether those warnings block a run. Prompts, outputs, patches,
 credentials, commands, memory bodies, and filesystem paths do not belong in
 either exchange artifact. Toolgraph does not execute, persist, resume, or
 observe the declared workflow (ADR-0013).
-
-`policy compile` evaluates every currently exposed qualified tool, fingerprints
-the crawled tool contract, and writes canonical JSON with private permissions
-and atomic replacement. Each tool appears exactly once in the bundle; a
-duplicated catalog row fails compilation instead of shipping. The bundle
-carries a collision-safe
-`graph_state: {instance_id, generation}` plus governance and catalog digests.
-Toolgraph still does not claim that it blocked a call: a gateway consumes the
-bundle, chooses review or strict behavior, and records the enforcement action
-(ADR-0010). Re-run `ingest-manifest` before compilation when upgrading a graph
-that predates the governance-digest field.
 
 `review-candidates` is the G3 human-review boundary (ADR-0009). It consumes
 Tracegraph's body-free schema-v1 report and projects only `run_id`, versioned
@@ -297,6 +333,51 @@ operator still edits the governance manifest, runs `ingest-manifest`, reviews
 the resulting decision/blast radius, and then runs `policy compile`. Trace
 evidence never grants, denies, or creates an exception by itself.
 
+### Configuration and `.env`
+
+The runtime config file is chosen in this order:
+
+1. `toolgraph --config PATH <command>` (a global option, before the
+   subcommand). A file that is missing or unreadable is a usage error, exit 2.
+2. `TOOLGRAPH_CONFIG`.
+3. `.toolgraph/config.json` in the working directory, which `toolgraph init`
+   writes.
+
+Besides the required `"schema_version": 1`, the file holds only the backend
+and the Ladybug database path. With
+`--config`, the file decides both and `TOOLGRAPH_BACKEND` / `TOOLGRAPH_DB_PATH`
+are ignored. Without it, either variable fills in a value the file does not
+have, and a variable that disagrees with the file stops the command (exit 1):
+
+```text
+ERROR: conflicting backend configuration (.toolgraph/config.json): TOOLGRAPH_BACKEND=neo4j but the config file says ladybug. Pass --config to choose the file, or unset the variable.
+```
+
+The `TOOLGRAPH_DB_PATH` form reads `TOOLGRAPH_DB_PATH=... but the config file
+says ...`. Backend names are compared ignoring case and surrounding spaces, and
+paths after resolving them, so equivalent spellings are not a conflict.
+`--help` still works under a conflict, and `doctor` reports it as a FAIL.
+`toolgraph init` is not blocked, because it writes the file that settles the
+question, but plain `init` writes `ladybug`: with `TOOLGRAPH_BACKEND=neo4j`
+still set, the conflict remains. Use `init --backend neo4j`, or remove the
+variable. When it comes from `.env`, unsetting it in the shell is not enough:
+the next command loads it again, so edit `.env`.
+
+With no file and no variables, the backend is `neo4j` at `NEO4J_URI`
+(default `bolt://localhost:7687`). That is why a command run outside an
+initialized directory tries to reach Neo4j. `toolgraph init` defaults to
+Ladybug, with its database at `.toolgraph/toolgraph.lbug`.
+
+`NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`, and the default
+input paths `TOOLGRAPH_SERVERS` / `TOOLGRAPH_GOVERNANCE` (used when `crawl
+--servers` / `ingest-manifest --governance` is omitted) always come from the
+environment, with or without `--config`.
+
+The CLI loads `.env` from the working directory before every subcommand,
+`serve` included. It never overrides a variable that is already set, and a
+`TOOLGRAPH_CONFIG` inside it is honored. Importing `toolgraph` as a library
+does not read `.env`.
+
 ### Exit codes
 
 Per [ADR-0003](https://github.com/memtomem/toolgraph/blob/main/docs/adr/0003-cli-output-and-exit-code-contract.md) this table
@@ -305,15 +386,30 @@ to stderr) and exit 0 by default — gating is opt-in.
 
 | Command | Exit code |
 | --- | --- |
+| any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr for a configuration conflict, an unreadable config file, or an unavailable backend. Exceptions: `doctor` reports these as a FAIL in its own output, `init` is not subject to the conflict check, and `serve` reports a backend outage per tool call over MCP |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
-| `preflight` | 0 for advisory allow, warn, and unresolved identity; operational/argument errors are non-zero |
-| `policy compile` | 0 after atomic bundle replacement · 1 on unresolved identity/state or I/O failure |
-| `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
-| `ingest-manifest` (manifest REJECTED) | 1 |
-| `crawl` (any server failed) | 1 |
+| `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
+| `init` | 0 · 1 when `--state-dir` cannot be created · 2 on a `--backend` other than `ladybug` / `neo4j` |
+| `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict |
+| `crawl` | 1 on an invalid servers file, two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) |
+| `ingest-manifest` | 1 on an unreadable or invalid file · 1 when the manifest is REJECTED (graph unchanged) |
+| `ingest-manifest --dry-run [--json]` | 0 when the manifest would apply · 1 when it would be rejected (the `--json` report is still printed) · 2 for `--json` without `--dry-run` |
+| `reset` | 0 · 1 without `--yes` (the refusal goes to stdout) |
 | `check-access --fail-on-deny` | 1 on `DENY` with `all_authorized: false` · 2 on `AGENT_NOT_FOUND` / `TOOL_NOT_FOUND` / `AMBIGUOUS_TOOL` · 0 otherwise (`ALLOW`, `NOT_GRANTED`, authorized-only `DENY`) |
 | `unsafe-tools --fail-on-violation` | 1 when any `violation` row remains in the printed output (with or without `--all`) |
+| `audit-report --fail-on-blocking` | 1 when `status` is `fail` (unsafe violations or drifted governed tools) |
+| `preflight` | 0 for advisory allow, warn, and unresolved identity · 1 when the artifact cannot be built or written |
+| `control-preflight` | 0 including advisory warnings · 1 on an invalid plan or an I/O failure |
+| `policy compile` | 0 after atomic bundle replacement · 1 on unresolved identity/state or I/O failure |
+| `policy review-plan` | 0 · 1 on an invalid or stale report, unresolved graph state, or I/O failure |
+| `policy propose` | 0 · 1 on invalid input or a refused export · 2 for `--json` with `--output`, or `--min-would-block` below 1 |
+| `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
+| `example init` | 2 when the destination already exists |
+
+An error outside these classes, such as a rejected Neo4j password, exits 1
+with a Python traceback instead of an `ERROR:` line.
 
 A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
 clean run.
@@ -348,8 +444,9 @@ on stdout first; usage errors print click's usage text).
 - `unsafe-tools` (CLI) and the `unsafe_callable_tools` MCP tool both
   default to `classification='violation'` only; pass `--all` (CLI) or
   `include_authorized: true` (MCP) to see operator-declared exceptions
-  too. Both surfaces also carry `agent_found: bool` so a typo'd agent
-  doesn't look like an agent with zero unsafe tools.
+  too. Neither lets a typo'd agent look like an agent with zero unsafe
+  tools: the MCP tool carries `agent_found: false`, and the CLI prints
+  `AGENT_NOT_FOUND` on stderr and exits 1.
 
 ### Result classification
 
@@ -534,7 +631,10 @@ The first consumer of this surface is the memtomem-stm proxy
 `rank_features` over MCP stdio (`toolgraph serve`) and feeds the verdicts
 into its tool-exposure hard filter. The gate exhibit carries the consumer's
 default `agent_id` (`stm-proxy`) as a wiring fixture, so the consult path
-is demoable against the exhibit graph:
+is demoable against the exhibit graph. Load it first with the gate demo's
+`crawl` and `ingest-manifest` commands under [Quickstart](#quickstart):
+ingesting `examples/governance.yaml` afterwards, as the step-by-step block
+does, replaces the gate governance and removes `stm-proxy`.
 
 ```bash
 uv run toolgraph eligible-tools stm-proxy \
@@ -577,13 +677,38 @@ uv run toolgraph serve            # stdio
 uv run toolgraph serve --http     # streamable-http
 ```
 
-Tools: `check_access`, `unsafe_callable_tools`, `blast_radius`,
-`unmapped_tools`, `orphan_policies`, `unbacked_edges`, `drifted_tools`,
-`destructive_unsafeguarded`, `annotation_contradictions`, `audit_report`,
-`rank_features`, `eligible_tools`, `selection_explain`.
+All thirteen tools are pure graph reads and advertise `readOnlyHint` /
+`idempotentHint`. Each one has a CLI counterpart, though names, flags and
+result shapes do not always match:
 
-All thirteen are pure graph reads and advertise `readOnlyHint` /
-`idempotentHint`.
+| MCP tool | CLI command | Differences |
+| --- | --- | --- |
+| `check_access(agent, tool)` | `check-access AGENT TOOL` | Same verdict object. The CLI adds `--fail-on-deny`. |
+| `unsafe_callable_tools(agent, include_authorized=false)` | `unsafe-tools AGENT [--all]` | MCP returns `{agent, agent_found, count, tools}`; the CLI prints the bare list and exits 1 on an unknown agent. The CLI adds `--fail-on-violation`. |
+| `blast_radius(node)` | `blast-radius NODE` | Same object. |
+| `unmapped_tools(only_granted=true)` | `unmapped-tools [--all]` | `--all` is `only_granted: false`. MCP `{count, tools}`, CLI list. |
+| `orphan_policies()` | `orphan-policies` | MCP `{count, policies}`, CLI list. |
+| `unbacked_edges(include_grants=false)` | `unbacked-edges [--include-grants]` | MCP `{count, edges}`, CLI list. |
+| `drifted_tools()` | `drift` | MCP `{count, tools}`, CLI list. |
+| `destructive_unsafeguarded()` | `destructive-unsafeguarded` | MCP `{count, tools}`, CLI list. |
+| `annotation_contradictions()` | `annotation-contradictions` | MCP `{count, contradictions}`, CLI list. |
+| `audit_report(include_grants=false)` | `audit-report [--include-grants]` | Same object. The CLI adds `--format markdown` and `--fail-on-blocking`. |
+| `rank_features(agent, candidates)` | `rank-features AGENT CANDIDATES…` | Same object. |
+| `eligible_tools(agent, candidates, profile="strict")` | `eligible-tools AGENT CANDIDATES… [--profile]` | Same object. |
+| `selection_explain(agent, tool, profile="strict")` | `selection-explain AGENT TOOL [--profile]` | Same object. |
+
+Every successful MCP result also carries `graph_generation`,
+`graph_instance_id`, `graph_state` and `graph_state_verified` (see the
+selector section above); of the CLI counterparts in this table, only
+`audit-report` prints them, and only in its JSON format. For an unknown agent, the
+selector tools return `agent_found: false` over MCP, where the CLI exits 1. An
+unknown profile or more than 4096 candidates is a tool error carrying the
+message over MCP and a usage error (exit 2) on the CLI.
+
+The other commands have no MCP tool: `example init`, `init`, `init-schema`,
+`check`, `doctor`, `crawl`, `ingest-manifest`, `reset`, `serve`, `preflight`,
+`control-preflight`, `policy compile` / `review-plan` / `propose`, and
+`review-candidates list` / `annotate`.
 
 ## Inputs
 
@@ -610,14 +735,38 @@ Two reference exhibits:
 
 ```
 toolgraph/
-  crawler/   connect to MCP servers (stdio, streamable-http, legacy sse), enumerate tools/resources
-  graph/     Neo4j driver, schema/constraints, idempotent loader, governance/audit queries
-  manifest/  parse + ingest authored governance (idempotent)
-  server/    MCP server exposing the queries as MCP tools
-  cli.py     crawl / ingest-manifest / check-access / unsafe-tools / blast-radius /
-             unmapped-tools / orphan-policies / unbacked-edges / drift /
-             destructive-unsafeguarded / annotation-contradictions /
-             rank-features / eligible-tools / selection-explain / serve / reset
+  cli.py                the `toolgraph` command (commands: see the CLI/MCP table above)
+  config.py             config file, environment and .env resolution
+  health.py             `doctor` checks
+  crawler/              connect to MCP servers (stdio, streamable-http, legacy sse), enumerate tools/resources
+  manifest/             parse + ingest authored governance (idempotent, with --dry-run)
+  graph/
+    driver.py           backend lifecycle for Ladybug and Neo4j
+    schema.py           Neo4j constraints / Ladybug tables and the schema version
+    loader.py           idempotent load of crawl results
+    queries.py          governance and audit queries
+    selector.py         deterministic selector surface (ADR-0005)
+    store.py            graph ports used by the policy services
+  server/               MCP server exposing the queries as MCP tools
+  preflight.py          advisory preflight artifact
+  control_plan.py       control-plan validation and control-preflight
+  policy_bundle.py      policy bundle compiler
+  policy_review.py      accepted trace evidence -> policy review plan
+  policy_propose.py     grant proposals from observed gateway usage
+  review_candidates.py  Tracegraph review-candidate intake and annotations
+  artifacts.py          canonical JSON, private atomic writes, digests
+  artifact_safety.py    evidence scrubbing and artifact identity checks
+  redaction.py          credential-free labels for endpoints and diagnostics
+  models.py             pydantic models for crawl results and authored governance
+  errors.py             errors whose message is safe to return to a caller
+  uris.py               resource-URI canonicalization
+  yaml_loader.py        fail-closed YAML loading
+  quickstart/           files `toolgraph example init` copies out
+contracts/              JSON Schemas for the exchanged artifacts, their fixtures, vendored Tracegraph contract
+examples/               crawl targets and manifests for the repository demos (see examples/README.md)
+scripts/                demos, smoke harnesses, release and dependency-audit helpers
+docs/                   guides, ADRs, release runbook
+tests/
 ```
 
 ## Tests
@@ -627,14 +776,14 @@ uv run pytest          # uses a real Neo4j via testcontainers (no Cypher mocking
 make test-unit         # the tests that need no Docker (-m "not neo4j")
 ```
 
-## Scope (MVP)
+## Scope
 
-This is a deliberately thin, thesis-validating MVP. **In:** factual crawl +
-authored governance + three positive-reachability queries + four
-negative-truth/drift queries + classification + per-edge provenance
-(including per-`governed_by`-binding) + exception annotations + `found`
-flags on `check-access` and `blast-radius` so unknown nodes are
-distinguishable from empty results.
+Toolgraph stays an advisory analyzer. **In:** factual crawl, authored
+governance with per-edge provenance (including per-`governed_by`-binding),
+reachability and audit queries over the result, violation vs operator-exception
+classification, `found` flags so unknown nodes are distinguishable from empty
+results, a deterministic selector, and portable artifacts (policy bundle,
+preflight, control preflight, review plan) that other systems act on.
 
 Idempotency is fully declarative: `ingest-manifest` re-applies authored
 edges (CAN_CALL/READS/WRITES/GOVERNED_BY) AND prunes Agent + Policy nodes

@@ -18,7 +18,7 @@ toolgraph crawl --servers servers.yaml
 toolgraph ingest-manifest --governance governance.yaml --strict-drift
 toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note --profile review
-toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note --profile review
 toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
