@@ -2,18 +2,37 @@
 
 All notable changes to Toolgraph are documented here.
 
-## Unreleased
+## 0.2.0 - 2026-10-15
+
+Third alpha. Read **Upgrading from 0.1.0** below before installing: it lists
+seven changes an existing setup, checkout or embedding program can notice.
+The one most installations meet first is that commands now refuse a backend
+variable that disagrees with the config file.
 
 ### Upgrading from 0.1.0
 
 - Commands stop with `ERROR: conflicting backend configuration (...)` when
   `TOOLGRAPH_BACKEND` or `TOOLGRAPH_DB_PATH` disagrees with the config file;
-  0.1.0 silently let the variable win. Pass `--config <file>` or unset the
-  variable. See the first bullet under Changed.
+  0.1.0 silently let the variable win. Pass `toolgraph --config <file>
+  <command>`, or unset the variable; when it comes from `.env`, remove it
+  there, since the next command loads `.env` again. See the first bullet
+  under Changed.
 - `control-preflight` can now return `advisory_warn` for a plan that 0.1.0
   answered with `advisory_allow`. See the `control-preflight` bullet under
   Changed before relying on `advisory_allow` as a gate.
 - A program that imports Toolgraph no longer gets `./.env` loaded for it.
+- `toolgraph check` no longer creates a missing Ladybug database; it exits 1.
+  A script that used `check` to initialize should run `toolgraph init` or
+  `init-schema` first. See the `check` bullet under Changed.
+- Identities, control-plan strings and review notes that 0.1.0 accepted can
+  now be refused as credential-shaped (for example `?access_token=` or `?credential=`). See
+  the credential bullet under Changed.
+- `GraphState.token()` and `queries.with_generation()` are gone; use the
+  `graph_state` token results carry and `queries.with_graph_state()`. See
+  Removed.
+- The repository's `examples/policy_propose_from_observed.py`, which 0.1.0
+  introduced, is gone; use `toolgraph policy propose`, which reads the live
+  graph. See its entry under Removed for the provenance flags.
 
 ### Added
 
@@ -86,7 +105,8 @@ All notable changes to Toolgraph are documented here.
   written a Ladybug config sent every command to Neo4j with no warning. When
   the two disagree on the backend or on the resolved database path, commands
   now stop with `ERROR: conflicting backend configuration (...)`. To migrate,
-  pass `--config <file>` to choose the file, or unset the variable. Agreeing
+  pass `--config <file>` to choose the file, or unset the variable (remove it
+  from `.env` if it is set there). Agreeing
   values, or only one of the two being set, behave as before. `--help`,
   `toolgraph init` and `toolgraph example init` are not blocked, so `init` can
   still be used to rewrite the file. `toolgraph doctor` reports which input
