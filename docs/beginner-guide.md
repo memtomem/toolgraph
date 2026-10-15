@@ -29,6 +29,20 @@ toolgraph init
 `init` creates `.toolgraph/config.json` and a local Ladybug database. Toolgraph
 commands own that database sequentially; the gateway never opens it.
 
+Check the setup before going further:
+
+```bash
+toolgraph doctor
+```
+
+`doctor` checks four things: the config file, the database connection, the
+schema, and the graph state. Right after `init` all four report `PASS` and the
+last line is `Overall status: HEALTHY`. The `Configuration` entry also shows
+`backend_source`, which says where the backend choice came from:
+`config-file` here. Any `FAIL` makes `doctor` exit 1; see
+[Troubleshooting](#troubleshooting). `toolgraph doctor --json` prints the same
+report as JSON.
+
 ## 2. Crawl the offline MCP fixture
 
 ```bash
@@ -43,6 +57,22 @@ The fixture exposes two tools:
 
 ## 3. Load the authored policy
 
+Preview first. `--dry-run` checks the manifest against the graph and prints
+what would change, without writing anything:
+
+```bash
+toolgraph ingest-manifest \
+  --governance governance.yaml \
+  --strict-drift \
+  --dry-run
+```
+
+It prints `DRY-RUN: manifest at governance.yaml would apply cleanly` and a
+delta summary (one agent, one policy, two grants, two data-access edges, one
+policy binding to be added). A manifest that would be rejected prints
+`DRY-RUN REJECTED` with the reason and exits 1; a misspelled tool name is the
+usual cause. Then load it for real:
+
 ```bash
 toolgraph ingest-manifest \
   --governance governance.yaml \
@@ -52,9 +82,12 @@ toolgraph ingest-manifest \
 The example grants `vibe-coder` both tools but places the draft resource under
 a DENY policy. Every authored edge carries `provenance` with an evidence
 pointer, so `toolgraph unbacked-edges` returns an empty list. Delete the
-`provenance` block under one of the `data_access` entries, rerun the
-`ingest-manifest` command above, and `unbacked-edges` names that edge. Grants
-are audited separately, under `unbacked-edges --include-grants`.
+`provenance` block under one of the `data_access` entries and rerun the
+command with `--dry-run`: the delta shows `Provenance modified: 1`. Rerun it
+without `--dry-run`, and `unbacked-edges` names that edge. Put the block back
+and rerun the command before continuing; the rest of this guide assumes the
+original manifest. Grants are audited separately, under
+`unbacked-edges --include-grants`.
 
 An empty result means every edge has a pointer, not that the claims behind
 them are true. The demo tools return strings and touch no file, so the
@@ -68,7 +101,8 @@ possible.
 toolgraph eligible-tools vibe-coder \
   policy-gateway::read_note policy-gateway::publish_note \
   --profile review
-toolgraph selection-explain vibe-coder policy-gateway::publish_note
+toolgraph selection-explain vibe-coder policy-gateway::publish_note \
+  --profile review
 ```
 
 `read_note` is eligible. `publish_note` is rejected with an explainable policy
@@ -153,6 +187,31 @@ stdio diagnostics intentionally show only the executable (for example,
 
 ## Troubleshooting
 
+Start with `toolgraph doctor` and read the `backend_source` line under
+`Configuration`.
+
+- `backend_source: default` and a `Connectivity` FAIL for backend `neo4j`:
+  neither a config file nor the environment chose a backend, so Toolgraph fell
+  back to Neo4j. When the `Configuration` entry also shows `exists: False`,
+  you are outside the quickstart directory or `toolgraph init` was skipped.
+  `cd` into the directory or run `init`.
+- A second `Configuration` entry that FAILs with
+  `conflicting backend configuration`: `TOOLGRAPH_BACKEND` or
+  `TOOLGRAPH_DB_PATH`, set in your shell or in a `.env` file in this
+  directory, disagrees with `.toolgraph/config.json`. The message names the
+  variable. (`backend_source` reads `env` only when `TOOLGRAPH_BACKEND` is
+  set.) Unset it in the shell, or remove it from `.env`, since the next
+  command loads `.env` again. Alternatively, pass
+  `--config .toolgraph/config.json` before the command
+  (`toolgraph --config .toolgraph/config.json doctor`). Until then, commands
+  such as `crawl` and `eligible-tools` stop with the same message.
+- `Schema Integrity` FAIL: run `toolgraph init-schema`, which creates missing
+  tables or constraints and stamps a database that has no schema version. If
+  it refuses with `backend schema version N does not match this build's M`, a
+  different Toolgraph version created the database; it is left unchanged, so
+  use that version or a fresh database.
+- `DRY-RUN REJECTED` or `REJECTED`: the warnings name the problem, and the
+  graph is unchanged.
 - `AGENT_NOT_FOUND`: the same agent must exist in `agents` and the relevant
   grants.
 - `TOOL_NOT_FOUND`: rerun crawl and use the qualified
