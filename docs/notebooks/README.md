@@ -34,8 +34,10 @@ These commands are for macOS and Linux.
 WORK="$(mktemp -d)"
 uv build --wheel --out-dir "$WORK/dist"
 uv venv "$WORK/venv"
+uv export --frozen --only-group notebook --no-emit-project \
+  -o "$WORK/notebook-requirements.txt"
 uv pip install --python "$WORK/venv/bin/python" \
-  "$(ls "$WORK"/dist/*.whl)[ladybug]" nbclient ipykernel
+  "$(ls "$WORK"/dist/*.whl)[ladybug]" -r "$WORK/notebook-requirements.txt"
 env -u TOOLGRAPH_BACKEND -u TOOLGRAPH_DB_PATH -u PYTHONPATH \
   "$WORK/venv/bin/python" - docs/notebooks/01-first-policy-bundle.ipynb <<'EOF'
 import sys

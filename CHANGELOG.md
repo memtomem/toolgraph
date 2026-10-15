@@ -11,7 +11,9 @@ All notable changes to Toolgraph are documented here.
   directory. It goes from the quickstart to a compiled bundle, then removes and
   restores an evidence pointer and runs the audits. It is committed with its
   outputs. `tests/test_notebooks.py` checks those outputs row by row, and a new
-  CI `notebooks` job re-executes the notebook from a wheel install.
+  CI `notebooks` job re-executes the notebook from a wheel install. The job
+  and the regeneration recipe install `nbclient` and `ipykernel` from a new
+  `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
 ## 0.2.0 - 2026-10-15
 

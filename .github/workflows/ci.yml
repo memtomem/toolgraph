@@ -108,7 +108,8 @@ jobs:
       - run: uv venv "$RUNNER_TEMP/notebook-venv"
       - name: Locate built wheel
         run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
-      - run: uv pip install --python "$RUNNER_TEMP/notebook-venv/bin/python" "${{ env.WHEEL }}[ladybug]" nbclient ipykernel
+      - run: uv export --frozen --only-group notebook --no-emit-project -o "$RUNNER_TEMP/notebook-requirements.txt"
+      - run: uv pip install --python "$RUNNER_TEMP/notebook-venv/bin/python" "${{ env.WHEEL }}[ladybug]" -r "$RUNNER_TEMP/notebook-requirements.txt"
       - name: Execute the notebooks against the installed wheel
         run: TOOLGRAPH_NOTEBOOK_PYTHON="$RUNNER_TEMP/notebook-venv/bin/python" uv run pytest -q -rs tests/test_notebooks.py
 
