@@ -62,6 +62,11 @@ dev = [
     "twine>=7.0",
 ]
 audit = ["pip-audit==2.10.1"]
+# The runtime the notebooks CI job and the docs/notebooks/README.md recipe run
+# the notebook with. It is installed from `uv export` of this lock, not
+# resolved fresh, so a new nbclient or ipykernel release reaches CI only
+# through a committed lock update, such as a Dependabot pull request.
+notebook = ["nbclient>=0.10", "ipykernel>=6"]
 
 [build-system]
 # Pinned exactly. The release rehearsal (`test-v*` to TestPyPI) and the
