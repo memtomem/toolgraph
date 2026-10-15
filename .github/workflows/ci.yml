@@ -91,6 +91,27 @@ jobs:
       - run: uv run --python ../.artifact-venv --no-project toolgraph policy compile --agent vibe-coder --profile review --output .toolgraph/policy-bundle.json
         working-directory: smoke
 
+  # Executes docs/notebooks from a wheel install, the way a reader's kernel
+  # runs it. The default test suite only checks the committed outputs.
+  # Required through ci-required: a notebook that no longer runs is a broken
+  # first-run path.
+  notebooks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - run: uv build --wheel
+      - run: uv venv "$RUNNER_TEMP/notebook-venv"
+      - name: Locate built wheel
+        run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
+      - run: uv pip install --python "$RUNNER_TEMP/notebook-venv/bin/python" "${{ env.WHEEL }}[ladybug]" nbclient ipykernel
+      - name: Execute the notebooks against the installed wheel
+        run: TOOLGRAPH_NOTEBOOK_PYTHON="$RUNNER_TEMP/notebook-venv/bin/python" uv run pytest -q -rs tests/test_notebooks.py
+
   minimum-mcp:
     runs-on: ubuntu-latest
     steps:
@@ -198,6 +219,7 @@ jobs:
       - test-neo4j
       - artifact-smoke
       - minimum-mcp
+      - notebooks
       - audit-runtime
       - audit-extras
       - package
