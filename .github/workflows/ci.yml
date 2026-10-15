@@ -93,6 +93,8 @@ jobs:
 
   # Executes docs/notebooks from a wheel install, the way a reader's kernel
   # runs it. The default test suite only checks the committed outputs.
+  # Required through ci-required: a notebook that no longer runs is a broken
+  # first-run path.
   notebooks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -217,6 +219,7 @@ jobs:
       - test-neo4j
       - artifact-smoke
       - minimum-mcp
+      - notebooks
       - audit-runtime
       - audit-extras
       - package
