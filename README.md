@@ -444,8 +444,9 @@ on stdout first; usage errors print click's usage text).
 - `unsafe-tools` (CLI) and the `unsafe_callable_tools` MCP tool both
   default to `classification='violation'` only; pass `--all` (CLI) or
   `include_authorized: true` (MCP) to see operator-declared exceptions
-  too. Both surfaces also carry `agent_found: bool` so a typo'd agent
-  doesn't look like an agent with zero unsafe tools.
+  too. Neither lets a typo'd agent look like an agent with zero unsafe
+  tools: the MCP tool carries `agent_found: false`, and the CLI prints
+  `AGENT_NOT_FOUND` on stderr and exits 1.
 
 ### Result classification
 
@@ -630,7 +631,10 @@ The first consumer of this surface is the memtomem-stm proxy
 `rank_features` over MCP stdio (`toolgraph serve`) and feeds the verdicts
 into its tool-exposure hard filter. The gate exhibit carries the consumer's
 default `agent_id` (`stm-proxy`) as a wiring fixture, so the consult path
-is demoable against the exhibit graph:
+is demoable against the exhibit graph. Load it first with the gate demo's
+`crawl` and `ingest-manifest` commands under [Quickstart](#quickstart):
+ingesting `examples/governance.yaml` afterwards, as the step-by-step block
+does, replaces the gate governance and removes `stm-proxy`.
 
 ```bash
 uv run toolgraph eligible-tools stm-proxy \
