@@ -49,3 +49,6 @@ catalog change requires generating and reviewing a new expectation artifact.
 This proposal is implemented for review without promoting the ADR to Accepted.
 Whole-organization analysis, automatic application, hosted UI and notification
 workflows are outside this first version.
+
+Technical tests do not establish issue #158's proposed human-review pilot targets;
+that pilot remains unvalidated.

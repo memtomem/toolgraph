@@ -39,6 +39,7 @@ from toolgraph.manifest.parser import load_governance
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
 from toolgraph.policy_impact import (
     build_policy_impact,
+    check_markdown,
     check_policy_impact,
     impact_markdown,
     load_impact,
@@ -913,19 +914,7 @@ def policy_check(
     if format is AuditReportFormat.json:
         typer.echo(json.dumps(result, indent=2))
     else:
-        typer.echo("Policy regression check: " + ("PASS" if result["passed"] else "FAIL"))
-        for row in result["rows"]:
-            # JSON quoting keeps control characters inert in terminal output.
-            typer.echo(
-                json.dumps(
-                    {
-                        "candidate": row["candidate"],
-                        "matches": row["matches"],
-                        "expected": row["expected"]["reason"] or row["expected"]["decision"],
-                        "actual": row["actual"]["reason"] or row["actual"]["decision"],
-                    }
-                )
-            )
+        typer.echo(check_markdown(result), nl=False)
     if not result["passed"]:
         raise typer.Exit(code=1)
 

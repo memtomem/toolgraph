@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
 from collections import defaultdict
@@ -135,6 +136,15 @@ def _current(s, agent, candidates, resolved):
     return ranked, facts
 
 
+def _backed(provenance):
+    return bool(provenance.get("evidence") and provenance["evidence"].strip())
+
+
+def _add_route(projection, routes, route):
+    projection.account(route)
+    routes.append(route)
+
+
 def _hypothetical(s, gov, normalized, agent, candidates, resolved, observed_facts):
     """Replace authored edges using ingest's normalized rows; retain crawl facts."""
     grants = {(a, key) for a, key, *_ in normalized["resolved_grants"]}
@@ -163,28 +173,21 @@ def _hypothetical(s, gov, normalized, agent, candidates, resolved, observed_fact
         }
         paths = []
 
-        def backed(prov):
-            return bool(prov.get("evidence") and prov["evidence"].strip())
-
         routes = []
 
-        def add_route(route, target=routes):
-            s.account(route)
-            target.append(route)
-
         for mode, resource, prov in access[key]:
-            if not backed(prov):
+            if not _backed(prov):
                 f["has_unbacked_edges"] = True
             for pid, policy_prov in bindings.get(("resource", resource), []):
-                if not backed(policy_prov):
+                if not _backed(policy_prov):
                     f["has_unbacked_edges"] = True
                 if policies[pid] == "DENY":
-                    add_route(("resource", mode, resource, pid, prov, policy_prov))
+                    _add_route(s, routes, ("resource", mode, resource, pid, prov, policy_prov))
         for pid, prov in bindings.get(("tool", key), []):
-            if not backed(prov):
+            if not _backed(prov):
                 f["has_unbacked_edges"] = True
             if policies[pid] == "DENY":
-                add_route(("tool", None, None, pid, prov, None))
+                _add_route(s, routes, ("tool", None, None, pid, prov, None))
         # Match the database route ordering and resource-specific exception priority.
         routes.sort(key=lambda x: (x[0], x[2] or "", x[3], x[1] or ""))
         for via, mode, resource, pid, prov, policy_prov in routes:
@@ -356,12 +359,15 @@ def check_policy_impact(report: ImpactReport) -> dict[str, Any]:
             state = _state(s)
             resolved = queries.resolve_tool_refs(s, candidates)
             catalog = _catalog(s, resolved)
-            if (
-                state.instance_id != report.graph_state.instance_id
-                or catalog != report.catalog_digest
-            ):
+            if state.instance_id != report.graph_state.instance_id:
                 raise PolicyImpactError(
-                    "incompatible graph instance or scoped catalog; regenerate expectations"
+                    "incompatible graph instance; regenerate reviewed expectations"
+                )
+            if catalog != report.catalog_digest:
+                raise PolicyImpactError(
+                    "incompatible scoped catalog: tool resolution, exposure, or contract changed; "
+                    "check crawl/server status and restore unintended changes before retrying. "
+                    "For intended catalog changes, regenerate and review expectations"
                 )
             ranked, _ = _current(s, report.agent, candidates, resolved)
             actual = _decisions(ranked, report.profile)
@@ -404,9 +410,7 @@ def check_policy_impact(report: ImpactReport) -> dict[str, Any]:
 
 def _display(value):
     """Escape untrusted identifiers for passive Markdown display only."""
-    import html
-
-    return re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", html.escape(str(value)))
+    return html.escape(re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", str(value)), quote=False)
 
 
 def impact_markdown(report: dict) -> str:
@@ -437,10 +441,33 @@ def impact_markdown(report: dict) -> str:
             if not evidence:
                 lines.append("\nNo DENY path evidence for this scoped decision.")
             for path in evidence:
-                lines.append(
-                    "\n- " + _display(json.dumps(path, ensure_ascii=False, sort_keys=True))
-                )
+                lines.append("\n" + _json_block(path))
     if report["notices"]:
         lines.extend(["", "## Notices", *["- " + _display(n) for n in report["notices"]]])
     lines.extend(["", f"Regression expectations ready: {report['regression_ready']}."])
+    return "\n".join(lines) + "\n"
+
+
+def _json_block(value):
+    """Keep JSON readable while preventing embedded text from closing its fence."""
+    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
+    longest = max((len(run) for run in re.findall(r"`+", payload)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}json\n{payload}\n{fence}"
+
+
+def check_markdown(result: dict) -> str:
+    lines = [
+        "# Policy regression check: " + ("PASS" if result["passed"] else "FAIL"),
+        "",
+        f"Expected governance digest: `{result['expected_governance_digest']}`",
+        f"Current governance digest: `{result['current_governance_digest']}`",
+        "",
+        "| Candidate | Matches | Expected | Actual |",
+        "| --- | --- | --- | --- |",
+    ]
+    for row in result["rows"]:
+        expected = row["expected"]["reason"] or row["expected"]["decision"]
+        actual = row["actual"]["reason"] or row["actual"]["decision"]
+        lines.append(f"| {_display(row['candidate'])} | {row['matches']} | {expected} | {actual} |")
     return "\n".join(lines) + "\n"

@@ -463,12 +463,7 @@ def _ingest(
         ids=policy_ids,
     )
 
-    # normalize_resolved deduplicates to last-entry-wins BEFORE batching.
-    # The old per-row loops
-    # deterministically left the later manifest entry's metadata on a
-    # duplicate logical edge, while UNWIND gives repeated SETs on one
-    # relationship an undefined winner. dict insertion order preserves the
-    # manifest order, and overwriting keeps the last occurrence.
+    # normalize_resolved applies last-entry-wins before UNWIND batching.
     if resolved_grants:
         # One UNWIND batch instead of a round trip per grant (the same shape
         # policies and exceptions already use).
@@ -545,7 +540,6 @@ def _ingest(
         if kind != "resource"
         for pid, prov in bindings
     ]
-    # Same last-entry-wins rule for duplicate (node, policy) bindings.
     if resource_bindings:
         tx.run(
             """

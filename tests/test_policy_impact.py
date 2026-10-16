@@ -475,3 +475,36 @@ def test_projection_limit_accepts_exact_boundary_and_rejects_overflow():
     budget.account(payload)
     with pytest.raises(PolicyImpactError, match="budget"):
         budget.account(payload)
+
+
+def test_markdown_preserves_entities_and_contains_hostile_evidence():
+    from toolgraph.policy_impact import _display, _json_block, check_markdown
+
+    displayed = _display("DRIFT: tool 'one::read' & <script># bad")
+    assert "'one::read'" in displayed
+    assert "&amp;" in displayed and "&lt;script&gt;" in displayed
+    assert "&\\#" not in displayed and "<script>" not in displayed
+    evidence = {"path": "read_note -> file:///x", "reason": "```\n<script>bad</script>\n````"}
+    block = _json_block(evidence)
+    lines = block.splitlines()
+    assert lines[0] == "`````json" and lines[-1] == "`````"
+    assert json.loads("\n".join(lines[1:-1])) == evidence
+    rendered = check_markdown(
+        {
+            "passed": False,
+            "expected_governance_digest": "a" * 64,
+            "current_governance_digest": "b" * 64,
+            "rows": [
+                {
+                    "candidate": "host::a|<script>",
+                    "matches": False,
+                    "expected": {"reason": None, "decision": "eligible"},
+                    "actual": {"reason": "NOT_GRANTED", "decision": "rejected"},
+                }
+            ],
+        }
+    )
+    assert rendered.startswith("# Policy regression check: FAIL")
+    assert "a" * 64 in rendered and "b" * 64 in rendered
+    assert "| Candidate |" in rendered and "NOT_GRANTED" in rendered
+    assert "a\\|&lt;script&gt;" in rendered

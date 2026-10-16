@@ -50,14 +50,20 @@ against the unchanged baseline can therefore fail until the operator separately
 reviews and applies the candidate manifest. Neither command applies it for you.
 `policy check` exits 0 only when every scoped decision, rejection reason, and
 resolved tool key matches; mismatch, unresolved input, or incompatible state
-returns 1. It does not require evidence strings or risk scores to stay identical.
+returns 1. This intentionally treats both a mismatch and an inability to check
+as a failed CI gate. A completed JSON check has `passed: false` for a mismatch;
+operational errors instead emit an error diagnostic without a result. Syntax
+errors retain exit 2. The default Markdown output includes a comparison table
+and both governance digests. It does not require evidence strings or risk
+scores to stay identical.
 
 The artifact binds graph instance, source generation, baseline and proposed
 manifest digests, profile, scope and a scoped catalog fingerprint. Checking
 allows generation/governance changes and reports both expected and current
 governance digests. It refuses a different graph instance or changed resolution,
 exposure or tool contract within the selected scope. Generate and review a new
-artifact after such changes. An unresolved comparison cannot be used as a
+artifact after intentional changes. For unexpected exposure changes, check
+crawl/server status and restore the catalog before retrying. An unresolved comparison cannot be used as a
 regression expectation, including when an agent is newly introduced.
 
 Expectations are operator-controlled local inputs, not signed evidence or
@@ -96,5 +102,4 @@ symlink or hardlink aliases. Existing structural dry-run and bundle schemas
 are unchanged.
 
 See [Proposed ADR-0015](adr/0015-policy-impact-preview.md) for the evaluation
-boundary. This feature's technical tests do not establish the issue's proposed
-human-review pilot targets.
+boundary.
