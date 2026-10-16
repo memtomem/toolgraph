@@ -160,6 +160,26 @@ def _resolve_problem(ref: str, matches: list[str]) -> str:
     return f"ambiguous {matches}" if matches else "not found"
 
 
+def normalize_resolved(resolved: dict[str, Any]) -> dict[str, Any]:
+    """Canonical last-entry-wins edges shared by ingest and hypothetical evaluation."""
+    result = dict(resolved)
+    for field_name, width in (
+        ("resolved_grants", 2),
+        ("resolved_access", 3),
+        ("resolved_exceptions", 4),
+    ):
+        result[field_name] = list({row[:width]: row for row in resolved[field_name]}.values())
+    bindings = {}
+    for kind, ref, entries in resolved["resolved_governed"]:
+        for pid, provenance in entries:
+            bindings[(kind, ref, pid)] = provenance
+    grouped = {}
+    for (kind, ref, pid), provenance in bindings.items():
+        grouped.setdefault((kind, ref), []).append((pid, provenance))
+    result["resolved_governed"] = [(kind, ref, entries) for (kind, ref), entries in grouped.items()]
+    return result
+
+
 def _validate_manifest(
     tx: ManagedTransaction | Session,
     gov: Governance,
@@ -372,7 +392,7 @@ def _validate_manifest(
         "resolved_exceptions": resolved_exceptions,
         "known_agents": known_agents,
     }
-    return warnings, notices, resolved
+    return warnings, notices, normalize_resolved(resolved)
 
 
 def _ingest(
@@ -443,13 +463,12 @@ def _ingest(
         ids=policy_ids,
     )
 
-    # Deduplicate to last-entry-wins BEFORE batching: the old per-row loops
+    # normalize_resolved deduplicates to last-entry-wins BEFORE batching.
+    # The old per-row loops
     # deterministically left the later manifest entry's metadata on a
     # duplicate logical edge, while UNWIND gives repeated SETs on one
     # relationship an undefined winner. dict insertion order preserves the
     # manifest order, and overwriting keeps the last occurrence.
-    resolved_grants = list({(row[0], row[1]): row for row in resolved_grants}.values())
-    resolved_access = list({(row[0], row[1], row[2]): row for row in resolved_access}.values())
     if resolved_grants:
         # One UNWIND batch instead of a round trip per grant (the same shape
         # policies and exceptions already use).
@@ -489,7 +508,6 @@ def _ingest(
             rows=batch,
         )
 
-    resolved_exceptions = list({row[:4]: row for row in resolved_exceptions}.values())
     if resolved_exceptions:
         tx.run(
             """
@@ -528,8 +546,6 @@ def _ingest(
         for pid, prov in bindings
     ]
     # Same last-entry-wins rule for duplicate (node, policy) bindings.
-    resource_bindings = list({(row["ref"], row["pid"]): row for row in resource_bindings}.values())
-    tool_bindings = list({(row["ref"], row["pid"]): row for row in tool_bindings}.values())
     if resource_bindings:
         tx.run(
             """

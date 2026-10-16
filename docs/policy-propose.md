@@ -99,3 +99,9 @@ auto-commit write issued through them (verified on Neo4j 5.26 over `bolt://`).
 That is an access mode, not access control: it does not replace a read-only
 database role, and a transaction function run with `execute_write` overrides
 it.
+
+## Comparing a complete proposed manifest
+
+The structural `--dry-run` above remains unchanged. Use
+[`policy impact`](policy-impact.md) for before/after eligibility over an explicit
+agent/tool scope, or `policy check` to verify a saved proposed-side expectation.

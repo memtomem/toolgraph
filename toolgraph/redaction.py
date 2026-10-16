@@ -122,6 +122,14 @@ def redact_text(value: object) -> str:
     """Scrub URLs and common credential-shaped values from an error message."""
     text = str(value)
     text = _URI.sub(lambda match: _diagnostic_uri_origin(match.group(0)), text)
+    return redact_credentials(text)
+
+
+def redact_credentials(text: str) -> str:
+    """Scrub credential-shaped free text without removing URI paths.
+
+    Artifact callers must first apply their URI evidence-redaction policy.
+    """
     text = _AUTHORIZATION.sub("Authorization=<redacted>", text)
     text = _BEARER.sub(lambda match: f"{match.group(1)} <redacted>", text)
     text = _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)

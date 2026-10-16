@@ -212,3 +212,20 @@ fleet 설정에서는 모든 서버에 고유한 `name`을 지정하세요. 이�
 - `DRIFTED`: governance가 최신 crawl에 없는 도구를 참조하고 있습니다.
 - governance 상태나 graph identity가 없으면 번들을 생성하지 않습니다.
 - `DENY`가 실제 호출 차단이 되는 시점은 gateway가 번들을 적용한 뒤입니다.
+
+## 정책 변경 영향 미리보기
+
+별도 파일로 수정한 정책이 어떤 도구의 판정을 바꾸는지 적용 전에 비교할 수 있습니다.
+
+```sh
+toolgraph policy impact proposed.yaml policy-gateway::read_note policy-gateway::publish_note \
+  --agent vibe-coder --profile review --format json --output impact.json
+toolgraph policy check impact.json
+```
+
+`impact`는 실제 DB를 바꾸지 않습니다. `check`는 JSON의 **제안 정책 판정**을
+현재 DB와 비교하므로, 제안 정책을 아직 적용하지 않았다면 실패할 수 있습니다.
+필요한 manifest 적용은 별도 `ingest-manifest` 작업입니다. 선택한 범위만 비교하며
+미해결 참조가 있는 보고서는 회귀 기대값으로 사용할 수 없습니다. 그래프 reset 또는
+선택 도구의 catalog 변경 뒤에는 보고서를 다시 생성·검토해야 합니다.
+[전체 계약과 사용 예제](policy-impact.md)를 참고하세요.
