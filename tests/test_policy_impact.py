@@ -520,6 +520,8 @@ def test_markdown_preserves_entities_and_contains_hostile_evidence():
         "\u061c",
         "\u200e",
         "\u200f",
+        "\u2028",
+        "\u2029",
         "\u202a",
         "\u202e",
         "\u2066",
@@ -539,6 +541,9 @@ def test_display_controls_are_visible_without_changing_json_or_identity(control)
     assert control not in display
     assert escaped.replace("\\", "\\\\") in display
     assert "서버::읽기" in display
+    literal_identity = "서버::읽기" + escaped + "끝"
+    assert _display(literal_identity) != display
+    assert escaped.replace("\\", "\\\\\\\\") in _display(literal_identity)
     evidence = {"evidence": "한글 설명" + control, "literal": r"\u202e", "line": "a\nb"}
     block = _json_block(evidence)
     assert control not in block

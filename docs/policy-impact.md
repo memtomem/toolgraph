@@ -96,12 +96,13 @@ graph remains unchanged after the command returns.
 
 Opaque agent/tool identities are validated and preserved. Evidence is scrubbed
 for URI credentials/query data and credential-shaped free text. Display
-escaping makes Unicode control and format characters visible without changing
-executable JSON identities; evidence JSON still decodes to its original values.
+escaping makes Unicode control/format characters and line/paragraph separators
+visible, and distinguishes their escapes from literal backslash text. Executable
+JSON identities are unchanged; evidence JSON still decodes to its original values.
 Files written via `--output` use the private atomic writer (0600); stdout follows
-the caller's storage permissions. Output cannot overwrite the input manifest, including
-symlink or hardlink aliases. Existing structural dry-run and bundle schemas
-are unchanged.
+the caller's storage permissions. Output cannot overwrite the input manifest,
+including symlink or hardlink aliases. Existing structural dry-run and bundle
+schemas are unchanged.
 
 See [Proposed ADR-0015](adr/0015-policy-impact-preview.md) for the evaluation
 boundary.
