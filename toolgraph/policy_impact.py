@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import json
 import re
+import unicodedata
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -408,9 +409,21 @@ def check_policy_impact(report: ImpactReport) -> dict[str, Any]:
     return result
 
 
+def _visible_controls(text: str) -> str:
+    """Make control/format characters visible without rewriting artifact identities."""
+    return "".join(
+        json.dumps(char, ensure_ascii=True)[1:-1]
+        if unicodedata.category(char) in {"Cc", "Cf"}
+        else char
+        for char in text
+    )
+
+
 def _display(value):
     """Escape untrusted identifiers for passive Markdown display only."""
-    return html.escape(re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", str(value)), quote=False)
+    return html.escape(
+        re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", _visible_controls(str(value))), quote=False
+    )
 
 
 def impact_markdown(report: dict) -> str:
@@ -451,6 +464,7 @@ def impact_markdown(report: dict) -> str:
 def _json_block(value):
     """Keep JSON readable while preventing embedded text from closing its fence."""
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
+    payload = "\n".join(_visible_controls(line) for line in payload.split("\n"))
     longest = max((len(run) for run in re.findall(r"`+", payload)), default=0)
     fence = "`" * max(3, longest + 1)
     return f"{fence}json\n{payload}\n{fence}"
