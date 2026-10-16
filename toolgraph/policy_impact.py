@@ -410,10 +410,10 @@ def check_policy_impact(report: ImpactReport) -> dict[str, Any]:
 
 
 def _visible_controls(text: str) -> str:
-    """Make control/format characters visible without rewriting artifact identities."""
+    """Expose controls, format characters and separators for display only."""
     return "".join(
         json.dumps(char, ensure_ascii=True)[1:-1]
-        if unicodedata.category(char) in {"Cc", "Cf"}
+        if unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"}
         else char
         for char in text
     )
@@ -421,9 +421,8 @@ def _visible_controls(text: str) -> str:
 
 def _display(value):
     """Escape untrusted identifiers for passive Markdown display only."""
-    return html.escape(
-        re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", _visible_controls(str(value))), quote=False
-    )
+    text = _visible_controls(json.dumps(str(value), ensure_ascii=False)[1:-1])
+    return html.escape(re.sub(r"([\\`*_{}\[\]()#+.!|~-])", r"\\\1", text), quote=False)
 
 
 def impact_markdown(report: dict) -> str:
