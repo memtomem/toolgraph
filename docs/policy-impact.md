@@ -63,8 +63,9 @@ allows generation/governance changes and reports both expected and current
 governance digests. It refuses a different graph instance or changed resolution,
 exposure or tool contract within the selected scope. Generate and review a new
 artifact after intentional changes. For unexpected exposure changes, check
-crawl/server status and restore the catalog before retrying. An unresolved comparison cannot be used as a
-regression expectation, including when an agent is newly introduced.
+crawl/server status and restore the catalog before retrying. An unresolved
+comparison cannot be used as a regression expectation, including when an agent
+is newly introduced.
 
 Expectations are operator-controlled local inputs, not signed evidence or
 approval tokens. Checking them never grants authority. Use the explicit check
@@ -95,9 +96,10 @@ graph remains unchanged after the command returns.
 
 Opaque agent/tool identities are validated and preserved. Evidence is scrubbed
 for URI credentials/query data and credential-shaped free text. Display
-escaping does not change executable JSON identities. Files written via
-`--output` use the private atomic writer (0600); stdout follows the caller's
-storage permissions. Output cannot overwrite the input manifest, including
+escaping makes Unicode control and format characters visible without changing
+executable JSON identities; evidence JSON still decodes to its original values.
+Files written via `--output` use the private atomic writer (0600); stdout follows
+the caller's storage permissions. Output cannot overwrite the input manifest, including
 symlink or hardlink aliases. Existing structural dry-run and bundle schemas
 are unchanged.
 

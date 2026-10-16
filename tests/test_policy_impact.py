@@ -292,7 +292,10 @@ def test_artifact_schema_privacy_and_cli(backend_graph, tmp_path, artifact_forma
     assert result.exit_code == 0, result.output
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
-    assert runner.invoke(cli.app, ["policy", "check", str(path)]).exit_code == 1
+    checked = runner.invoke(cli.app, ["policy", "check", str(path), "--format", "json"])
+    assert checked.exit_code == 1
+    assert json.loads(checked.stdout)["passed"] is False
+    assert "ERROR:" not in checked.stderr
     assert ingest_governance(gov).applied
     assert runner.invoke(cli.app, ["policy", "check", str(path)]).exit_code == 0
     original = manifest.read_bytes()
@@ -332,7 +335,7 @@ def test_artifact_tampering_and_incompatible_catalog(backend_graph, tmp_path):
             tools=[ToolRecord(name="read", description="changed"), ToolRecord(name="write")],
         )
     )
-    with pytest.raises(PolicyImpactError, match="incompatible"):
+    with pytest.raises(PolicyImpactError, match="incompatible scoped catalog"):
         check_policy_impact(ImpactReport.model_validate(report))
 
 
@@ -397,7 +400,7 @@ def test_catalog_reset_requires_new_expectations(backend_graph):
     with driver.session() as s:
         s.run("MATCH (m:GraphMeta) SET m.instance_id='other-instance'")
     before = graph_content()
-    with pytest.raises(PolicyImpactError, match="incompatible"):
+    with pytest.raises(PolicyImpactError, match="incompatible graph instance"):
         check_policy_impact(report)
     assert graph_content() == before
 
@@ -508,3 +511,36 @@ def test_markdown_preserves_entities_and_contains_hostile_evidence():
     assert "a" * 64 in rendered and "b" * 64 in rendered
     assert "| Candidate |" in rendered and "NOT_GRANTED" in rendered
     assert "a\\|&lt;script&gt;" in rendered
+
+
+@pytest.mark.parametrize(
+    "control",
+    [chr(c) for c in range(0x80, 0xA0)]
+    + [
+        "\u061c",
+        "\u200e",
+        "\u200f",
+        "\u202a",
+        "\u202e",
+        "\u2066",
+        "\u2069",
+        "\ufeff",
+        "\U000e0001",
+    ],
+)
+def test_display_controls_are_visible_without_changing_json_or_identity(control):
+    from toolgraph.policy_impact import _display, _json_block
+    from toolgraph.policy_impact_models import clean_identity
+
+    identity = "서버::읽기" + control + "끝"
+    assert clean_identity(identity) == identity
+    escaped = json.dumps(control, ensure_ascii=True)[1:-1]
+    display = _display(identity)
+    assert control not in display
+    assert escaped.replace("\\", "\\\\") in display
+    assert "서버::읽기" in display
+    evidence = {"evidence": "한글 설명" + control, "literal": r"\u202e", "line": "a\nb"}
+    block = _json_block(evidence)
+    assert control not in block
+    assert "한글 설명" in block and escaped in block
+    assert json.loads("\n".join(block.splitlines()[1:-1])) == evidence
