@@ -1,0 +1,291 @@
+{
+  "$defs": {
+    "ImpactDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "enum": [
+            "eligible",
+            "rejected",
+            "unresolved"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "NOT_GRANTED",
+                "DENY_VIOLATION",
+                "DENY_GOVERNED",
+                "DRIFTED",
+                "UNMAPPED",
+                "AGENT_NOT_FOUND",
+                "TOOL_NOT_FOUND",
+                "AMBIGUOUS_TOOL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "tool_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Tool Key"
+        },
+        "agent_found": {
+          "title": "Agent Found",
+          "type": "boolean"
+        },
+        "risk_score": {
+          "anyOf": [
+            {
+              "maximum": 1,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Risk Score"
+        },
+        "evidence": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "is_drifted": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Drifted"
+        },
+        "is_unmapped": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Unmapped"
+        },
+        "has_unbacked_edges": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Has Unbacked Edges"
+        }
+      },
+      "required": [
+        "decision",
+        "reason",
+        "tool_key",
+        "agent_found",
+        "risk_score",
+        "evidence",
+        "is_drifted",
+        "is_unmapped",
+        "has_unbacked_edges"
+      ],
+      "title": "ImpactDecision",
+      "type": "object"
+    },
+    "ImpactRow": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "title": "Candidate",
+          "type": "string"
+        },
+        "before": {
+          "$ref": "#/$defs/ImpactDecision"
+        },
+        "after": {
+          "$ref": "#/$defs/ImpactDecision"
+        },
+        "change": {
+          "enum": [
+            "newly_eligible",
+            "newly_rejected",
+            "unchanged",
+            "unresolved"
+          ],
+          "title": "Change",
+          "type": "string"
+        },
+        "details_changed": {
+          "title": "Details Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "candidate",
+        "before",
+        "after",
+        "change",
+        "details_changed"
+      ],
+      "title": "ImpactRow",
+      "type": "object"
+    },
+    "ImpactState": {
+      "additionalProperties": false,
+      "properties": {
+        "instance_id": {
+          "minLength": 1,
+          "title": "Instance Id",
+          "type": "string"
+        },
+        "generation": {
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "instance_id",
+        "generation"
+      ],
+      "title": "ImpactState",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "kind": {
+      "const": "toolgraph.policy-impact",
+      "title": "Kind",
+      "type": "string"
+    },
+    "mode": {
+      "const": "advisory",
+      "title": "Mode",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$",
+      "title": "Created At",
+      "type": "string"
+    },
+    "graph_state": {
+      "$ref": "#/$defs/ImpactState"
+    },
+    "baseline_governance_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Baseline Governance Digest",
+      "type": "string"
+    },
+    "proposed_governance_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Proposed Governance Digest",
+      "type": "string"
+    },
+    "catalog_digest": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Catalog Digest",
+      "type": "string"
+    },
+    "agent": {
+      "title": "Agent",
+      "type": "string"
+    },
+    "profile": {
+      "enum": [
+        "strict",
+        "review",
+        "explore"
+      ],
+      "title": "Profile",
+      "type": "string"
+    },
+    "candidates": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "title": "Candidates",
+      "type": "array"
+    },
+    "complete": {
+      "const": true,
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/ImpactRow"
+      },
+      "maxItems": 4096,
+      "minItems": 1,
+      "title": "Rows",
+      "type": "array"
+    },
+    "regression_ready": {
+      "title": "Regression Ready",
+      "type": "boolean"
+    },
+    "notices": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Notices",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "kind",
+    "mode",
+    "created_at",
+    "graph_state",
+    "baseline_governance_digest",
+    "proposed_governance_digest",
+    "catalog_digest",
+    "agent",
+    "profile",
+    "candidates",
+    "complete",
+    "rows",
+    "regression_ready",
+    "notices"
+  ],
+  "title": "ImpactReport",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toolgraph.dev/contracts/policy-impact.schema.json",
+  "description": "Complete scoped advisory comparison. Proposed-side decisions are operator-controlled regression expectations, never authorization grants."
+}

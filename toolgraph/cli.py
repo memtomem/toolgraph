@@ -37,6 +37,13 @@ from toolgraph.health import run_doctor
 from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
+from toolgraph.policy_impact import (
+    build_policy_impact,
+    check_markdown,
+    check_policy_impact,
+    impact_markdown,
+    load_impact,
+)
 from toolgraph.policy_propose import PolicyProposeError, run_propose
 from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
 from toolgraph.preflight import build_preflight
@@ -847,6 +854,69 @@ def control_preflight(
             indent=2,
         )
     )
+
+
+@policy_app.command("impact")
+@_reports_backend_outage
+def policy_impact(
+    governance: Path = typer.Argument(..., help="Candidate replacement governance manifest."),
+    candidates: list[str] = typer.Argument(
+        ..., help="Explicit tool refs; qualified keys preferred."
+    ),
+    agent: str = typer.Option(..., "--agent"),
+    profile: str = typer.Option(selector.DEFAULT_PROFILE, "--profile"),
+    format: AuditReportFormat = typer.Option(AuditReportFormat.markdown, "--format"),
+    output: Path | None = typer.Option(None, "--output", help="Private report destination."),
+    strict_drift: bool = typer.Option(False, "--strict-drift"),
+) -> None:
+    """Compare current and proposed selector decisions without applying policy."""
+    _selector_profile(profile)
+    try:
+        if output is not None and (
+            output.resolve() == governance.resolve()
+            or (output.exists() and governance.exists() and output.samefile(governance))
+        ):
+            raise ValueError("report output must not overwrite the input manifest")
+        report = build_policy_impact(
+            load_governance(governance),
+            agent=agent,
+            candidates=candidates,
+            profile=profile,
+            strict_drift=strict_drift,
+        )
+        payload = (
+            canonical_json_bytes(report)
+            if format is AuditReportFormat.json
+            else impact_markdown(report).encode("utf-8")
+        )
+        if output is None:
+            typer.echo(payload.decode("utf-8"), nl=False)
+        else:
+            digest = atomic_write_private(output, payload)
+            typer.echo(
+                json.dumps({"output": str(output), "digest": digest, "kind": report["kind"]})
+            )
+    except (RuntimeError, OSError, ValueError, yaml.YAMLError) as exc:
+        _fail(exc)
+
+
+@policy_app.command("check")
+@_reports_backend_outage
+def policy_check(
+    impact: Path = typer.Argument(..., help="JSON impact report with proposed-side expectations."),
+    format: AuditReportFormat = typer.Option(AuditReportFormat.markdown, "--format"),
+) -> None:
+    """Explicit regression gate against the current graph; never applies a manifest."""
+    try:
+        result = check_policy_impact(load_impact(impact))
+    except (RuntimeError, OSError, ValueError) as exc:
+        _fail(exc)
+    if format is AuditReportFormat.json:
+        typer.echo(json.dumps(result, indent=2))
+    else:
+        typer.echo(check_markdown(result), nl=False)
+    if not result["passed"]:
+        raise typer.Exit(code=1)
 
 
 @policy_app.command("compile")

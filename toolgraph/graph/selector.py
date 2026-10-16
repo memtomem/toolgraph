@@ -182,6 +182,17 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
         facts = _tool_facts(s, unique_keys, agent)
         deny = _deny_evidence_batch(s, unique_keys, agent=agent)
 
+    return assemble_features(agent, candidates, resolved, facts, deny)
+
+
+def assemble_features(
+    agent: str,
+    candidates: list[str],
+    resolved: dict[str, list[str]],
+    facts: dict[str, dict],
+    deny: dict[str, list[dict]],
+) -> dict:
+    """Pure selector assembly for observed facts or validated hypothetical facts."""
     features: list[dict] = []
     for ref in candidates:  # input order is the contract — never re-sorted
         keys = resolved.get(ref, [])

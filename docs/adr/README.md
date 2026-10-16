@@ -19,6 +19,7 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0012](0012-trace-evidence-policy-review-plan.md) | Trace evidence becomes a human-required policy review plan | Accepted |
 | [0013](0013-bounded-control-plan-preflight.md) | Body-free control plans are advisory topology and policy evidence | Accepted |
 | [0014](0014-explicit-empty-fleet-declaration.md) | Require an explicit empty fleet declaration | Proposed |
+| [0015](0015-policy-impact-preview.md) | Read-only semantic policy impact preview | Proposed |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.

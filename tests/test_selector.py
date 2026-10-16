@@ -344,6 +344,7 @@ def test_schema_profile_enums_match_the_selector():
         "control-preflight.schema.json",
         "observation-window.schema.json",
         "policy-bundle.schema.json",
+        "policy-impact.schema.json",
         "policy-review-plan.schema.json",
         "preflight.schema.json",
     ]

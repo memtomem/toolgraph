@@ -6,6 +6,13 @@ All notable changes to Toolgraph are documented here.
 
 ### Added
 
+- **Read-only policy impact previews**: `toolgraph policy impact proposed.yaml
+  SERVER::TOOL... --agent AGENT` compares current and hypothetical selector
+  decisions with evidence. JSON reports bind graph state, governance digests,
+  profile and scoped catalog; `toolgraph policy check impact.json` checks the
+  proposed-side regression expectations against current state. Neither command
+  applies policy. See [the impact guide](docs/policy-impact.md).
+
 - **A first-run notebook**, `docs/notebooks/01-first-policy-bundle.ipynb`,
   walks the Beginner Guide path one command at a time inside a temporary
   directory. It goes from the quickstart to a compiled bundle, then removes and
