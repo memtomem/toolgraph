@@ -133,6 +133,13 @@ toolgraph policy compile --agent vibe-coder --profile review \
 every crawled server; `--no-prune` keeps them), while a blank file or one
 without the key exits 1 before any server is contacted (ADR-0014).
 
+Each server's catalog is capped at 10,000 records and 4 MiB of retained
+record JSON (`--max-catalog-records`, `--max-catalog-bytes`; ADR-0016). A
+server over the cap fails its crawl rather than loading partially. The cap
+bounds what Toolgraph keeps after the MCP SDK has parsed a page, not what
+the SDK buffers: with mcp 2.3.0, SSE events are limited to 1 MiB each, while
+stdio lines and streamable-HTTP JSON bodies are not limited.
+
 For `ingest-manifest --dry-run --json` and `doctor`, see the
 [preview and diagnostic requirements](docs/policy-propose.md#preview-and-diagnostic-requirements),
 including Neo4j catalog permissions and Ladybug session serialization.

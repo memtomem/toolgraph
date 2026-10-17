@@ -12,12 +12,15 @@ who survives, and refuses to guess identities for unnamed crawl failures.
 from __future__ import annotations
 
 import random
+import sys
+from pathlib import Path
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from toolgraph import cli
+from toolgraph.crawler.client import CatalogBudget
 from toolgraph.crawler.crawl import (
     duplicate_identities,
     duplicate_name_overrides,
@@ -455,3 +458,84 @@ def test_duplicate_name_overrides_reject_before_crawl(graph, tmp_path):
     assert result.exit_code == 1
     # Rejected before connecting to anything — the graph is untouched.
     assert _server_names() == {"ghost"}
+
+
+# --- catalog budget through the CLI (#153, ADR-0016) -----------------------
+
+_SAMPLE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
+
+
+def _sample_tool_keys() -> set[str]:
+    with driver.session() as s:
+        return {
+            r["k"]
+            for r in s.run(
+                "MATCH (:MCPServer {name:'sample'})-[:EXPOSES]->(t:Tool) RETURN t.key AS k"
+            )
+        }
+
+
+def test_named_server_over_budget_keeps_its_old_graph_state(backend_graph, tmp_path):
+    """A budget failure is a crawl failure: the named server is protected, so
+    its previous catalog is not reconciled against the incomplete one, and the
+    rest of the fleet still prunes."""
+    _load("sample", [ToolRecord(name="old_tool")])
+    _load("ghost", [ToolRecord(name="haunt")])
+    spec = {"name": "sample", "transport": "stdio", "command": sys.executable, "args": [_SAMPLE]}
+    path = _write_servers_yaml(tmp_path, [spec])
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", path, "--max-catalog-records", "1"])
+
+    assert result.exit_code == 1
+    assert "CatalogBudgetError: catalog exceeds 1 records" in result.output
+    assert "ExceptionGroup" not in result.output
+    assert _sample_tool_keys() == {"sample::old_tool"}
+    assert _server_names() == {"sample"}  # ghost retired, sample protected
+
+
+def test_unnamed_server_over_budget_skips_the_prune(backend_graph, tmp_path):
+    _load("ghost", [ToolRecord(name="haunt")])
+    path = _write_servers_yaml(
+        tmp_path, [{"transport": "stdio", "command": sys.executable, "args": [_SAMPLE]}]
+    )
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", path, "--max-catalog-bytes", "64"])
+
+    assert result.exit_code == 1
+    assert "CatalogBudgetError: catalog exceeds 64 bytes" in result.output
+    assert "fleet reconciliation skipped" in result.output
+    assert _server_names() == {"ghost"}
+
+
+def test_crawl_forwards_the_budget_options(backend_graph, tmp_path, monkeypatch):
+    seen = []
+
+    def fake_crawl_all(specs, timeout, budget):
+        seen.append(budget)
+        return [], []
+
+    monkeypatch.setattr(cli, "crawl_all", fake_crawl_all)
+    path = _write_servers_yaml(tmp_path, [])
+    args = ["crawl", "--servers", path, "--max-catalog-bytes", "123", "--max-catalog-records", "4"]
+
+    assert CliRunner().invoke(cli.app, args).exit_code == 0
+    assert CliRunner().invoke(cli.app, ["crawl", "--servers", path]).exit_code == 0
+    assert seen == [
+        CatalogBudget(max_records=4, max_bytes=123),
+        CatalogBudget(),
+    ]
+
+
+@pytest.mark.parametrize("option", ["--max-catalog-bytes", "--max-catalog-records"])
+def test_crawl_rejects_a_non_positive_budget_before_reading_servers(
+    backend_graph, tmp_path, monkeypatch, option
+):
+    def never(*_a, **_k):
+        raise AssertionError("crawl_all must not be reached")
+
+    monkeypatch.setattr(cli, "crawl_all", never)
+    result = CliRunner().invoke(
+        cli.app, ["crawl", "--servers", str(tmp_path / "missing.yaml"), option, "0"]
+    )
+    assert result.exit_code == 1
+    assert "Invalid catalog budget" in result.output

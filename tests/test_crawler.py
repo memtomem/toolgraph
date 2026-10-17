@@ -14,10 +14,18 @@ from pathlib import Path
 
 import pytest
 
+from toolgraph.crawler import client as client_mod
 from toolgraph.crawler import crawl as crawl_mod
-from toolgraph.crawler.client import crawl_server
+from toolgraph.crawler.client import (
+    CatalogBudget,
+    CatalogBudgetError,
+    _BudgetMeter,
+    _list_all_resources,
+    _list_all_tools,
+    crawl_server,
+)
 from toolgraph.graph import loader
-from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
+from toolgraph.models import CrawlResult, ResourceRecord, ServersConfig, ServerSpec, ToolRecord
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 from pydantic import ValidationError
@@ -428,7 +436,7 @@ _INVALID_CONCURRENCY = [
 async def test_crawl_all_async_rejects_invalid_concurrency(monkeypatch, value, fleet):
     calls: list[str] = []
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         calls.append(spec.name)
         return CrawlResult(server_name=spec.name)
 
@@ -443,7 +451,7 @@ async def test_crawl_all_async_rejects_invalid_concurrency(monkeypatch, value, f
 def test_crawl_all_rejects_invalid_concurrency(monkeypatch, value, fleet):
     calls: list[str] = []
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         calls.append(spec.name)
         return CrawlResult(server_name=spec.name)
 
@@ -460,7 +468,7 @@ def test_crawl_all_keeps_spec_order_when_completion_order_differs(monkeypatch):
     started: dict[str, asyncio.Event] = {}
     release: dict[str, asyncio.Event] = {}
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         started[spec.name].set()
         await release[spec.name].wait()
         return CrawlResult(server_name=spec.name)
@@ -497,7 +505,7 @@ def test_crawl_all_bounds_in_flight_servers(monkeypatch, concurrency, expected_p
     entered: list[asyncio.Event] = []
     release = None
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
@@ -538,7 +546,7 @@ def test_crawl_all_async_cancellation_propagates_and_queued_never_start(monkeypa
     cleaned: list[str] = []
     first_in = None
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         started.append(spec.name)
         first_in.set()
         try:
@@ -572,7 +580,7 @@ def test_crawl_all_async_cancellation_propagates_and_queued_never_start(monkeypa
 def test_crawl_all_async_partial_failure_keeps_other_results(monkeypatch):
     specs = [_spec(n) for n in ("ok1", "boom", "ok2")]
 
-    async def fake(spec):
+    async def fake(spec, budget=None):
         if spec.name == "boom":
             raise RuntimeError("connection refused")
         return CrawlResult(server_name=spec.name)
@@ -584,3 +592,231 @@ def test_crawl_all_async_partial_failure_keeps_other_results(monkeypatch):
     failed_spec, message = failures[0]
     assert failed_spec is specs[1]
     assert message == "RuntimeError: connection refused"
+
+
+# --- catalog budget (#153, ADR-0016) ---------------------------------------
+
+
+def _tool(name: str, description: str | None = None) -> _FakeTool:
+    t = _FakeTool(name)
+    t.description = description
+    return t
+
+
+def _tool_bytes(name: str, description: str | None = None) -> int:
+    record = ToolRecord(name=name, description=description, input_schema={})
+    return len(record.model_dump_json().encode("utf-8"))
+
+
+def _resource_bytes(uri: str) -> int:
+    return len(ResourceRecord(uri=uri).model_dump_json().encode("utf-8"))
+
+
+def _meter(**kw) -> _BudgetMeter:
+    return _BudgetMeter(CatalogBudget(**kw))
+
+
+async def test_budget_accepts_a_catalog_exactly_at_the_byte_limit():
+    session = _PagedSession(tool_pages=[([_tool("a"), _tool("b")], None)], resource_pages=[])
+    limit = _tool_bytes("a") + _tool_bytes("b")
+    tools = await _list_all_tools(session, _meter(max_bytes=limit))
+    assert [t.name for t in tools] == ["a", "b"]
+
+
+async def test_budget_rejects_one_byte_over_the_limit():
+    session = _PagedSession(tool_pages=[([_tool("a"), _tool("b")], None)], resource_pages=[])
+    limit = _tool_bytes("a") + _tool_bytes("b") - 1
+    with pytest.raises(CatalogBudgetError, match=f"exceeds {limit} bytes"):
+        await _list_all_tools(session, _meter(max_bytes=limit))
+
+
+async def test_budget_record_limit_boundary():
+    page = [_tool(n) for n in "abc"]
+    ok = _PagedSession(tool_pages=[(page, None)], resource_pages=[])
+    assert len(await _list_all_tools(ok, _meter(max_records=3))) == 3
+    over = _PagedSession(tool_pages=[(page, None)], resource_pages=[])
+    with pytest.raises(CatalogBudgetError, match="exceeds 2 records"):
+        await _list_all_tools(over, _meter(max_records=2))
+
+
+async def test_budget_applies_to_resources():
+    session = _PagedSession(
+        tool_pages=[],
+        resource_pages=[([_FakeResource("file:///a"), _FakeResource("file:///b")], None)],
+    )
+    with pytest.raises(CatalogBudgetError, match="exceeds 1 records"):
+        await _list_all_resources(session, _meter(max_records=1))
+
+
+async def test_budget_is_shared_by_tools_and_resources():
+    """Each listing fits alone; together they cross the budget."""
+    meter = _meter(max_bytes=_tool_bytes("a") + _resource_bytes("file:///r") - 1)
+    tools = _PagedSession(tool_pages=[([_tool("a")], None)], resource_pages=[])
+    resources = _PagedSession(tool_pages=[], resource_pages=[([_FakeResource("file:///r")], None)])
+    assert len(await _list_all_tools(tools, meter)) == 1
+    with pytest.raises(CatalogBudgetError):
+        await _list_all_resources(resources, meter)
+
+
+async def test_issue_probe_million_char_description_fits_default_but_not_one_megabyte():
+    """The #153 probe: 1,000,000 ASCII chars serialize to just over 1,000,000
+    bytes. It is inside the 4 MiB default, and rejected by a 1,000,000-byte
+    budget."""
+    big = "x" * 1_000_000
+    assert _tool_bytes("big", big) > 1_000_000
+    fits = _PagedSession(tool_pages=[([_tool("big", big)], None)], resource_pages=[])
+    assert len(await _list_all_tools(fits, _meter())) == 1
+    over = _PagedSession(tool_pages=[([_tool("big", big)], None)], resource_pages=[])
+    with pytest.raises(CatalogBudgetError):
+        await _list_all_tools(over, _meter(max_bytes=1_000_000))
+
+
+async def test_single_field_over_the_default_budget_is_rejected():
+    huge = "x" * (client_mod.DEFAULT_MAX_CATALOG_BYTES + 1)
+    session = _PagedSession(tool_pages=[([_tool("huge", huge)], None)], resource_pages=[])
+    with pytest.raises(CatalogBudgetError):
+        await _list_all_tools(session)
+
+
+async def test_budget_counts_utf8_bytes_not_characters():
+    text = "한" * 100  # 100 characters, 300 UTF-8 bytes
+    size = _tool_bytes("k", text)
+    assert size > 300 and size - 300 < 200  # JSON overhead is small and ASCII
+    within_chars = size - 150  # more than the character count, fewer than the bytes
+    session = _PagedSession(tool_pages=[([_tool("k", text)], None)], resource_pages=[])
+    with pytest.raises(CatalogBudgetError):
+        await _list_all_tools(session, _meter(max_bytes=within_chars))
+
+
+async def test_cumulative_pages_fail_on_a_later_page_and_stop_requesting():
+    pages = [([_tool(f"t{i}")], str(i + 1)) for i in range(49)] + [([_tool("t49")], None)]
+    session = _PagedSession(tool_pages=pages, resource_pages=[])
+    limit = sum(_tool_bytes(f"t{i}") for i in range(10))  # ten records fit
+    with pytest.raises(CatalogBudgetError):
+        await _list_all_tools(session, _meter(max_bytes=limit))
+    # Page 11 overflowed; nothing past it was requested.
+    assert len(session.tool_calls) == 11
+
+
+async def test_single_large_page_over_the_budget():
+    page = [_tool(f"t{i}") for i in range(100)]
+    session = _PagedSession(tool_pages=[(page, None)], resource_pages=[])
+    with pytest.raises(CatalogBudgetError, match="exceeds 99 records"):
+        await _list_all_tools(session, _meter(max_records=99))
+    assert session.tool_calls == [None]
+
+
+async def test_budget_keeps_empty_cursor_continuation_and_page_cap(monkeypatch):
+    session = _EmptyCursorSession()
+    assert [t.name for t in await _list_all_tools(session, _meter())] == ["a", "b"]
+    monkeypatch.setattr(client_mod, "MAX_LIST_PAGES", 5)
+    with pytest.raises(client_mod.PaginationLimitError):
+        await _list_all_tools(_RunawayCursorSession(), _meter())
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_records": 0},
+        {"max_records": -1},
+        {"max_records": True},
+        {"max_bytes": 0},
+        {"max_bytes": 1.5},
+        {"max_bytes": "4"},
+    ],
+    ids=repr,
+)
+def test_catalog_budget_rejects_non_positive_or_non_int(kwargs):
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        CatalogBudget(**kwargs)
+
+
+def test_catalog_budget_defaults():
+    budget = CatalogBudget()
+    assert budget.max_records == 10_000
+    assert budget.max_bytes == 4 * 1024 * 1024
+
+
+async def test_crawl_server_without_budget_uses_defaults(stdio_spec, monkeypatch):
+    """A direct library call is protected by the defaults."""
+    seen: list[CatalogBudget] = []
+    real = client_mod._list_all_tools
+
+    async def spy(session, meter=None):
+        seen.append(meter.budget)
+        return await real(session, meter)
+
+    monkeypatch.setattr(client_mod, "_list_all_tools", spy)
+    await crawl_server(stdio_spec)
+    assert seen == [CatalogBudget()]
+
+
+_TINY_SERVER = """
+from mcp.server.mcpserver import MCPServer
+
+mcp = MCPServer("tiny")
+
+
+@mcp.tool()
+def ping() -> str:
+    \"\"\"Ping.\"\"\"
+    return "pong"
+
+
+mcp.run()
+"""
+
+
+@pytest.fixture
+def tiny_spec(tmp_path) -> ServerSpec:
+    """A one-tool stdio server: a peer smaller than the sample server's 3 records."""
+    path = tmp_path / "tiny_server.py"
+    path.write_text(_TINY_SERVER)
+    return ServerSpec(name="tiny", transport="stdio", command=sys.executable, args=[str(path)])
+
+
+def test_over_budget_server_fails_while_its_peer_loads(stdio_spec, tiny_spec):
+    """Real stdio sessions, mixed outcome: the 3-record sample server is over a
+    2-record budget and fails with the budget error itself (not
+    ``ExceptionGroup``); the 1-record peer loads in the same pass."""
+    results, failures = crawl_all(
+        [stdio_spec, tiny_spec], timeout=30, budget=CatalogBudget(max_records=2)
+    )
+    assert [r.server_name for r in results] == ["tiny"]
+    assert [spec.name for spec, _ in failures] == ["sample"]
+    message = failures[0][1]
+    assert message.startswith("CatalogBudgetError: catalog exceeds 2 records")
+    assert "ExceptionGroup" not in message
+
+
+def test_each_server_gets_its_own_meter(stdio_spec):
+    """Two servers each exactly at a 3-record budget both load; one meter
+    shared across the fleet would fail the second at record 4."""
+    other = stdio_spec.model_copy(update={"name": "other"})
+    results, failures = crawl_all(
+        [stdio_spec, other], timeout=30, budget=CatalogBudget(max_records=3)
+    )
+    assert failures == []
+    assert [r.server_name for r in results] == ["sample", "other"]
+
+
+def test_crawl_all_async_forwards_the_budget(monkeypatch):
+    seen = []
+
+    async def fake(spec, budget=None):
+        seen.append(budget)
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+    budget = CatalogBudget(max_records=7, max_bytes=70)
+    asyncio.run(crawl_all_async([_spec("a"), _spec("b")], budget=budget))
+    assert seen == [budget, budget]
+
+
+async def test_crawl_server_charges_tools_and_resources_to_one_budget(stdio_spec):
+    """The sample server has 2 tools and 1 resource: a 2-record budget fits
+    the tools alone and fails only if resources draw on the same meter."""
+    assert len((await crawl_server(stdio_spec, CatalogBudget(max_records=3))).resources) == 1
+    with pytest.raises(BaseException) as info:
+        await crawl_server(stdio_spec, CatalogBudget(max_records=2))
+    assert "catalog exceeds 2 records" in crawl_mod._describe(info.value)

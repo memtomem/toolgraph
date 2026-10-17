@@ -6,7 +6,7 @@ import asyncio
 from collections import Counter
 from pathlib import Path
 
-from toolgraph.crawler.client import crawl_server
+from toolgraph.crawler.client import CatalogBudget, crawl_server
 from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
 from toolgraph.redaction import endpoint_label, redact_text
 from toolgraph.yaml_loader import load_yaml_mapping
@@ -39,16 +39,32 @@ DEFAULT_CONCURRENCY = 5
 CrawlFailure = tuple[ServerSpec, str]
 
 
+def _describe(exc: BaseException) -> str:
+    """``Type: message`` for a crawl failure, unwrapping exception groups.
+
+    The MCP SDK runs each session in a task group, so an error raised inside a
+    session (a budget overrun, a runaway cursor, a server error) arrives as
+    ``ExceptionGroup: unhandled errors in a TaskGroup`` with the useful text
+    hidden in its leaves. Report the leaves instead.
+    """
+    if isinstance(exc, BaseExceptionGroup):
+        return "; ".join(_describe(leaf) for leaf in exc.exceptions)
+    return f"{type(exc).__name__}: {redact_text(exc)}"
+
+
 async def _crawl_one(
-    spec: ServerSpec, timeout: float | None, sem: asyncio.Semaphore
+    spec: ServerSpec,
+    timeout: float | None,
+    sem: asyncio.Semaphore,
+    budget: CatalogBudget | None = None,
 ) -> tuple[CrawlResult | None, CrawlFailure | None]:
     async with sem:
         try:
-            return await asyncio.wait_for(crawl_server(spec), timeout), None
+            return await asyncio.wait_for(crawl_server(spec, budget), timeout), None
         except TimeoutError:  # a hanging server must not block the crawl
             return None, (spec, f"timeout after {timeout}s")
         except Exception as exc:  # one bad server must not abort the crawl
-            return None, (spec, f"{type(exc).__name__}: {redact_text(exc)}")
+            return None, (spec, _describe(exc))
 
 
 def _check_concurrency(value: object) -> int:
@@ -68,14 +84,17 @@ async def crawl_all_async(
     specs: list[ServerSpec],
     timeout: float | None = DEFAULT_TIMEOUT,
     concurrency: int = DEFAULT_CONCURRENCY,
+    budget: CatalogBudget | None = None,
 ) -> tuple[list[CrawlResult], list[CrawlFailure]]:
     """Crawl ``specs`` with at most ``concurrency`` servers in flight.
 
     ``concurrency`` is validated before any server is contacted, so an
     invalid value raises even for an empty fleet. Results keep ``specs`` order.
+    ``budget`` (default ``CatalogBudget()``) caps each server's retained
+    catalog separately; a server over it is reported as a failure.
     """
     sem = asyncio.Semaphore(_check_concurrency(concurrency))
-    outcomes = await asyncio.gather(*(_crawl_one(s, timeout, sem) for s in specs))
+    outcomes = await asyncio.gather(*(_crawl_one(s, timeout, sem, budget) for s in specs))
     results = [r for r, _ in outcomes if r is not None]
     failures = [f for _, f in outcomes if f is not None]
     return results, failures
@@ -85,8 +104,9 @@ def crawl_all(
     specs: list[ServerSpec],
     timeout: float | None = DEFAULT_TIMEOUT,
     concurrency: int = DEFAULT_CONCURRENCY,
+    budget: CatalogBudget | None = None,
 ) -> tuple[list[CrawlResult], list[CrawlFailure]]:
-    return asyncio.run(crawl_all_async(specs, timeout, concurrency))
+    return asyncio.run(crawl_all_async(specs, timeout, concurrency, budget))
 
 
 def fleet_keep_names(

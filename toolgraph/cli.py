@@ -23,6 +23,11 @@ from toolgraph.control_plan import (
     ControlPlanError,
     build_control_preflight,
 )
+from toolgraph.crawler.client import (
+    DEFAULT_MAX_CATALOG_BYTES,
+    DEFAULT_MAX_CATALOG_RECORDS,
+    CatalogBudget,
+)
 from toolgraph.crawler.crawl import (
     DEFAULT_TIMEOUT,
     crawl_all,
@@ -294,6 +299,16 @@ def doctor(
 def crawl(
     servers: Path = typer.Option(None, help="Path to servers.yaml (defaults to config)."),
     timeout: float = typer.Option(DEFAULT_TIMEOUT, help="Per-server crawl timeout (seconds)."),
+    max_catalog_bytes: int = typer.Option(
+        DEFAULT_MAX_CATALOG_BYTES,
+        help="Per-server cap on retained catalog data: UTF-8 bytes of the JSON of "
+        "every tool and resource record kept (ADR-0016). A server over it fails "
+        "and is not loaded. Bounds retained data, not transport buffering.",
+    ),
+    max_catalog_records: int = typer.Option(
+        DEFAULT_MAX_CATALOG_RECORDS,
+        help="Per-server cap on retained tool and resource records combined (ADR-0016).",
+    ),
     prune: bool = typer.Option(
         True,
         "--prune/--no-prune",
@@ -314,6 +329,11 @@ def crawl(
     fleet, while a blank file or a file without the key exits 1 before any
     server is contacted (ADR-0014).
     """
+    try:
+        budget = CatalogBudget(max_records=max_catalog_records, max_bytes=max_catalog_bytes)
+    except ValueError as exc:
+        typer.echo(f"Invalid catalog budget: {exc}", err=True)
+        raise typer.Exit(code=1) from None
     path = servers or config.settings.servers_config
     try:
         specs = load_servers_config(path)
@@ -332,7 +352,7 @@ def crawl(
         raise typer.Exit(code=1)
     typer.echo(f"Crawling {len(specs)} server(s) from {path} ...")
 
-    results, failures = crawl_all(specs, timeout=timeout)
+    results, failures = crawl_all(specs, timeout=timeout, budget=budget)
     dupes = duplicate_identities(results, failures)
     if dupes:
         typer.echo(

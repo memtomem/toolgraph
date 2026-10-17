@@ -20,6 +20,7 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0013](0013-bounded-control-plan-preflight.md) | Body-free control plans are advisory topology and policy evidence | Accepted |
 | [0014](0014-explicit-empty-fleet-declaration.md) | Require an explicit empty fleet declaration | Accepted |
 | [0015](0015-policy-impact-preview.md) | Read-only semantic policy impact preview | Proposed |
+| [0016](0016-catalog-collection-budget.md) | Per-server catalog collection budget | Accepted |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.
