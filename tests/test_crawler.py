@@ -526,10 +526,13 @@ def test_crawl_all_async_cancellation_propagates_and_queued_never_start(monkeypa
         # Give queued coroutines a chance to (wrongly) start after the cancel.
         for _ in range(5):
             await asyncio.sleep(0)
+        # Assert here, before ``asyncio.run`` shuts the loop down: runner
+        # shutdown cancels any task still alive, which would make a detached
+        # (shielded) child look "cleaned" if we checked afterwards.
+        assert started == ["a"]
+        assert cleaned == ["a"]
 
     asyncio.run(run())
-    assert started == ["a"]
-    assert cleaned == ["a"]
 
 
 def test_crawl_all_async_partial_failure_keeps_other_results(monkeypatch):
