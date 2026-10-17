@@ -19,6 +19,11 @@ All notable changes to Toolgraph are documented here.
   JSON now fails its crawl instead of loading (ADR-0016). Raise the limit
   with `--max-catalog-records` / `--max-catalog-bytes`, or pass
   `budget=CatalogBudget(...)` from a library call.
+- Code that calls `driver.session()`, `acquire_readonly_session()` or
+  `verify_connectivity()` and catches `neo4j.exceptions.AuthError` (or a
+  `ClientError` for expired credentials or the authentication rate limit)
+  now gets `toolgraph.graph.driver.BackendConfigurationError`, with the
+  driver error as `__cause__`.
 
 ### Added
 
@@ -69,6 +74,16 @@ All notable changes to Toolgraph are documented here.
   line the policy was written for.
 
 ### Fixed
+
+- A Neo4j that rejects the credentials no longer makes CLI commands print a
+  native traceback. Wrong, expired or rate-limited credentials and an
+  expired auth-provider token are typed at the driver seam as a
+  configuration error and reported as one line, `ERROR: Neo4j refused
+  authentication (<Neo4j status code>); check NEO4J_USER, NEO4J_PASSWORD
+  and the account's auth provider`, exit 1. The driver's own message is not
+  echoed. It is not treated as a retryable outage, and `doctor`'s schema
+  check keeps that message instead of rewording it as a catalog permission
+  problem. Query-level `Forbidden` errors are unchanged.
 
 - `crawl_all` and `crawl_all_async` now reject a `concurrency` that is not a
   positive integer (`0`, negatives, `bool`, floats, strings, `None`) with a

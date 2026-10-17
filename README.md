@@ -635,7 +635,12 @@ calling `driver.session()` or `verify_connectivity()` directly now sees
 `ServiceUnavailable`, `SessionExpired`, `ConnectionAcquisitionTimeoutError`, or
 `DatabaseUnavailable`. Catch `BackendUnavailableError` (or its
 `BackendLockedError` subclass) instead; the original driver exception is
-preserved as `__cause__`. Configuration, authentication, and Cypher/client
+preserved as `__cause__`. Neo4j authentication failures (`AuthError` and its
+subclasses, plus the plain `ClientError` codes `Security.CredentialsExpired`
+and `Security.AuthenticationRateLimit`) raise `BackendConfigurationError`
+from `driver.session()`, `acquire_readonly_session()` and
+`verify_connectivity()`, again with the driver error as `__cause__`; it is
+not an outage and not retryable. Other configuration and Cypher/client
 errors are untouched, as is the still-raw `get_driver()` escape hatch. Note
 that `is_backend_unavailable()` narrowed with it: it classifies only
 `BackendUnavailableError`, so exceptions raised straight out of `get_driver()`
