@@ -22,6 +22,12 @@ All notable changes to Toolgraph are documented here.
   and the regeneration recipe install `nbclient` and `ipykernel` from a new
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
+### Changed
+
+- `SECURITY.md` now states that security fixes cover the latest published
+  Toolgraph release only, with no backports, instead of naming the `0.0.x`
+  line the policy was written for.
+
 ### Fixed
 
 - `crawl_all` and `crawl_all_async` now reject a `concurrency` that is not a
