@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from pathlib import Path
 
 from toolgraph.crawler.client import crawl_server
@@ -102,7 +103,7 @@ def fleet_keep_names(
 def duplicate_name_overrides(specs: list[ServerSpec]) -> set[str]:
     """``name:`` overrides claimed by more than one spec — a config error."""
     names = [s.name for s in specs if s.name]
-    return {n for n in names if names.count(n) > 1}
+    return _repeated(names)
 
 
 def duplicate_identities(results: list[CrawlResult], failures: list[CrawlFailure]) -> set[str]:
@@ -116,4 +117,9 @@ def duplicate_identities(results: list[CrawlResult], failures: list[CrawlFailure
     collision, one crawl later.
     """
     names = [r.server_name for r in results] + [s.name for s, _ in failures if s.name]
-    return {n for n in names if names.count(n) > 1}
+    return _repeated(names)
+
+
+def _repeated(names: list[str]) -> set[str]:
+    """Names that occur more than once, counted in one pass."""
+    return {name for name, count in Counter(names).items() if count > 1}
