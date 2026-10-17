@@ -43,12 +43,30 @@ async def _crawl_one(
             return None, (spec, f"{type(exc).__name__}: {redact_text(exc)}")
 
 
+def _check_concurrency(value: object) -> int:
+    """Return ``value`` if it is a positive ``int``; raise ``ValueError`` otherwise.
+
+    Strict on purpose: ``bool`` is rejected even though it subclasses ``int``,
+    and floats are rejected even when integral. A ``Semaphore(0)`` would make
+    every crawl wait forever, because the per-server timeout only starts once
+    the semaphore is held.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"concurrency must be a positive integer, got {value!r}")
+    return value
+
+
 async def crawl_all_async(
     specs: list[ServerSpec],
     timeout: float | None = DEFAULT_TIMEOUT,
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> tuple[list[CrawlResult], list[CrawlFailure]]:
-    sem = asyncio.Semaphore(concurrency)
+    """Crawl ``specs`` with at most ``concurrency`` servers in flight.
+
+    ``concurrency`` is validated before any server is contacted, so an
+    invalid value raises even for an empty fleet. Results keep ``specs`` order.
+    """
+    sem = asyncio.Semaphore(_check_concurrency(concurrency))
     outcomes = await asyncio.gather(*(_crawl_one(s, timeout, sem) for s in specs))
     results = [r for r, _ in outcomes if r is not None]
     failures = [f for _, f in outcomes if f is not None]

@@ -28,6 +28,15 @@ All notable changes to Toolgraph are documented here.
   Toolgraph release only, with no backports, instead of naming the `0.0.x`
   line the policy was written for.
 
+### Fixed
+
+- `crawl_all` and `crawl_all_async` now reject a `concurrency` that is not a
+  positive integer (`0`, negatives, `bool`, floats, strings, `None`) with a
+  `ValueError` before any server is contacted. Previously `concurrency=0` made
+  every crawl of a non-empty fleet wait forever, because the per-server
+  timeout only starts once the semaphore is held. The CLI always used the
+  default of 5 and is unaffected.
+
 ## 0.2.0 - 2026-10-15
 
 Third alpha. Read **Upgrading from 0.1.0** below before installing: it lists
