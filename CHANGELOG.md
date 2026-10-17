@@ -50,6 +50,13 @@ All notable changes to Toolgraph are documented here.
 
 ### Changed
 
+- `toolgraph doctor` and `doctor --json` report exactly one
+  `Configuration` check. When the settings cannot be built (for example a
+  `TOOLGRAPH_BACKEND` that contradicts the config file), that check FAILs
+  with the error and keeps the file details such as `backend_source`;
+  previously a passing `Configuration` check was followed by a second,
+  failing one with the same name.
+
 - `servers.yaml` must declare its fleet explicitly (ADR-0014). The
   `servers` key is required and must be a list; `servers: []` is the only
   way to declare an empty fleet. A YAML set (`!!set {}`) is rejected too:

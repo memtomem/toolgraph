@@ -105,19 +105,20 @@ def run_doctor() -> DoctorReport:
             )
         )
 
-    # Safely obtain backend name from settings
+    # Safely obtain backend name from settings. Building the settings is
+    # where an env/file conflict is refused; that failure belongs to the same
+    # Configuration check, which then FAILs, rather than to a second check of
+    # the same name after one that already said PASS.
     backend_name = "unknown"
     try:
         backend_name = redact_text(config.settings.backend)
     except Exception as exc:
         redacted_err = redact_text(exc)
-        checks.append(
-            DoctorCheck(
-                name="Configuration",
-                status="FAIL",
-                message=f"Failed to load configuration settings: {redacted_err}",
-                details={"error": redacted_err},
-            )
+        checks[-1] = DoctorCheck(
+            name="Configuration",
+            status="FAIL",
+            message=f"Failed to load configuration settings: {redacted_err}",
+            details={**cfg_info, "error": redacted_err},
         )
         return DoctorReport(healthy=False, checks=checks)
 
