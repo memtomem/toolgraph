@@ -72,9 +72,12 @@ ADR-0001 made node existence a truth signal, but nothing retired nodes whose
   re-crawling; authored governance is never deleted. The worst case of an
   accidental prune (wrong/partial servers.yaml without `--no-prune`) is a
   re-crawl with the right file.
-- An empty `servers.yaml` declares an empty fleet and retires every crawled
-  server — consistent with the declarative model, same as an empty manifest
-  pruning all agents/policies.
+- An explicit empty list (`servers: []`) declares an empty fleet and retires
+  every crawled server — consistent with the declarative model, same as an
+  empty manifest pruning all agents/policies. *Amended 2026-10-18 by
+  [ADR-0014](0014-explicit-empty-fleet-declaration.md):* a blank file, a
+  comment-only file, `{}` or a file without the `servers` key no longer
+  means an empty fleet; it is rejected before any server is contacted.
 - Fleets that name their servers in `servers.yaml` get reconciliation that
   keeps working through crawl failures; unnamed fleets lose pruning for the
   duration of any failure. Naming servers is now the documented best

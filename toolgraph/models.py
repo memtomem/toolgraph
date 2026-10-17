@@ -55,7 +55,18 @@ class ServerSpec(StrictInputModel):
 
 
 class ServersConfig(StrictInputModel):
-    servers: list[ServerSpec] = Field(default_factory=list)
+    """The declared fleet (``servers.yaml``).
+
+    ``servers`` is required and must be a YAML sequence (ADR-0014). A file
+    without the key, a blank or comment-only file, ``servers: null`` or a
+    non-list value is rejected, so an accidentally emptied file can no
+    longer request fleet retirement. ``servers: []`` is the explicit
+    empty-fleet declaration: under default pruning it retires every crawled
+    server; with ``--no-prune`` it keeps them. ``strict=True`` matters: lax
+    validation would coerce a YAML set (``!!set {}``) to an empty list.
+    """
+
+    servers: list[ServerSpec] = Field(strict=True)
 
 
 # --- factual crawl results (EXPOSES / PROVIDES) --------------------------

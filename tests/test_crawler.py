@@ -17,7 +17,7 @@ import pytest
 from toolgraph.crawler import crawl as crawl_mod
 from toolgraph.crawler.client import crawl_server
 from toolgraph.graph import loader
-from toolgraph.models import CrawlResult, ServerSpec
+from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 from pydantic import ValidationError
@@ -337,6 +337,40 @@ async def test_list_all_resources_refuses_runaway_cursor(monkeypatch):
     with pytest.raises(client.PaginationLimitError, match="continuation cursor"):
         await client._list_all_resources(session)
     assert session.calls == 5
+
+
+_NOT_A_FLEET = {
+    "blank": "",
+    "whitespace": "   \n\n",
+    "comment-only": "# retired everything?\n",
+    "empty-mapping": "{}\n",
+    "missing-key": "other: []\n",
+    "null-list": "servers: null\n",
+    "mapping-not-list": "servers: {}\n",
+    "scalar": "servers: nope\n",
+    "yaml-set": "servers: !!set {}\n",
+}
+
+
+@pytest.mark.parametrize("content", list(_NOT_A_FLEET.values()), ids=list(_NOT_A_FLEET))
+def test_servers_yaml_requires_an_explicit_servers_list(tmp_path, content):
+    """ADR-0014: only ``servers: []`` declares an empty fleet.
+
+    The YAML set case is the one a merely-required field would miss: lax
+    validation coerces ``set()`` to ``[]``; ``strict=True`` does not.
+    """
+    path = tmp_path / "servers.yaml"
+    path.write_text(content)
+    with pytest.raises(ValidationError) as info:
+        load_servers_config(path)
+    assert "servers" in str(info.value)
+
+
+def test_servers_config_model_requires_the_key_and_keeps_explicit_empty():
+    with pytest.raises(ValidationError, match="servers"):
+        ServersConfig.model_validate({})
+    assert ServersConfig(servers=[]).servers == []
+    assert ServersConfig.model_validate({"servers": []}).servers == []
 
 
 def test_servers_yaml_rejects_unknown_field(tmp_path):
