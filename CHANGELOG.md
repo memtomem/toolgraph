@@ -24,6 +24,13 @@ All notable changes to Toolgraph are documented here.
 
 ### Changed
 
+- The fleet duplicate checks (`duplicate_name_overrides`,
+  `duplicate_identities`) count names in one pass, so their cost grows
+  linearly with fleet size instead of quadratically. Results are unchanged.
+  `scripts/benchmark_duplicate_checks.py` is a repeatable size sweep; on one
+  developer machine an 8,000-server fixture went from about 300 ms to well
+  under a millisecond per check.
+
 - `SECURITY.md` now states that security fixes cover the latest published
   Toolgraph release only, with no backports, instead of naming the `0.0.x`
   line the policy was written for.

@@ -11,6 +11,8 @@ who survives, and refuses to guess identities for unnamed crawl failures.
 
 from __future__ import annotations
 
+import random
+
 import yaml
 from typer.testing import CliRunner
 
@@ -114,6 +116,67 @@ def test_duplicate_identities_across_results_and_named_failures():
     results = [CrawlResult(server_name="pinned", transport="stdio")]
     assert duplicate_identities(results, [(failed, "boom")]) == {"pinned"}
     assert duplicate_identities(results, []) == set()
+
+
+def test_duplicate_checks_boundary_cases():
+    """Explicit boundaries the differential test below could sample past."""
+    # Empty inputs.
+    assert duplicate_name_overrides([]) == set()
+    assert duplicate_identities([], []) == set()
+    # An empty-string name is falsy: overrides and failures drop it, but a
+    # result's server_name is counted as-is. Pinned so a rewrite cannot
+    # quietly change which side of that line "" sits on.
+    blank = [ServerSpec(name="", command="a"), ServerSpec(name="")]
+    assert duplicate_name_overrides(blank) == set()
+    assert duplicate_identities([], [(blank[0], "x"), (blank[1], "y")]) == set()
+    assert duplicate_identities([CrawlResult(server_name=""), CrawlResult(server_name="")], []) == {
+        ""
+    }
+    # Unnamed specs never collide, with each other or with anything else.
+    unnamed = [ServerSpec(command="a"), ServerSpec(command="a")]
+    assert duplicate_name_overrides(unnamed) == set()
+    assert duplicate_identities([CrawlResult(server_name="a")], [(unnamed[0], "x")]) == set()
+    # Result-only and failure-only duplicates.
+    assert duplicate_identities(
+        [CrawlResult(server_name="r"), CrawlResult(server_name="r")], []
+    ) == {"r"}
+    assert duplicate_identities([], [(ServerSpec(name="f"), "x"), (ServerSpec(name="f"), "y")]) == {
+        "f"
+    }
+    # Three-way repeat is reported once.
+    assert duplicate_name_overrides([ServerSpec(name="t") for _ in range(3)]) == {"t"}
+
+
+def test_duplicate_checks_match_independent_oracle():
+    """Seeded fleets mixing every input class; expected sets are derived from
+    the inputs with plain loops, sharing no extraction code with the helpers."""
+    rng = random.Random(151)
+    pool = ["a", "b", "c", "d", "e", "f", "g", "h", ""]
+    for _ in range(200):
+        specs = []
+        for _ in range(rng.randint(0, 12)):
+            roll = rng.random()
+            name = None if roll < 0.25 else rng.choice(pool)
+            specs.append(ServerSpec(name=name, command="cmd"))
+        results = [CrawlResult(server_name=rng.choice(pool)) for _ in range(rng.randint(0, 8))]
+        failures = [(s, "boom") for s in specs if rng.random() < 0.5]
+
+        seen_overrides: dict[str, int] = {}
+        for spec in specs:
+            if spec.name:
+                seen_overrides[spec.name] = seen_overrides.get(spec.name, 0) + 1
+        expected_overrides = {n for n, c in seen_overrides.items() if c > 1}
+
+        seen_ids: dict[str, int] = {}
+        for res in results:
+            seen_ids[res.server_name] = seen_ids.get(res.server_name, 0) + 1
+        for spec, _ in failures:
+            if spec.name:
+                seen_ids[spec.name] = seen_ids.get(spec.name, 0) + 1
+        expected_ids = {n for n, c in seen_ids.items() if c > 1}
+
+        assert duplicate_name_overrides(specs) == expected_overrides
+        assert duplicate_identities(results, failures) == expected_ids
 
 
 # --- retirement semantics (real graph) ------------------------------------
