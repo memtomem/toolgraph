@@ -22,6 +22,15 @@ All notable changes to Toolgraph are documented here.
   and the regeneration recipe install `nbclient` and `ipykernel` from a new
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
+### Fixed
+
+- `crawl_all` and `crawl_all_async` now reject a `concurrency` that is not a
+  positive integer (`0`, negatives, `bool`, floats, strings, `None`) with a
+  `ValueError` before any server is contacted. Previously `concurrency=0` made
+  every crawl of a non-empty fleet wait forever, because the per-server
+  timeout only starts once the semaphore is held. The CLI always used the
+  default of 5 and is unaffected.
+
 ## 0.2.0 - 2026-10-15
 
 Third alpha. Read **Upgrading from 0.1.0** below before installing: it lists
