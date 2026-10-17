@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import socket
 import subprocess
 import sys
@@ -12,15 +14,16 @@ from pathlib import Path
 
 import pytest
 
+from toolgraph.crawler import crawl as crawl_mod
 from toolgraph.crawler.client import crawl_server
 from toolgraph.graph import loader
-from toolgraph.models import ServerSpec
+from toolgraph.models import CrawlResult, ServerSpec
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 from pydantic import ValidationError
 from sample_server import AUTH_HEADER, AUTH_TOKEN, RECEIPT_PATH
 
-from toolgraph.crawler.crawl import crawl_all, load_servers_config
+from toolgraph.crawler.crawl import crawl_all, crawl_all_async, load_servers_config
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "sample_server.py")
 
@@ -349,3 +352,198 @@ def test_crawl_timeout_is_isolated():
     results, failures = crawl_all([hang], timeout=1.0)
     assert results == []
     assert failures and "timeout" in failures[0][1]
+
+
+# --- crawl_all concurrency argument (#152) -----------------------------------
+#
+# None of these tests start a server: ``crawl_server`` is replaced in the
+# ``toolgraph.crawler.crawl`` namespace, where ``_crawl_one`` resolves it.
+
+_SAFETY = 2.0  # outer bound so a validation regression fails instead of hanging
+
+
+def _spec(name: str) -> ServerSpec:
+    return ServerSpec(name=name, transport="stdio", command="unused")
+
+
+def _bounded_run(monkeypatch):
+    """Make the sync wrapper's ``asyncio.run`` time out instead of hanging."""
+    real_run = asyncio.run
+    monkeypatch.setattr(
+        crawl_mod.asyncio, "run", lambda coro: real_run(asyncio.wait_for(coro, _SAFETY))
+    )
+
+
+_INVALID_CONCURRENCY = [
+    0,
+    -1,
+    True,
+    False,
+    2.0,
+    0.5,
+    2.5,
+    math.nan,
+    math.inf,
+    "5",
+    None,
+]
+
+
+@pytest.mark.parametrize("value", _INVALID_CONCURRENCY, ids=repr)
+@pytest.mark.parametrize("fleet", [[], [_spec("one")]], ids=["empty", "one"])
+async def test_crawl_all_async_rejects_invalid_concurrency(monkeypatch, value, fleet):
+    calls: list[str] = []
+
+    async def fake(spec):
+        calls.append(spec.name)
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+    with pytest.raises(ValueError, match="concurrency must be a positive integer"):
+        await asyncio.wait_for(crawl_all_async(fleet, concurrency=value), _SAFETY)
+    assert calls == []
+
+
+@pytest.mark.parametrize("value", _INVALID_CONCURRENCY, ids=repr)
+@pytest.mark.parametrize("fleet", [[], [_spec("one")]], ids=["empty", "one"])
+def test_crawl_all_rejects_invalid_concurrency(monkeypatch, value, fleet):
+    calls: list[str] = []
+
+    async def fake(spec):
+        calls.append(spec.name)
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+    _bounded_run(monkeypatch)
+    with pytest.raises(ValueError, match="concurrency must be a positive integer"):
+        crawl_all(fleet, concurrency=value)
+    assert calls == []
+
+
+def test_crawl_all_keeps_spec_order_when_completion_order_differs(monkeypatch):
+    """All three servers are in flight; they finish c, b, a; results read a, b, c."""
+    specs = [_spec(n) for n in ("a", "b", "c")]
+    started: dict[str, asyncio.Event] = {}
+    release: dict[str, asyncio.Event] = {}
+
+    async def fake(spec):
+        started[spec.name].set()
+        await release[spec.name].wait()
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+
+    async def run():
+        for s in specs:
+            started[s.name] = asyncio.Event()
+            release[s.name] = asyncio.Event()
+        task = asyncio.create_task(crawl_all_async(specs, concurrency=3))
+        for s in specs:
+            await asyncio.wait_for(started[s.name].wait(), _SAFETY)
+        for s in reversed(specs):
+            release[s.name].set()
+            await asyncio.sleep(0)
+        return await asyncio.wait_for(task, _SAFETY)
+
+    results, failures = asyncio.run(run())
+    assert failures == []
+    assert [r.server_name for r in results] == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(("concurrency", "expected_peak"), [(2, 2), (6, 6)])
+def test_crawl_all_bounds_in_flight_servers(monkeypatch, concurrency, expected_peak):
+    """Six servers held open; the observed peak equals ``concurrency``.
+
+    The ``6 -> 6`` row proves the counter can see overlap at all, so the
+    ``2 -> 2`` row is not vacuous.
+    """
+    specs = [_spec(f"s{i}") for i in range(6)]
+    in_flight = 0
+    peak = 0
+    entered: list[asyncio.Event] = []
+    release = None
+
+    async def fake(spec):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        entered[int(spec.name[1:])].set()
+        try:
+            await release.wait()
+        finally:
+            in_flight -= 1
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+
+    async def run():
+        nonlocal release
+        release = asyncio.Event()
+        entered.extend(asyncio.Event() for _ in specs)
+        task = asyncio.create_task(crawl_all_async(specs, concurrency=concurrency))
+        # Wait until ``concurrency`` servers are in; let the loop settle so any
+        # over-admission would have happened by now.
+        for ev in entered[:concurrency]:
+            await asyncio.wait_for(ev.wait(), _SAFETY)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert in_flight == concurrency
+        assert not any(ev.is_set() for ev in entered[concurrency:])
+        release.set()
+        return await asyncio.wait_for(task, _SAFETY)
+
+    results, failures = asyncio.run(run())
+    assert failures == []
+    assert len(results) == 6
+    assert peak == expected_peak
+
+
+def test_crawl_all_async_cancellation_propagates_and_queued_never_start(monkeypatch):
+    specs = [_spec(n) for n in ("a", "b", "c")]
+    started: list[str] = []
+    cleaned: list[str] = []
+    first_in = None
+
+    async def fake(spec):
+        started.append(spec.name)
+        first_in.set()
+        try:
+            await asyncio.Event().wait()  # never set: only cancellation ends it
+        finally:
+            cleaned.append(spec.name)
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+
+    async def run():
+        nonlocal first_in
+        first_in = asyncio.Event()
+        task = asyncio.create_task(crawl_all_async(specs, concurrency=1))
+        await asyncio.wait_for(first_in.wait(), _SAFETY)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, _SAFETY)
+        # Give queued coroutines a chance to (wrongly) start after the cancel.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    asyncio.run(run())
+    assert started == ["a"]
+    assert cleaned == ["a"]
+
+
+def test_crawl_all_async_partial_failure_keeps_other_results(monkeypatch):
+    specs = [_spec(n) for n in ("ok1", "boom", "ok2")]
+
+    async def fake(spec):
+        if spec.name == "boom":
+            raise RuntimeError("connection refused")
+        return CrawlResult(server_name=spec.name)
+
+    monkeypatch.setattr(crawl_mod, "crawl_server", fake)
+    results, failures = crawl_all(specs, concurrency=2)
+    assert [r.server_name for r in results] == ["ok1", "ok2"]
+    assert len(failures) == 1
+    failed_spec, message = failures[0]
+    assert failed_spec is specs[1]
+    assert message == "RuntimeError: connection refused"
