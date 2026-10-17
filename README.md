@@ -128,6 +128,11 @@ toolgraph policy compile --agent vibe-coder --profile review \
   --output .toolgraph/policy-bundle.json
 ```
 
+`servers.yaml` declares the whole fleet, and its `servers` key is required:
+`servers: []` is the explicit empty fleet (default pruning then retires
+every crawled server; `--no-prune` keeps them), while a blank file or one
+without the key exits 1 before any server is contacted (ADR-0014).
+
 For `ingest-manifest --dry-run --json` and `doctor`, see the
 [preview and diagnostic requirements](docs/policy-propose.md#preview-and-diagnostic-requirements),
 including Neo4j catalog permissions and Ladybug session serialization.
@@ -398,7 +403,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
 | `init` | 0 · 1 when `--state-dir` cannot be created · 2 on a `--backend` other than `ladybug` / `neo4j` |
 | `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict |
-| `crawl` | 1 on an invalid servers file, two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) |
+| `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) |
 | `ingest-manifest` | 1 on an unreadable or invalid file · 1 when the manifest is REJECTED (graph unchanged) |
 | `ingest-manifest --dry-run [--json]` | 0 when the manifest would apply · 1 when it would be rejected (the `--json` report is still printed) · 2 for `--json` without `--dry-run` |
 | `reset` | 0 · 1 without `--yes` (the refusal goes to stdout) |

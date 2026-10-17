@@ -52,6 +52,12 @@ toolgraph doctor
 toolgraph crawl --servers servers.yaml
 ```
 
+`servers.yaml`은 fleet 전체를 선언합니다. `servers` 키는 필수이며,
+`servers: []`는 "서버 없음"을 뜻해 기본값으로는 크롤링된 서버를 모두
+퇴역시킵니다(`--no-prune`이면 유지). 운영자가 작성한 거버넌스는 크롤링으로
+삭제되지 않습니다. 빈 파일이나 키가 없는 파일은 서버에 접속하기 전에
+거부됩니다.
+
 fixture는 두 도구를 노출합니다.
 
 - `policy-gateway::read_note`: 읽기 전용이며 idempotent인 도구

@@ -299,7 +299,9 @@ def crawl(
         "--prune/--no-prune",
         help="Fleet reconciliation (ADR-0007): after loading, retire crawled "
         "subgraphs of servers no longer in servers.yaml. Pass --no-prune "
-        "when crawling a subset file that does not declare the whole fleet.",
+        "when crawling a subset file that does not declare the whole fleet. "
+        "`servers: []` declares an empty fleet; a file without the servers "
+        "key is rejected (ADR-0014).",
     ),
 ) -> None:
     """Crawl every server in servers.yaml and load its tools/resources into the graph.
@@ -308,6 +310,9 @@ def crawl(
     servers (and their crawl-owned subgraphs) that are no longer listed, so
     stale EXPOSES edges cannot defeat the drift checks. Failed servers are
     protected by their ``name`` override; an unnamed failure skips the prune.
+    The ``servers`` key is required: ``servers: []`` is the explicit empty
+    fleet, while a blank file or a file without the key exits 1 before any
+    server is contacted (ADR-0014).
     """
     path = servers or config.settings.servers_config
     try:

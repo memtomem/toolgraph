@@ -1,6 +1,6 @@
 # 0014 — Require an explicit empty fleet declaration
 
-Status: Proposed · Date: 2026-10-16
+Status: Accepted · Date: 2026-10-16 · Accepted: 2026-10-18
 
 Tracking: [issue #154](https://github.com/memtomem/toolgraph/issues/154).
 
@@ -19,7 +19,7 @@ requires. This is an intentional existing contract, not a newly discovered
 authorization bypass. It nevertheless makes accidental empty configuration
 indistinguishable from an operator's explicit fleet retirement request.
 
-## Proposed decision
+## Decision
 
 1. Require the `servers` key in `ServersConfig`. Reject blank files,
    comment-only files, and mappings without that key. Reject `servers: null`
@@ -46,10 +46,11 @@ an empty fleet. Operators and library callers using a missing key to mean
 Publish that migration in the changelog and crawl documentation when the
 implementation lands. Existing explicit lists keep their meaning.
 
-ADR-0007 remains Accepted while this record is Proposed. Acceptance of this
-record would amend only its empty-file interpretation, not supersede its
-fleet reconciliation design. This proposal does not change current runtime
-behavior.
+ADR-0007 remains Accepted; this record amends only its empty-file
+interpretation, not its fleet reconciliation design. Implemented for the
+release after 0.2.0 (issue #154): `ServersConfig.servers` is a required,
+strict list field, so a YAML set (`!!set {}`) — which lax validation would
+coerce to an empty list — is rejected along with the forms above.
 
 ## Alternatives
 

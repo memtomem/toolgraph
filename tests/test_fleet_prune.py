@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -318,8 +319,72 @@ def _write_servers_yaml(tmp_path, servers: list[dict]) -> str:
     return str(path)
 
 
-def test_crawl_with_empty_fleet_retires_stale_server(graph, tmp_path):
-    _load("ghost", [ToolRecord(name="haunt")])
+def _seed_governed_fleet() -> None:
+    """One server, one ungoverned tool, one governed tool behind a DENY."""
+    _load("ghost", [ToolRecord(name="haunt"), ToolRecord(name="drop_table")])
+    report = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="prod-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="ghost::drop_table")],
+            governed_by={"ghost::drop_table": ["prod-deny"]},
+        )
+    )
+    assert report.warnings == []
+    assert queries.check_access("planner", "ghost::drop_table")["verdict"] == "DENY"
+
+
+def _snapshot() -> dict:
+    state = queries.graph_state()
+    return {
+        "servers": _server_names(),
+        "generation": _generation(),
+        "instance": state.instance_id,
+        "counts": loader.graph_counts(),
+        "deny": queries.check_access("planner", "ghost::drop_table")["verdict"],
+    }
+
+
+_NOT_A_FLEET = {
+    "blank": "",
+    "comment-only": "# nothing here\n",
+    "empty-mapping": "{}\n",
+    "missing-key": "other: []\n",
+    "null-list": "servers: null\n",
+    "yaml-set": "servers: !!set {}\n",
+}
+
+
+@pytest.mark.parametrize("content", list(_NOT_A_FLEET.values()), ids=list(_NOT_A_FLEET))
+def test_crawl_rejects_a_file_without_an_explicit_servers_list(
+    backend_graph, tmp_path, monkeypatch, content
+):
+    """ADR-0014: blank, comment-only and ``{}`` used to mean "retire every
+    server"; now they exit 1 before any server is contacted and leave the
+    graph untouched. ``other: []``, ``servers: null`` and the YAML set are
+    in the matrix as already-rejected / newly-strict forms with the same
+    no-mutation guarantee."""
+    _seed_governed_fleet()
+    before = _snapshot()
+    path = tmp_path / "servers.yaml"
+    path.write_text(content)
+
+    def never(*_a, **_k):
+        raise AssertionError("crawl_all must not be reached")
+
+    # The invalid-config handler wraps only load_servers_config, so a sentinel
+    # reaching crawl_all would escape as a traceback, not this diagnostic.
+    monkeypatch.setattr(cli, "crawl_all", never)
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", str(path)])
+
+    assert result.exit_code == 1
+    assert "Invalid servers config" in result.output
+    assert "servers" in result.output
+    assert _snapshot() == before
+
+
+def test_crawl_with_empty_fleet_retires_stale_server(backend_graph, tmp_path):
+    _seed_governed_fleet()
     path = _write_servers_yaml(tmp_path, [])
 
     result = CliRunner().invoke(cli.app, ["crawl", "--servers", path])
@@ -327,6 +392,23 @@ def test_crawl_with_empty_fleet_retires_stale_server(graph, tmp_path):
     assert result.exit_code == 0
     assert "retired 'ghost'" in result.output
     assert _server_names() == set()
+    # ADR-0007 retirement rules through the CLI: the governed tool survives,
+    # visibly drifted, and its DENY still holds.
+    assert [t["tool_key"] for t in queries.drifted_tools()] == ["ghost::drop_table"]
+    assert queries.check_access("planner", "ghost::drop_table")["verdict"] == "DENY"
+
+
+def test_crawl_repeating_an_empty_retirement_keeps_generation(backend_graph, tmp_path):
+    _seed_governed_fleet()
+    path = _write_servers_yaml(tmp_path, [])
+    assert CliRunner().invoke(cli.app, ["crawl", "--servers", path]).exit_code == 0
+    generation = _generation()
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", path])
+
+    assert result.exit_code == 0
+    assert _server_names() == set()
+    assert _generation() == generation
 
 
 def test_unnamed_failure_skips_prune_and_keeps_graph(graph, tmp_path):
@@ -343,14 +425,19 @@ def test_unnamed_failure_skips_prune_and_keeps_graph(graph, tmp_path):
     assert _server_names() == {"ghost"}
 
 
-def test_no_prune_flag_preserves_unlisted_servers(graph, tmp_path):
-    _load("ghost", [ToolRecord(name="haunt")])
+def test_no_prune_flag_preserves_unlisted_servers(backend_graph, tmp_path):
+    _seed_governed_fleet()
+    before = _snapshot()
     path = _write_servers_yaml(tmp_path, [])
 
     result = CliRunner().invoke(cli.app, ["crawl", "--servers", path, "--no-prune"])
 
     assert result.exit_code == 0
     assert _server_names() == {"ghost"}
+    assert queries.drifted_tools() == []
+    after = _snapshot()
+    assert after["servers"] == before["servers"] and after["counts"] == before["counts"]
+    assert after["deny"] == "DENY" and after["instance"] == before["instance"]
 
 
 def test_duplicate_name_overrides_reject_before_crawl(graph, tmp_path):

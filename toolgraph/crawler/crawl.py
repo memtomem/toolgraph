@@ -13,6 +13,13 @@ from toolgraph.yaml_loader import load_yaml_mapping
 
 
 def load_servers_config(path: Path) -> list[ServerSpec]:
+    """Parse ``servers.yaml`` into specs; the ``servers`` list is required.
+
+    Raises ``OSError`` when the file cannot be opened, ``ValueError`` for an
+    oversized or non-mapping document, and pydantic ``ValidationError`` when
+    the ``servers`` key is missing or not a list (ADR-0014). Only
+    ``servers: []`` declares an empty fleet.
+    """
     data = load_yaml_mapping(path)
     return ServersConfig.model_validate(data).servers
 
