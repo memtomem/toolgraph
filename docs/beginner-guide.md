@@ -53,6 +53,12 @@ report as JSON.
 toolgraph crawl --servers servers.yaml
 ```
 
+`servers.yaml` declares your whole fleet. Its `servers` key is required:
+`servers: []` means "no servers" and, by default, retires every crawled
+server (`--no-prune` keeps them); authored governance is never deleted by
+a crawl. A blank file or one without the key is rejected before any server
+is contacted.
+
 The fixture exposes two tools:
 
 - `policy-gateway::read_note` — a read-only, idempotent tool.

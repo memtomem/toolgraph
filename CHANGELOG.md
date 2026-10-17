@@ -4,6 +4,18 @@ All notable changes to Toolgraph are documented here.
 
 ## Unreleased
 
+### Upgrading from 0.2.0
+
+- `toolgraph crawl` now requires the `servers` key in `servers.yaml`. A
+  blank file, a comment-only file or `{}` exits 1 with `Invalid servers
+  config` before any server is contacted; 0.2.0 treated those three as an
+  empty fleet and, under default pruning, retired every crawled server.
+  (`servers: null`, mapping or scalar values and unknown keys were already
+  rejected; a YAML set, `!!set {}`, is newly rejected instead of being
+  coerced to an empty list.) To retire the whole fleet on purpose, write `servers: []`
+  (library callers: `ServersConfig(servers=[])`); to crawl nothing and keep
+  the graph, add `--no-prune`. See ADR-0014.
+
 ### Added
 
 - **Read-only policy impact previews**: `toolgraph policy impact proposed.yaml
@@ -23,6 +35,13 @@ All notable changes to Toolgraph are documented here.
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
 ### Changed
+
+- `servers.yaml` must declare its fleet explicitly (ADR-0014). The
+  `servers` key is required and must be a list; `servers: []` is the only
+  way to declare an empty fleet. A YAML set (`!!set {}`) is rejected too:
+  the field is strict, so it is not coerced to an empty list. The CLI
+  diagnostic, exit code and `--prune/--no-prune` semantics are unchanged.
+  ADR-0007's "empty file = empty fleet" consequence is amended accordingly.
 
 - The fleet duplicate checks (`duplicate_name_overrides`,
   `duplicate_identities`) count names in one pass, so their cost grows
