@@ -22,6 +22,12 @@ All notable changes to Toolgraph are documented here.
   and the regeneration recipe install `nbclient` and `ipykernel` from a new
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
+### Changed
+
+- `SECURITY.md` now states that security fixes cover the latest published
+  Toolgraph release only, with no backports, instead of naming the `0.0.x`
+  line the policy was written for.
+
 ## 0.2.0 - 2026-10-15
 
 Third alpha. Read **Upgrading from 0.1.0** below before installing: it lists
