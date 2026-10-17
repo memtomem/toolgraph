@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from toolgraph.crawler.transports import open_session
 from toolgraph.models import CrawlResult, ResourceRecord, ServerSpec, ToolRecord
 from toolgraph.redaction import endpoint_label
@@ -17,6 +19,66 @@ MAX_LIST_PAGES = 1000
 
 class PaginationLimitError(RuntimeError):
     """A server kept returning continuation cursors past MAX_LIST_PAGES."""
+
+
+class CatalogBudgetError(RuntimeError):
+    """A server's catalog exceeded its retained-data budget (ADR-0016)."""
+
+
+DEFAULT_MAX_CATALOG_RECORDS = 10_000
+DEFAULT_MAX_CATALOG_BYTES = 4 * 1024 * 1024
+
+
+def _positive_int(name: str, value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
+@dataclass(frozen=True)
+class CatalogBudget:
+    """Per-server cap on the catalog Toolgraph retains from one crawl (ADR-0016).
+
+    Counted over the records Toolgraph keeps (tools and resources together):
+    ``max_records`` records and ``max_bytes`` UTF-8 bytes of each record's
+    ``model_dump_json()``. A catalog at the limit is accepted; one record past
+    it fails the server, and no partial catalog is returned. This bounds
+    retained data only. It does not bound what the MCP SDK buffers or parses
+    before handing a page over, nor peak process memory.
+    """
+
+    max_records: int = DEFAULT_MAX_CATALOG_RECORDS
+    max_bytes: int = DEFAULT_MAX_CATALOG_BYTES
+
+    def __post_init__(self) -> None:
+        _positive_int("max_records", self.max_records)
+        _positive_int("max_bytes", self.max_bytes)
+
+
+@dataclass
+class _BudgetMeter:
+    """Running totals for one server's crawl; shared by tools and resources."""
+
+    budget: CatalogBudget
+    records: int = 0
+    bytes: int = field(default=0)
+
+    def admit(self, record) -> None:
+        """Account for ``record`` before it is retained; raise past the budget."""
+        size = len(record.model_dump_json().encode("utf-8"))
+        records = self.records + 1
+        total = self.bytes + size
+        if records > self.budget.max_records:
+            raise CatalogBudgetError(
+                f"catalog exceeds {self.budget.max_records} records"
+                " (tools and resources combined); the server was not loaded"
+            )
+        if total > self.budget.max_bytes:
+            raise CatalogBudgetError(
+                f"catalog exceeds {self.budget.max_bytes} bytes of retained records"
+                f" (reached {total}); the server was not loaded"
+            )
+        self.records, self.bytes = records, total
 
 
 def _page(cursor: str | None):
@@ -54,26 +116,29 @@ def _annotation_fields(tool) -> dict:
     }
 
 
-async def _list_all_tools(session) -> list[ToolRecord]:
+async def _list_all_tools(session, meter: _BudgetMeter | None = None) -> list[ToolRecord]:
     """Drain ``list_tools`` pages until ``next_cursor`` is exhausted.
 
     Without pagination, a server with more than one page silently drops
     tools on later pages — governance refs to them would then reject at
-    ingest and reachability analysis would miss the tools entirely.
+    ingest and reachability analysis would miss the tools entirely. Each
+    record is charged to ``meter`` before it is kept, so an over-budget
+    catalog stops the drain without requesting another page.
     """
+    meter = meter or _BudgetMeter(CatalogBudget())
     out: list[ToolRecord] = []
     cursor: str | None = None
     for _ in range(MAX_LIST_PAGES):
         listed = await session.list_tools(params=_page(cursor))
-        out.extend(
-            ToolRecord(
+        for t in listed.tools:
+            record = ToolRecord(
                 name=t.name,
                 description=t.description,
                 input_schema=t.input_schema,
                 **_annotation_fields(t),
             )
-            for t in listed.tools
-        )
+            meter.admit(record)
+            out.append(record)
         cursor = getattr(listed, "next_cursor", None)
         if cursor is None:
             # Stop ONLY on None: an empty-string cursor is a valid opaque
@@ -87,21 +152,22 @@ async def _list_all_tools(session) -> list[ToolRecord]:
     )
 
 
-async def _list_all_resources(session) -> list[ResourceRecord]:
+async def _list_all_resources(session, meter: _BudgetMeter | None = None) -> list[ResourceRecord]:
     """Drain ``list_resources`` pages until ``next_cursor`` is exhausted."""
+    meter = meter or _BudgetMeter(CatalogBudget())
     out: list[ResourceRecord] = []
     cursor: str | None = None
     for _ in range(MAX_LIST_PAGES):
         listed = await session.list_resources(params=_page(cursor))
-        out.extend(
-            ResourceRecord(
+        for r in listed.resources:
+            record = ResourceRecord(
                 uri=normalize_resource_uri(str(r.uri)),
                 name=r.name,
                 mime_type=r.mime_type,
                 description=r.description,
             )
-            for r in listed.resources
-        )
+            meter.admit(record)
+            out.append(record)
         cursor = getattr(listed, "next_cursor", None)
         if cursor is None:
             # Stop ONLY on None: an empty-string cursor is a valid opaque
@@ -115,14 +181,20 @@ async def _list_all_resources(session) -> list[ResourceRecord]:
     )
 
 
-async def crawl_server(spec: ServerSpec) -> CrawlResult:
-    """Connect, initialize, and list tools/resources the server actually advertises."""
+async def crawl_server(spec: ServerSpec, budget: CatalogBudget | None = None) -> CrawlResult:
+    """Connect, initialize, and list tools/resources the server actually advertises.
+
+    ``budget`` defaults to ``CatalogBudget()``; one meter spans tools and
+    resources, so the limits apply to the server's whole catalog. Exceeding
+    it raises ``CatalogBudgetError`` and no result is returned.
+    """
+    meter = _BudgetMeter(budget or CatalogBudget())
     async with open_session(spec) as session:
         init = await session.initialize()
         caps = init.capabilities
 
-        tools = await _list_all_tools(session) if caps.tools is not None else []
-        resources = await _list_all_resources(session) if caps.resources is not None else []
+        tools = await _list_all_tools(session, meter) if caps.tools is not None else []
+        resources = await _list_all_resources(session, meter) if caps.resources is not None else []
 
         return CrawlResult(
             server_name=spec.name or init.server_info.name,

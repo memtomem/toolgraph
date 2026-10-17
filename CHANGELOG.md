@@ -15,8 +15,22 @@ All notable changes to Toolgraph are documented here.
   coerced to an empty list.) To retire the whole fleet on purpose, write `servers: []`
   (library callers: `ServersConfig(servers=[])`); to crawl nothing and keep
   the graph, add `--no-prune`. See ADR-0014.
+- A server whose catalog exceeds 10,000 records or 4 MiB of retained record
+  JSON now fails its crawl instead of loading (ADR-0016). Raise the limit
+  with `--max-catalog-records` / `--max-catalog-bytes`, or pass
+  `budget=CatalogBudget(...)` from a library call.
 
 ### Added
+
+- **A per-server catalog budget for crawls** (ADR-0016). Each server's
+  retained tools and resources are capped at 10,000 records and 4 MiB of
+  record JSON (UTF-8). A server over budget fails like any other crawl
+  failure, so no partial catalog is loaded and ADR-0007's failure
+  protection applies. Configure it with `toolgraph crawl
+  --max-catalog-bytes N --max-catalog-records N`, or `CatalogBudget` for
+  `crawl_server` / `crawl_all`. It bounds retained data, not transport
+  buffering or peak memory. Crawl failure messages now show the underlying
+  error instead of `ExceptionGroup: unhandled errors in a TaskGroup`.
 
 - **Read-only policy impact previews**: `toolgraph policy impact proposed.yaml
   SERVER::TOOL... --agent AGENT` compares current and hypothetical selector
