@@ -60,7 +60,9 @@ uv run --group dev python scripts/ecosystem_smoke.py \
 
 For Toolgraph-to-STM bundle validation, prepare clean checkouts at the desired
 SHAs and sync each checkout from its frozen lockfile, including Toolgraph's dev
-group and Ladybug extra. Run from that Toolgraph checkout:
+group. Ladybug is a core dependency; the `--extra ladybug` below is what commits
+from before that change need, and later commits keep it as an empty extra. Run
+from that Toolgraph checkout:
 
 ```bash
 uv run --group dev --extra ladybug python scripts/policy_bundle_gateway_smoke.py \

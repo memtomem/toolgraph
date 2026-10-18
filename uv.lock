@@ -1901,8 +1901,8 @@ source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
     { name = "idna" },
+    { name = "ladybug" },
     { name = "mcp" },
-    { name = "neo4j" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
@@ -1914,8 +1914,8 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-ladybug = [
-    { name = "ladybug" },
+neo4j = [
+    { name = "neo4j" },
 ]
 
 [package.dev-dependencies]
@@ -1939,9 +1939,9 @@ notebook = [
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "idna", specifier = ">=3.18" },
-    { name = "ladybug", marker = "extra == 'ladybug'", specifier = ">=0.18.2,<0.19" },
+    { name = "ladybug", specifier = ">=0.18.2,<0.19" },
     { name = "mcp", specifier = ">=2.1.1,<3" },
-    { name = "neo4j", specifier = ">=6.2,<7" },
+    { name = "neo4j", marker = "extra == 'neo4j'", specifier = ">=6.2,<7" },
     { name = "pydantic", specifier = ">=2.7,<3" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.15.0" },
@@ -1951,7 +1951,7 @@ requires-dist = [
     { name = "starlette", specifier = ">=1.3.1" },
     { name = "typer", specifier = ">=0.27.0" },
 ]
-provides-extras = ["ladybug"]
+provides-extras = ["ladybug", "neo4j"]
 
 [package.metadata.requires-dev]
 audit = [{ name = "pip-audit", specifier = "==2.10.1" }]

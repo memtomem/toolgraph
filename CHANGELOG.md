@@ -6,6 +6,17 @@ All notable changes to Toolgraph are documented here.
 
 ### Upgrading from 0.2.0
 
+- The Neo4j driver is now the `neo4j` extra; Ladybug is a core dependency
+  (ADR-0017). A Neo4j deployment installs `toolgraph[neo4j]`
+  (`uv sync --extra neo4j` from a checkout). Without it, a command that
+  opens a Neo4j graph exits 1 with one line: `ERROR: backend=neo4j requires
+  the 'neo4j' extra: install with ...`. `toolgraph[ladybug]` still resolves,
+  as an empty extra, so existing install recipes keep working.
+- Installing Toolgraph now installs Ladybug on every platform. Ladybug
+  0.18.3 ships wheels for CPython 3.12–3.14 on macOS 15+ (arm64, x86_64),
+  manylinux (x86_64 glibc 2.27+, aarch64 glibc 2.26+), musllinux 1.2 and
+  Windows (amd64, arm64). Elsewhere, for example on macOS 14, pip builds
+  Ladybug from its source distribution; that build has not been verified.
 - `toolgraph crawl` now requires the `servers` key in `servers.yaml`. A
   blank file, a comment-only file or `{}` exits 1 with `Invalid servers
   config` before any server is contacted; 0.2.0 treated those three as an
@@ -62,6 +73,14 @@ All notable changes to Toolgraph are documented here.
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
 ### Changed
+
+- Ladybug moves into the core dependencies and `neo4j` to a `[neo4j]`
+  extra (ADR-0017 step 2). No Ladybug path imports the Neo4j driver, so a
+  Ladybug install runs without it: a new required CI job, `no-extras`,
+  installs the wheel with no extras and checks that. Every Neo4j path
+  imports the driver through one guarded loader, so a missing extra is a
+  configuration error naming `toolgraph[neo4j]` rather than an
+  `ImportError`.
 
 - `toolgraph doctor` and `doctor --json` report exactly one
   `Configuration` check. When the settings cannot be built (for example a

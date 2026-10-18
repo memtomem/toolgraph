@@ -28,8 +28,8 @@ dependencies = [
     "python-multipart>=0.0.31",
     "starlette>=1.3.1",
     "pydantic-settings>=2.14.2",
+    "ladybug>=0.18.2,<0.19",
     "mcp>=2.1.1,<3",
-    "neo4j>=6.2,<7",
     "pydantic>=2.7,<3",
     "pyyaml>=6.0",
     "typer>=0.27.0",
@@ -40,9 +40,12 @@ dependencies = [
 toolgraph = "toolgraph.cli:app"
 
 [project.optional-dependencies]
-ladybug = [
-    "ladybug>=0.18.2,<0.19",
+neo4j = [
+    "neo4j>=6.2,<7",
 ]
+# Ladybug is a core dependency; the empty extra keeps existing
+# `toolgraph[ladybug]` and `--extra ladybug` recipes resolving.
+ladybug = []
 
 [project.urls]
 Homepage = "https://github.com/memtomem/toolgraph"

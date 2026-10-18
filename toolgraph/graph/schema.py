@@ -225,12 +225,13 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 "GOVERNED_BY",
             }
             expected_all = expected_node_tables | expected_rel_tables
+            # No _translating_backend_errors here: it imports the Neo4j driver,
+            # and Ladybug raises none of the errors it types.
             try:
-                with _translating_backend_errors():
-                    rows = sess.run("CALL show_tables() RETURN *")
-                    live_tables = sorted([r.get("name") for r in rows if r.get("name")])
+                rows = sess.run("CALL show_tables() RETURN *")
+                live_tables = sorted([r.get("name") for r in rows if r.get("name")])
             except (BackendUnavailableError, BackendConfigurationError):
-                raise  # typed at the seam: an outage, or rejected credentials
+                raise  # already typed
             except Exception as exc:
                 raise BackendConfigurationError(
                     "cannot inspect backend schema catalog; check connectivity and catalog read "
