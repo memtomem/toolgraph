@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import sys
+from contextlib import asynccontextmanager
 
 import pytest
 
 from tests._helpers import CSV, seed_basic
+from toolgraph import config
 from toolgraph.crawler.transports import open_session
-from toolgraph.graph import loader, queries
+from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
     AccessGrant,
@@ -51,18 +53,38 @@ def _seed() -> None:
     )
 
 
-def _spec(neo4j_container) -> ServerSpec:
+@pytest.fixture
+def server_spec(backend_graph, tmp_path) -> ServerSpec:
+    """Launch the server on the test's backend; a missing config file hides any ambient one."""
+    settings = config.settings
+    env = {"TOOLGRAPH_CONFIG": str(tmp_path / "no-config.json")}
+    if backend_graph == "neo4j":
+        # No TOOLGRAPH_BACKEND: this keeps covering the NEO4J_*-only fallback
+        # that ADR-0017 step 3 retires.
+        env.update(
+            NEO4J_URI=settings.neo4j_uri,
+            NEO4J_USER=settings.neo4j_user,
+            NEO4J_PASSWORD=settings.neo4j_password,
+        )
+    else:
+        env.update(TOOLGRAPH_BACKEND="ladybug", TOOLGRAPH_DB_PATH=str(settings.db_path))
     return ServerSpec(
         name="toolgraph",
         transport="stdio",
         command=sys.executable,
         args=["-m", "toolgraph.server.app"],
-        env={
-            "NEO4J_URI": neo4j_container.get_connection_url(),
-            "NEO4J_USER": "neo4j",
-            "NEO4J_PASSWORD": "testpass",
-        },
+        env=env,
     )
+
+
+@asynccontextmanager
+async def _connect(spec: ServerSpec):
+    # Ladybug allows one owning process, so the test releases its handle
+    # before the server opens the file; later direct queries reopen it.
+    driver.close_driver()
+    async with open_session(spec) as session:
+        await session.initialize()
+        yield session
 
 
 def _structured(result) -> dict:
@@ -72,10 +94,9 @@ def _structured(result) -> dict:
     return got
 
 
-async def test_mcp_tool_matches_direct_query(graph, neo4j_container):
+async def test_mcp_tool_matches_direct_query(server_spec):
     _seed()
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         listed = await session.list_tools()
         assert {t.name for t in listed.tools} == {
             "check_access",
@@ -126,15 +147,12 @@ _WRAPPER_CASES = [
 
 
 @pytest.mark.parametrize("tool_name,args,collection_key", _WRAPPER_CASES)
-async def test_mcp_wrapper_returns_documented_shape(
-    graph, neo4j_container, tool_name, args, collection_key
-):
+async def test_mcp_wrapper_returns_documented_shape(server_spec, tool_name, args, collection_key):
     """Every wrapper in server/app.py returns {count, <collection>}; the four
     new negative-truth tools were only name-asserted before. A rename or
     list-return regression would now fail here, not in production."""
     _seed()
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         result = await session.call_tool(tool_name, args)
         got = _structured(result)
     assert isinstance(got, dict), f"{tool_name} returned a bare list, not a dict"
@@ -144,15 +162,14 @@ async def test_mcp_wrapper_returns_documented_shape(
     assert got["count"] == len(got[collection_key])
 
 
-async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container):
+async def test_mcp_selector_surface_mirrors_direct_query(server_spec):
     """ADR-0005 gate criterion: the MCP wrappers return the same structured
     shape as the direct selector functions, plus the generation stamp."""
     from toolgraph.graph import selector
 
     _seed()
     candidates = ["read_file", "sample::ping", "nope"]
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         ranked = _structured(
             await session.call_tool(
                 "rank_features", {"agent": "support-bot", "candidates": candidates}
@@ -185,12 +202,11 @@ async def test_mcp_selector_surface_mirrors_direct_query(graph, neo4j_container)
         assert got == expected
 
 
-async def test_mcp_blast_radius_carries_found_flag(graph, neo4j_container):
+async def test_mcp_blast_radius_carries_found_flag(server_spec):
     """blast_radius must return found:False for a typo'd URI so MCP callers
     can distinguish 'no impact' from 'unknown node'."""
     _seed()
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         got = _structured(
             await session.call_tool("blast_radius", {"node": "file:///does/not/exist"})
         )
@@ -198,22 +214,20 @@ async def test_mcp_blast_radius_carries_found_flag(graph, neo4j_container):
     assert got["impacted"] == []
 
 
-async def test_mcp_unbacked_edges_respects_include_grants(graph, neo4j_container):
+async def test_mcp_unbacked_edges_respects_include_grants(server_spec):
     """The include_grants param landed at the query AND wrapper layer — call
     it twice and confirm the wider scope returns ≥ the narrower."""
     _seed()
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         default = _structured(await session.call_tool("unbacked_edges", {}))
         wider = _structured(await session.call_tool("unbacked_edges", {"include_grants": True}))
     assert wider["count"] >= default["count"]
     assert {e["edge_type"] for e in default["edges"]}.isdisjoint({"CAN_CALL"})
 
 
-async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
+async def test_mcp_audit_report_mirrors_direct_query(server_spec):
     _seed()
-    async with open_session(_spec(neo4j_container)) as session:
-        await session.initialize()
+    async with _connect(server_spec) as session:
         got = _structured(await session.call_tool("audit_report", {}))
 
     expected = queries.audit_report()
@@ -227,7 +241,7 @@ async def test_mcp_audit_report_mirrors_direct_query(graph, neo4j_container):
     assert got == expected
 
 
-def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
+def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(backend_graph):
     """The MCP wrapper must apply the same violation-only default as the CLI
     — agents querying over MCP shouldn't see authorized_but_governed
     rows mixed in."""
@@ -283,8 +297,8 @@ def test_mcp_unsafe_callable_tools_wrapper_filters_by_default(graph):
     assert classifications == {"violation", "authorized_but_governed"}
 
 
-def test_mcp_unsafe_callable_tools_wrapper_signals_unknown_agent(graph):
-    seed_basic(graph)
+def test_mcp_unsafe_callable_tools_wrapper_signals_unknown_agent(backend_graph):
+    seed_basic(backend_graph)
     from toolgraph.server.app import unsafe_callable_tools as wrap
 
     res = wrap.fn("planer") if hasattr(wrap, "fn") else wrap("planer")

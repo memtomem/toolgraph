@@ -61,13 +61,13 @@ def _seed(exceptions: list[ExpectedException] | None = None) -> None:
 
 
 @pytest.fixture
-def violating(graph):
+def violating(backend_graph):
     """planner -> read_file is a DENY violation (no exception declared)."""
     _seed()
 
 
 @pytest.fixture
-def authorized(graph):
+def authorized(backend_graph):
     """The only DENY evidence is covered by an operator exception."""
     _seed(
         exceptions=[
@@ -297,7 +297,7 @@ def test_init_warns_when_a_partial_database_cannot_be_removed(tmp_path, monkeypa
     assert db_path.exists()
 
 
-def test_cli_ingest_manifest_says_rejected_on_warnings(graph, tmp_path):
+def test_cli_ingest_manifest_says_rejected_on_warnings(backend_graph, tmp_path):
     """The CLI must NOT say 'Ingested' when ingest rejected the manifest —
     that contradicts the atomicity guarantee directly to the user."""
     loader.load_crawl_result(
@@ -329,7 +329,7 @@ def test_cli_ingest_manifest_says_rejected_on_warnings(graph, tmp_path):
     assert governance_counts()["governed_by"] == 0
 
 
-def test_cli_unsafe_tools_default_filters_to_violations(graph):
+def test_cli_unsafe_tools_default_filters_to_violations(backend_graph):
     """`toolgraph unsafe-tools agent` defaults to violation-only output;
     --all surfaces authorized_but_governed rows alongside."""
     loader.load_crawl_result(
@@ -378,20 +378,20 @@ def test_cli_unsafe_tools_default_filters_to_violations(graph):
     }
 
 
-def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(graph):
+def test_cli_unsafe_tools_unknown_agent_emits_agent_not_found(backend_graph):
     """A typo'd agent at the CLI must NOT silently return [] — that's the
     exact false-clean the analyzer is supposed to prevent."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     runner = CliRunner()
     result = runner.invoke(cli.app, ["unsafe-tools", "planer"])
     assert result.exit_code == 1
     assert "AGENT_NOT_FOUND" in result.output
 
 
-def test_cli_unbacked_edges_default_excludes_can_call(graph):
+def test_cli_unbacked_edges_default_excludes_can_call(backend_graph):
     """`toolgraph unbacked-edges` defaults to READS/WRITES/GOVERNED_BY;
     --include-grants widens to CAN_CALL too."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     runner = CliRunner()
 
     def edge_types(*args):
@@ -403,7 +403,7 @@ def test_cli_unbacked_edges_default_excludes_can_call(graph):
     assert edge_types("--include-grants") == {"READS", "GOVERNED_BY", "CAN_CALL"}
 
 
-def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(graph, tmp_path):
+def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(backend_graph, tmp_path):
     path = tmp_path / "governance.yaml"
     path.write_text("agents: [existing]\nagents: [replacement]\n")
     with driver.session() as current:
