@@ -406,7 +406,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
-| commands that read or write the graph | 1 with one `ERROR:` line on stderr for a configuration conflict, an unreadable config file, or an unavailable backend. Exceptions: `doctor` reports these as a FAIL in its own output, `init` is not subject to the conflict check, and `serve` reports a backend outage per tool call over MCP |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, or a Neo4j server older than 5.7. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a conflict or an unreadable config file does not stop it; and `serve` meets them per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
@@ -427,8 +427,11 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
 | `example init` | 2 when the destination already exists |
 
-An error outside these classes, such as a rejected Neo4j password, exits 1
-with a Python traceback instead of an `ERROR:` line.
+An error outside these classes exits 1 with a Python traceback instead of an
+`ERROR:` line. For example, `toolgraph drift` with a `NEO4J_DATABASE` the
+server does not have fails with `Neo.ClientError.Database.DatabaseNotFound`
+(`check` still passes, because connectivity is checked without selecting the
+database).
 
 A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
 clean run.
