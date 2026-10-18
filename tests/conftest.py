@@ -60,7 +60,7 @@ def graph(neo4j_container, monkeypatch):
         neo4j_password=TEST_PASSWORD,
         neo4j_database="neo4j",
     )
-    monkeypatch.setattr(config, "settings", test_settings)
+    monkeypatch.setitem(vars(config), "settings", test_settings)
     driver.close_driver()
     schema.init_schema()
     with driver.session() as s:
@@ -78,8 +78,10 @@ def backend_graph(request, tmp_path, monkeypatch):
         return
     import ladybug  # noqa: F401
 
-    monkeypatch.setattr(
-        config, "settings", config.Settings(backend="ladybug", db_path=tmp_path / "regression.lbug")
+    monkeypatch.setitem(
+        vars(config),
+        "settings",
+        config.Settings(backend="ladybug", db_path=tmp_path / "regression.lbug"),
     )
     driver.close_driver()
     schema.init_schema()
@@ -87,6 +89,22 @@ def backend_graph(request, tmp_path, monkeypatch):
         yield "ladybug"
     finally:
         driver.close_driver()
+
+
+@pytest.fixture
+def fresh_settings():
+    """No cached ``config.settings`` during the test, and none left behind.
+
+    A command can build or install the singleton (``--config``, ``init``).
+    Left cached, it hides a missing backend from every later test.
+    ``monkeypatch.delitem(..., raising=False)`` cannot do this: on an absent
+    key it records nothing to restore.
+    """
+    saved = vars(config).pop("settings", None)
+    yield
+    vars(config).pop("settings", None)
+    if saved is not None:
+        vars(config)["settings"] = saved
 
 
 @pytest.fixture(scope="session")
@@ -101,7 +119,7 @@ def artifact_format_checker():
 @pytest.fixture
 def embedded_path(tmp_path, monkeypatch):
     path = tmp_path / "missing-parent" / "probe.lbug"
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=path))
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="ladybug", db_path=path))
     monkeypatch.setenv("TOOLGRAPH_CONFIG", str(tmp_path / "no-config.json"))
     driver.close_driver()
     yield path

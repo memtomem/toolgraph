@@ -502,8 +502,11 @@ def serve(
     http: bool = typer.Option(False, "--http", help="Serve over streamable-http instead of stdio."),
 ) -> None:
     """Run toolgraph as an MCP server exposing the governance queries as tools."""
-    from toolgraph.server.app import mcp
+    from toolgraph.server.app import configuration_error, mcp
 
+    if error := configuration_error():
+        typer.echo(error, err=True)
+        raise typer.Exit(code=1)
     mcp.run(transport="streamable-http") if http else mcp.run()
 
 

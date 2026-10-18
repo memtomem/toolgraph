@@ -34,7 +34,7 @@ SECRET = "file:///secret.txt"
 def ladybug_graph(tmp_path, monkeypatch):
     pytest.importorskip("ladybug")
     settings = config.Settings(backend="ladybug", db_path=tmp_path / "graph.lbug")
-    monkeypatch.setattr(config, "settings", settings)
+    monkeypatch.setitem(vars(config), "settings", settings)
     driver.close_driver()
     schema.init_schema()
     yield settings
@@ -130,7 +130,9 @@ def test_ladybug_database_has_one_process_owner(ladybug_graph):
     assert "lock" in (attempted.stdout + attempted.stderr).lower()
 
 
-def test_init_defaults_to_ladybug_and_persists_runtime_config(tmp_path, monkeypatch):
+def test_init_defaults_to_ladybug_and_persists_runtime_config(
+    tmp_path, monkeypatch, fresh_settings
+):
     pytest.importorskip("ladybug")
     monkeypatch.chdir(tmp_path)
     driver.close_driver()
@@ -159,8 +161,10 @@ def test_ladybug_reset_changes_instance_id_and_returns_to_generation_zero(
 
 def test_fresh_embedded_database_reads_as_unversioned(tmp_path, monkeypatch):
     pytest.importorskip("ladybug")
-    monkeypatch.setattr(
-        config, "settings", config.Settings(backend="ladybug", db_path=tmp_path / "fresh.lbug")
+    monkeypatch.setitem(
+        vars(config),
+        "settings",
+        config.Settings(backend="ladybug", db_path=tmp_path / "fresh.lbug"),
     )
     driver.close_driver()
     try:

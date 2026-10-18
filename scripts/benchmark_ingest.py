@@ -94,7 +94,9 @@ def main():
     old_ingest = baseline_module(ref, "toolgraph/manifest/ingest.py", "benchmark_old_ingest")
     old_ingest.resolve_tool_keys = old_queries.resolve_tool_keys
     rows = []
-    original = config.settings
+    # Read the cached singleton without building it: with no ambient backend,
+    # building it is refused (ADR-0017), and this script picks its own.
+    original = vars(config).get("settings")
     try:
         for backend in ("ladybug", "neo4j"):
             with ExitStack() as stack:
@@ -146,7 +148,10 @@ def main():
                         print(json.dumps(result), flush=True)
     finally:
         driver.close_driver()
-        config.settings = original
+        if original is None:
+            vars(config).pop("settings", None)
+        else:
+            config.settings = original
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(

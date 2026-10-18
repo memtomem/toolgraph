@@ -104,7 +104,11 @@ def _runtime_config() -> dict:
 
 
 def backend_source() -> str:
-    """Which input decides the backend: config-flag, env, config-file or default."""
+    """Which input decides the backend: config-flag, env, config-file or none.
+
+    ``none`` means nothing names one, and reading the settings is refused
+    (ADR-0017): there is no implicit backend.
+    """
     if _explicit_config_path is not None:
         return "config-flag"
     if os.getenv("TOOLGRAPH_BACKEND"):
@@ -114,7 +118,7 @@ def backend_source() -> str:
             return "config-file"
     except RuntimeConfigurationError:
         return "config-file"
-    return "default"
+    return "none"
 
 
 def _same_path(left: str, right: str) -> bool:
@@ -157,10 +161,27 @@ def ambient_conflict() -> str | None:
 
 
 def _backend_default() -> str:
+    """The configured backend; refused when nothing names one (ADR-0017).
+
+    ``NEO4J_*`` variables alone select nothing: they configure a Neo4j
+    backend once one is chosen.
+    """
     runtime = _runtime_config()
     if _explicit_config_path is not None:
-        return str(runtime.get("backend", "neo4j"))
-    return os.getenv("TOOLGRAPH_BACKEND") or str(runtime.get("backend", "neo4j"))
+        backend = runtime.get("backend")
+        if not backend:
+            raise RuntimeConfigurationError(
+                f'no backend configured in {_explicit_config_path}: add "backend" '
+                '("ladybug" or "neo4j") to that file'
+            )
+        return str(backend)
+    backend = os.getenv("TOOLGRAPH_BACKEND") or runtime.get("backend")
+    if not backend:
+        raise RuntimeConfigurationError(
+            "no backend configured: run `toolgraph init`, or set TOOLGRAPH_BACKEND "
+            "to ladybug or neo4j"
+        )
+    return str(backend)
 
 
 def _db_path_default() -> Path:
@@ -209,17 +230,26 @@ def __getattr__(name: str):
 
 
 def configure(config_path: Path) -> None:
-    """Select an explicit runtime config (CLI > env > cwd .env > default)."""
-    global _explicit_config_path, settings
+    """Select an explicit runtime config (CLI > env > cwd .env).
+
+    Only the file is selected and read here. The backend is resolved when the
+    settings are next read, so a file without ``backend`` is refused by the
+    command that needs one, as one error line, not as a usage error here.
+    The cached settings are dropped so that read sees the new file.
+    """
+    global _explicit_config_path
     selected = config_path.expanduser().resolve()
     if not selected.is_file():
         raise RuntimeConfigurationError(f"Toolgraph runtime config does not exist: {selected}")
     previous = _explicit_config_path
+    previous_settings = globals().pop("settings", None)
     _explicit_config_path = selected
     try:
-        settings = Settings()
+        _runtime_config()
     except Exception:
         _explicit_config_path = previous
+        if previous_settings is not None:
+            globals()["settings"] = previous_settings
         raise
     # A cached connection still points at the previous database.
     from toolgraph.graph import driver

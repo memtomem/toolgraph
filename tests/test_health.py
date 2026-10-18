@@ -141,7 +141,10 @@ def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
         "state": (queries, "graph_state"),
     }
     if phase == "settings":
-        monkeypatch.delattr(config, "settings", raising=False)
+        monkeypatch.delitem(vars(config), "settings", raising=False)
+    else:
+        # The injected failure must be what fails, not a missing backend.
+        monkeypatch.setitem(vars(config), "settings", config.Settings(backend="ladybug"))
     with patch.object(*targets[phase], side_effect=error):
         report = run_doctor()
     assert not report.healthy

@@ -15,6 +15,7 @@ from neo4j.exceptions import (
     SessionExpired,
 )
 
+from toolgraph import config
 from toolgraph.errors import ContractError
 from toolgraph.graph import driver
 from toolgraph.graph.driver import (
@@ -122,6 +123,7 @@ def test_outage_thrown_through_session_yield_is_typed(monkeypatch):
         def session(self, **kwargs):
             return _Session()
 
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="neo4j"))
     monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
     monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
 
@@ -147,6 +149,7 @@ def test_client_error_through_session_yield_stays_loud(monkeypatch):
         def session(self, **kwargs):
             return _Session()
 
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="neo4j"))
     monkeypatch.setattr(driver, "get_driver", lambda: _Driver())
     monkeypatch.setattr(driver, "backend_name", lambda: "neo4j")
 

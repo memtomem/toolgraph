@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import pytest
 from neo4j import NotificationClassification
 from typer.testing import CliRunner
 
+from tests._helpers import ROOT
 from toolgraph import cli, config
 from toolgraph.cli import app
 from toolgraph.graph import driver
@@ -183,7 +185,9 @@ def test_env_example_does_not_redirect_omitted_inputs_to_the_examples(tmp_path, 
 def test_check_does_not_create_a_missing_database(ambient, monkeypatch):
     pytest.importorskip("ladybug")
     missing = ambient / "typo" / "toolgraph.lbug"
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=missing))
+    monkeypatch.setitem(
+        vars(config), "settings", config.Settings(backend="ladybug", db_path=missing)
+    )
 
     result = CliRunner().invoke(cli.app, ["check"])
 
@@ -216,7 +220,7 @@ def test_a_file_that_is_not_a_database_is_a_configuration_error(ambient, monkeyp
     pytest.importorskip("ladybug")
     path = ambient / "foreign.lbug"
     path.write_bytes(b"not a database" * 100)
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=path))
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="ladybug", db_path=path))
     opener = driver.acquire_readonly_session if read_only else driver.session
 
     with pytest.raises(driver.BackendConfigurationError) as raised, opener() as s:
@@ -272,7 +276,7 @@ def test_backend_names_that_select_the_same_backend_are_not_a_conflict(
     assert config.ambient_conflict() is None
 
 
-@pytest.mark.parametrize(("env_value", "source"), [(None, "default"), ("neo4j", "env")])
+@pytest.mark.parametrize(("env_value", "source"), [(None, "none"), ("neo4j", "env")])
 def test_doctor_reports_backend_source_without_a_config_file(
     ambient, monkeypatch, env_value, source
 ):
@@ -285,7 +289,172 @@ def test_doctor_reports_backend_source_without_a_config_file(
     assert info["backend_source"] == source
 
 
-def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path):
+# --- No implicit backend (ADR-0017 step 3) -----------------------------------
+
+_NO_BACKEND = (
+    "ERROR: no backend configured: run `toolgraph init`, or set TOOLGRAPH_BACKEND "
+    "to ladybug or neo4j\n"
+)
+
+
+def _bare_config(directory: Path) -> Path:
+    path = directory / "bare.json"
+    path.write_text(json.dumps({"schema_version": 1}))
+    return path
+
+
+def _no_backend_in(path: Path) -> str:
+    return (
+        f'ERROR: no backend configured in {path.resolve()}: add "backend" '
+        '("ladybug" or "neo4j") to that file\n'
+    )
+
+
+def test_neo4j_variables_alone_select_no_backend(ambient, monkeypatch):
+    monkeypatch.setenv("NEO4J_URI", "bolt://db.example:7687")
+    monkeypatch.setenv("NEO4J_PASSWORD", "hunter2")
+
+    result = CliRunner().invoke(cli.app, ["drift"])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == _NO_BACKEND
+    assert not (ambient / ".toolgraph").exists()
+
+
+def test_reading_settings_without_a_backend_raises_but_explicit_settings_do_not(ambient):
+    with pytest.raises(config.RuntimeConfigurationError, match="no backend configured"):
+        config.settings  # noqa: B018 - the read itself is under test
+    explicit = config.Settings(backend="ladybug", db_path=ambient / "explicit.lbug")
+    assert explicit.backend == "ladybug"
+
+
+def test_doctor_reports_the_unconfigured_state_as_one_configuration_fail(ambient):
+    result = CliRunner().invoke(cli.app, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    [check] = json.loads(result.stdout)["checks"]
+    assert check["name"] == "Configuration"
+    assert check["status"] == "FAIL"
+    assert "no backend configured" in check["message"]
+    assert check["details"]["backend_source"] == "none"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--help"], ["--version"], ["example", "init", "quickstart"], ["init"]],
+    ids=["help", "version", "example-init", "init"],
+)
+def test_commands_that_do_not_open_the_graph_need_no_backend(ambient, argv):
+    if argv == ["init"]:
+        pytest.importorskip("ladybug")
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 0, result.output
+
+
+def test_review_candidate_commands_need_no_backend(ambient):
+    source = ambient / "candidates.json"
+    source.write_bytes((ROOT / "contracts" / "tracegraph" / "v1.json").read_bytes())
+    runner = CliRunner()
+
+    listed = runner.invoke(cli.app, ["review-candidates", "list", str(source)])
+    assert listed.exit_code == 0, listed.output
+    candidate = json.loads(listed.stdout)["candidates"][0]["candidate_id"]
+    annotated = runner.invoke(
+        cli.app,
+        ["review-candidates", "annotate", str(source), candidate]
+        + ["--status", "accepted", "--reviewer", "operator"],
+    )
+    assert annotated.exit_code == 0, annotated.output
+
+
+@pytest.mark.parametrize("argv", [["check"], ["drift"], ["serve"]])
+def test_config_file_without_a_backend_is_one_error_line_naming_it(ambient, monkeypatch, argv):
+    """Exit 1 and one line, not a --config usage error (exit 2); env not consulted."""
+    bare = _bare_config(ambient)
+    monkeypatch.setenv("TOOLGRAPH_BACKEND", "ladybug")
+
+    result = CliRunner().invoke(cli.app, ["--config", str(bare), *argv])
+
+    assert result.exit_code == 1
+    assert result.stderr == _no_backend_in(bare)
+
+
+def test_doctor_names_a_config_file_without_a_backend(ambient):
+    bare = _bare_config(ambient)
+
+    result = CliRunner().invoke(cli.app, ["--config", str(bare), "doctor", "--json"])
+
+    assert result.exit_code == 1
+    [check] = json.loads(result.stdout)["checks"]
+    assert check["status"] == "FAIL"
+    assert str(bare.resolve()) in check["message"]
+
+
+def test_a_malformed_config_file_is_still_a_usage_error(ambient):
+    broken = ambient / "broken.json"
+    broken.write_text("{")
+
+    result = CliRunner().invoke(cli.app, ["--config", str(broken), "check"])
+
+    assert result.exit_code == 2
+    assert "invalid Toolgraph runtime config" in result.output
+
+
+def test_configure_drops_settings_cached_from_the_previous_file(ambient):
+    first = _write_runtime(ambient / "a", backend="ladybug", db_path=ambient / "a.lbug")
+    bare = _bare_config(ambient)
+    config.configure(first)
+    assert config.settings.backend == "ladybug"
+
+    config.configure(bare)
+
+    with pytest.raises(config.RuntimeConfigurationError, match=re.escape(str(bare.resolve()))):
+        config.settings  # noqa: B018 - the read itself is under test
+
+
+def test_configure_keeps_the_previous_settings_when_the_new_file_is_invalid(ambient):
+    first = _write_runtime(ambient / "a", backend="ladybug", db_path=ambient / "a.lbug")
+    config.configure(first)
+    before = config.settings
+    broken = ambient / "broken.json"
+    broken.write_text("{")
+
+    with pytest.raises(config.RuntimeConfigurationError):
+        config.configure(broken)
+
+    assert config.settings is before
+    assert config.runtime_config_path() == first.resolve()
+
+
+def test_serve_refuses_an_unconfigured_backend_before_serving(ambient):
+    result = CliRunner().invoke(cli.app, ["serve"])
+
+    assert result.exit_code == 1
+    assert result.stderr == _NO_BACKEND
+
+
+def test_server_module_refuses_an_unconfigured_backend_before_serving(ambient):
+    """``stdin`` is empty: without the startup check the server would exit 0."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TOOLGRAPH_", "NEO4J_"))}
+
+    result = subprocess.run(
+        [sys.executable, "-m", "toolgraph.server.app"],
+        cwd=ambient,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 1
+    assert result.stderr == _NO_BACKEND
+
+
+def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path, fresh_settings):
     runtime = tmp_path / "config.json"
     db_path = tmp_path / "isolated.lbug"
     runtime.write_text(
@@ -294,7 +463,6 @@ def test_explicit_config_beats_environment_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("TOOLGRAPH_BACKEND", "neo4j")
     monkeypatch.setenv("TOOLGRAPH_DB_PATH", str(tmp_path / "shared.lbug"))
     monkeypatch.setattr(config, "_explicit_config_path", None)
-    monkeypatch.setattr(config, "settings", config.settings)
 
     # check opens read-only and never creates the database, so make it first.
     created = CliRunner().invoke(app, ["--config", str(runtime), "init-schema"])

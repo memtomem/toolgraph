@@ -19,7 +19,9 @@ def test_graph_fixture_ignores_ambient_ladybug_configuration(tmp_path, monkeypat
     # holds real work.
     state_dir = tmp_path / ".toolgraph"
     db_path = state_dir / "toolgraph.lbug"
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=db_path))
+    monkeypatch.setitem(
+        vars(config), "settings", config.Settings(backend="ladybug", db_path=db_path)
+    )
     driver.close_driver()
     schema.init_schema()
     with driver.session() as s:
@@ -42,7 +44,9 @@ def test_graph_fixture_ignores_ambient_ladybug_configuration(tmp_path, monkeypat
     assert driver.backend_name() == "neo4j"
     assert db_path.read_bytes() == before
 
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=db_path))
+    monkeypatch.setitem(
+        vars(config), "settings", config.Settings(backend="ladybug", db_path=db_path)
+    )
     driver.close_driver()
     with driver.acquire_readonly_session() as s:
         rows = [row["id"] for row in s.run("MATCH (a:Agent) RETURN a.id AS id")]

@@ -19,7 +19,7 @@ from neo4j._sync.io._bolt import Bolt
 from neo4j.exceptions import AuthError, ClientError, ConfigurationError, Neo4jError
 from typer.testing import CliRunner
 
-from toolgraph import cli
+from toolgraph import cli, config
 from toolgraph.artifacts import ArtifactDurabilityWarning, atomic_write_private
 from toolgraph.graph import driver as driver_mod
 from toolgraph.graph import schema as schema_mod
@@ -189,6 +189,7 @@ class _FailingDriver:
 @pytest.fixture
 def neo4j_failing_with(monkeypatch):
     def install(error: Exception) -> None:
+        monkeypatch.setitem(vars(config), "settings", config.Settings(backend="neo4j"))
         monkeypatch.setattr(driver_mod, "backend_name", lambda: "neo4j")
         monkeypatch.setattr(driver_mod, "get_driver", lambda: _FailingDriver(error))
 

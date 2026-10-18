@@ -23,22 +23,22 @@ down: ## Stop Neo4j (keep data volume)
 clean: ## Stop Neo4j and delete its data volume
 	docker compose down -v
 
-check: ## Verify Neo4j connectivity
+check: ## Verify the configured backend (from .env or toolgraph init)
 	uv run toolgraph check
 
-init: ## Create graph constraints
+init: ## Create constraints (Neo4j) or tables (Ladybug) for the configured backend
 	uv run toolgraph init-schema
 
-crawl: ## Crawl servers from $(SERVERS) into the graph
+crawl: ## Crawl servers from $(SERVERS) into the configured graph
 	uv run toolgraph crawl --servers $(SERVERS)
 
-ingest: ## Ingest authored governance from $(GOVERNANCE)
+ingest: ## Ingest authored governance from $(GOVERNANCE) into the configured graph
 	uv run toolgraph ingest-manifest --governance $(GOVERNANCE)
 
-reset: ## Delete all graph data (keeps constraints)
+reset: ## Delete all data in the configured graph (keeps constraints)
 	uv run toolgraph reset --yes
 
-serve: ## Run toolgraph as an MCP server (stdio)
+serve: ## Run toolgraph as an MCP server (stdio) on the configured backend
 	uv run toolgraph serve
 
 demo: ## End-to-end demo (real filesystem server)
