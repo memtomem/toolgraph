@@ -272,6 +272,72 @@ def test_resource_lifecycle_follows_adr_0001(backend_graph):
     assert loader.graph_counts()["provides"] == 1
 
 
+def test_failed_retirement_leaves_the_fleet_in_place(backend_graph, monkeypatch):
+    _load("alpha", [ToolRecord(name="read_file")], resources=["file:///shared.csv"])
+    _load(
+        "beta",
+        [
+            ToolRecord(name="scratch", read_only_hint=True),
+            ToolRecord(name="drop_table", destructive_hint=True),
+        ],
+        resources=["file:///shared.csv", "file:///b-only.csv"],
+    )
+    report = ingest_governance(
+        Governance(
+            agents=["planner"],
+            policies=[Policy(id="prod-deny", effect="DENY")],
+            grants=[AccessGrant(agent="planner", tool="beta::drop_table")],
+            governed_by={"beta::drop_table": ["prod-deny"]},
+        )
+    )
+    assert report.warnings == []
+
+    def snapshot() -> dict:
+        with driver.session() as s:
+            tools = sorted(
+                (r["key"], r["read_only"], r["destructive"])
+                for r in s.run(
+                    "MATCH (t:Tool) RETURN t.key AS key, "
+                    "t.read_only_hint AS read_only, t.destructive_hint AS destructive"
+                )
+            )
+            uris = sorted(r["u"] for r in s.run("MATCH (r:Resource) RETURN r.uri AS u"))
+        return {
+            "servers": _server_names(),
+            "tools": tools,
+            "uris": uris,
+            "counts": loader.graph_counts(),
+            "state": queries.graph_state(),
+            "deny": queries.check_access("planner", "beta::drop_table")["verdict"],
+        }
+
+    before = snapshot()
+    seen_inside = {}
+    original = loader.bump_generation
+
+    def fail(tx):
+        rec = tx.run("MATCH (s:MCPServer) RETURN collect(s.name) AS names").single()
+        seen_inside["servers"] = sorted(rec["names"])
+        raise RuntimeError("injected after mutation")
+
+    monkeypatch.setattr(loader, "bump_generation", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        loader.retire_unlisted_servers({"alpha"})
+    # Every retirement write ran before the failure: hints cleared, the
+    # ungoverned tool, beta and b-only.csv deleted.
+    assert seen_inside["servers"] == ["alpha"]
+    assert snapshot() == before
+
+    monkeypatch.setattr(loader, "bump_generation", original)
+    assert loader.retire_unlisted_servers({"alpha"})[0] == ["beta"]
+    after = snapshot()
+    assert after["servers"] == {"alpha"}
+    assert after["tools"] == [("alpha::read_file", None, None), ("beta::drop_table", None, None)]
+    assert after["uris"] == ["file:///shared.csv"]
+    assert after["deny"] == "DENY"
+    assert after["state"].generation == before["state"].generation + 1
+
+
 def test_rename_unambiguates_bare_twin(backend_graph):
     _load("sample", [ToolRecord(name="write_file")])
     _load("sample_v2", [ToolRecord(name="write_file")])

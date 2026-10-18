@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests._helpers import load_crawl
 from toolgraph.graph import driver, loader, queries
 from toolgraph.manifest.ingest import ingest_governance
@@ -154,3 +156,99 @@ def test_recrawl_keeps_governed_tool_and_warns(backend_graph):
     res = queries.check_access("planner", "sample::write_file")
     assert res["found"] is True
     assert res["verdict"] == "DENY"
+
+
+def _crawl_snapshot() -> dict:
+    with driver.session() as s:
+        server = s.run(
+            "MATCH (s:MCPServer {name:'demo-fs'}) "
+            "RETURN s.version AS version, s.endpoint AS endpoint, s.last_crawled_at AS crawled"
+        ).single()
+        exposes = sorted(
+            (r["key"], r["evidence"])
+            for r in s.run(
+                "MATCH (:MCPServer {name:'demo-fs'})-[e:EXPOSES]->(t:Tool) "
+                "RETURN t.key AS key, e.evidence AS evidence"
+            )
+        )
+        provides = sorted(
+            (r["uri"], r["evidence"])
+            for r in s.run(
+                "MATCH (:MCPServer {name:'demo-fs'})-[p:PROVIDES]->(r:Resource) "
+                "RETURN r.uri AS uri, p.evidence AS evidence"
+            )
+        )
+        resources = sorted(
+            (r["uri"], r["name"], r["description"])
+            for r in s.run(
+                "MATCH (r:Resource) RETURN r.uri AS uri, r.name AS name, "
+                "r.description AS description"
+            )
+        )
+    return {
+        "server": (server["version"], server["endpoint"], str(server["crawled"])),
+        "tools": queries.exposed_tool_contracts(),
+        "exposes": exposes,
+        "provides": provides,
+        "resources": resources,
+        "counts": loader.graph_counts(),
+        "state": queries.graph_state(),
+    }
+
+
+def test_failed_recrawl_leaves_the_previous_crawl_in_place(backend_graph, monkeypatch):
+    first = _sample()
+    first.tools[0].read_only_hint = True
+    first.tools[1].destructive_hint = True
+    first.resources.append(ResourceRecord(uri="file:///data/old.csv", name="old"))
+    loader.load_crawl_result(first)
+    before = _crawl_snapshot()
+    # Touches every write in _merge_crawl: server properties and provenance,
+    # a changed tool (schema, description, hint), a new tool, a removed tool,
+    # a changed resource, a new resource and a dropped PROVIDES edge.
+    second = CrawlResult(
+        server_name="demo-fs",
+        server_version="2.0.0",
+        transport="stdio",
+        endpoint="uvx demo-fs",
+        tools=[
+            ToolRecord(name="read_file", description="changed", read_only_hint=False),
+            ToolRecord(name="list_dir"),
+        ],
+        resources=[
+            ResourceRecord(uri="file:///data/customers.csv", name="renamed"),
+            ResourceRecord(uri="file:///data/orders.csv", name="orders"),
+        ],
+    )
+    seen_inside = {}
+    original = loader.bump_generation
+
+    def fail(tx):
+        rec = tx.run("MATCH (t:Tool {server:'demo-fs'}) RETURN collect(t.name) AS names").single()
+        seen_inside["tools"] = sorted(rec["names"])
+        raise RuntimeError("injected after mutation")
+
+    monkeypatch.setattr(loader, "bump_generation", fail)
+    with pytest.raises(RuntimeError, match="injected"):
+        loader.load_crawl_result(second)
+    # The failure came after the writes, so there was something to undo.
+    assert seen_inside["tools"] == ["list_dir", "read_file"]
+    assert _crawl_snapshot() == before
+
+    monkeypatch.setattr(loader, "bump_generation", original)
+    loader.load_crawl_result(second)
+    after = _crawl_snapshot()
+    assert after["server"][:2] == ("2.0.0", "stdio:uvx")
+    assert [
+        (t["tool_key"], t["description"], t["input_schema"], t["read_only_hint"])
+        for t in after["tools"]
+    ] == [("demo-fs::list_dir", None, None, None), ("demo-fs::read_file", "changed", None, False)]
+    assert {evidence for _, evidence in after["exposes"] + after["provides"]} == {
+        "crawled from stdio:uvx"
+    }
+    assert [uri for uri, _ in after["provides"]] == [
+        "file:///data/customers.csv",
+        "file:///data/orders.csv",
+    ]
+    assert ("file:///data/customers.csv", "renamed", None) in after["resources"]
+    assert after["state"].generation > before["state"].generation
