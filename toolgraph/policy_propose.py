@@ -16,7 +16,7 @@ from toolgraph.artifact_safety import validate_identity
 from toolgraph.graph import driver, queries, selector
 from toolgraph.graph.selector import PROFILES
 from toolgraph.manifest.parser import Governance, governance_digest, load_governance
-from toolgraph.redaction import contains_credential, redact_text
+from toolgraph.redaction import is_credential_shaped, redact_text
 
 
 class PolicyProposeError(Exception):
@@ -162,6 +162,9 @@ def _instance_id(value: object, where: str) -> str | None:
         return None
     if value != value.strip():
         raise ProvenanceError(f"{where} must not have surrounding whitespace")
+    if is_credential_shaped(value):
+        # Checked here, before a mismatch error can quote the value.
+        raise ProvenanceError(f"{where} contains credential-shaped data")
     return value
 
 
@@ -316,6 +319,11 @@ def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
         for key in ("agent", "decision"):
             if key not in row:
                 raise ValueError(f"{where}: missing {key!r}")
+        # Before any message below can quote one of these values.
+        for key in ("agent", "decision", "tool_key", "candidate"):
+            value = row.get(key)
+            if isinstance(value, str) and is_credential_shaped(value):
+                raise ValueError(f"{where}: {key} contains credential-shaped data")
         if row["decision"] not in DECISIONS:
             raise ValueError(
                 f"{where}: decision must be one of {sorted(DECISIONS)}, got {row['decision']!r}"
@@ -754,11 +762,9 @@ _PROPOSAL_BUCKETS = (
 
 
 def _refuse_credential(value: str) -> None:
-    # The artifact identity contract (credential URIs and queries) plus the
-    # assignment and header forms an observation row can also carry.
+    # The artifact identity contract, which covers the assignment and header
+    # forms an observation row can also carry.
     validate_identity(value)
-    if contains_credential(value):
-        raise ValueError("credential-shaped data")
 
 
 def _check_output_identities(proposal: dict[str, Any]) -> None:

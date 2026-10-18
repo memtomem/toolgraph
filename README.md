@@ -335,7 +335,12 @@ the exact report bytes and written under a local lock with atomic replacement.
 The sidecar path is resolved before load, lock, and replacement so symlink
 aliases cannot split history. Successful replacement fsyncs both the file and
 its parent directory where the platform supports it.
-Local review notes may cite paths but reject credential-shaped content.
+Local review notes may cite paths but reject credential-shaped content: a
+`<name>=`, or a `<name>:` followed by a space or a quote, where the name is a
+token, password, secret, credential, API key or authorization, so `token:
+rotated weekly` has to be rephrased while a versioned tool name such as
+`srv::get_token:v2` is fine. Reviewer names and the report's run ids and tool
+keys are checked the same way.
 If a genuine parent-directory fsync error occurs after replacement, the event
 remains successful and visible while a durability warning is written to stderr;
 retrying would append a duplicate event.

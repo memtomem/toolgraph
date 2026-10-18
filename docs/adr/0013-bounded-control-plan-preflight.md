@@ -29,7 +29,14 @@ Toolgraph accepts `toolgraph.control-plan` schema v1 through
 
 The producer rejects oversized inputs, forbidden body fields, credential-shaped
 URIs, and absolute filesystem paths. Same-major additive fields are tolerated;
-unknown major versions fail closed.
+unknown major versions fail closed. *Amended 2026-10-18 (#130):* every key and
+string value, additive ones included, goes through the shared refusal rule
+`toolgraph.redaction.is_credential_shaped`: credential URIs and queries,
+`name=value` and `name: value` assignments of a token, password, secret,
+credential, API key or authorization name, and `Bearer` values, in the raw text
+and after one percent-decoding pass. Single-colon identities such as
+`agent-token:blue` stay valid, and the error names where the value sits, never
+the refused key or value.
 
 The structural linter reports topology and bound findings. All principal/tool
 evaluations run inside one `with_graph_state(..., strict=True)` bracket. The
