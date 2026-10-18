@@ -22,7 +22,7 @@ consumer may never override a hard reject (NOT_GRANTED, violation, drifted).
 from __future__ import annotations
 
 from toolgraph.errors import ContractError
-from toolgraph.graph.driver import session
+from toolgraph.graph.driver import read_session
 from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
 from toolgraph.models import TOOL_HINT_FIELDS
 
@@ -176,7 +176,7 @@ def rank_features(agent: str, candidates: list[str]) -> dict:
     if not agent_exists(agent):
         return {"agent": agent, "agent_found": False, "features": []}
 
-    with session() as s:
+    with read_session() as s:
         resolved = resolve_tool_refs(s, candidates)
         unique_keys = sorted({keys[0] for keys in resolved.values() if len(keys) == 1})
         facts = _tool_facts(s, unique_keys, agent)

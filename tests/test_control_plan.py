@@ -159,7 +159,7 @@ def test_missing_graph_instance_fails_closed(monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
+    monkeypatch.setattr("toolgraph.control_plan.driver.read_session", lambda: MockSession())
     with pytest.raises(ControlPlanError, match="no instance id"):
         build_control_preflight(control_plan_raw())
 
@@ -284,7 +284,7 @@ def test_control_plan_transitive_exposure_and_redaction(monkeypatch, artifact_fo
 
     monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
     monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", bracket)
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+    monkeypatch.setattr("toolgraph.control_plan.driver.read_session", lambda: MockExposureSession())
 
     # Build plan where start -> reader_node -> router -> writer_node -> end
     doc = {
@@ -395,7 +395,7 @@ def test_control_plan_cycle_and_invalid_edge_safe_traversal(monkeypatch):
             "graph_state": {"instance_id": "test-instance", "generation": 1},
         },
     )
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+    monkeypatch.setattr("toolgraph.control_plan.driver.read_session", lambda: MockExposureSession())
 
     doc = {
         "schema_version": 1,
@@ -475,7 +475,7 @@ def test_control_plan_4096_chain_and_budget_truncation(monkeypatch):
             "graph_state": {"instance_id": "test-instance", "generation": 1},
         },
     )
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockExposureSession())
+    monkeypatch.setattr("toolgraph.control_plan.driver.read_session", lambda: MockExposureSession())
 
     # Build 100 node chain: start -> n_0 -> ... -> n_99 -> end
     nodes = [{"id": "start", "kind": "start", "principals": [], "agent_call": False}]

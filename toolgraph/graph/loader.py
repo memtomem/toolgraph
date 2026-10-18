@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from toolgraph.graph.driver import session
+from toolgraph.graph.driver import read_session, session
 from toolgraph.graph.schema import bump_generation, tool_key
 from toolgraph.models import CrawlResult
 from toolgraph.redaction import persisted_endpoint
@@ -276,6 +276,6 @@ def graph_counts() -> dict[str, int]:
         MATCH ()-[r:PROVIDES]->() RETURN 'provides' AS name, count(r) AS count
     """
     names = ("mcpserver", "tool", "resource", "exposes", "provides")
-    with session() as s:
+    with read_session() as s:
         counts = {r["name"]: r["count"] for r in s.run(query)}
     return {name: counts.get(name, 0) for name in names}

@@ -249,7 +249,8 @@ def test_owned_readonly_sessions_never_use_writable_acquisition(embedded_path, m
         yield  # unreachable; makes forbidden() a generator for @contextmanager
 
     monkeypatch.setattr(driver, "session", forbidden)
-    monkeypatch.setattr(queries, "session", forbidden)
+    monkeypatch.setattr(driver, "read_session", forbidden)
+    monkeypatch.setattr(queries, "read_session", forbidden)
     result = CliRunner().invoke(cli.app, ["doctor", "--json"])
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["healthy"]
@@ -349,3 +350,224 @@ def test_corrupt_ladybug_dry_run_is_controlled(embedded_path, tmp_path):
     assert "file integrity and format" in result.stderr
     assert "Traceback" not in result.output
     assert embedded_path.read_bytes() == b"not a database"
+
+
+# Read paths never create a Ladybug database and refuse an uninitialized one
+# with one line, instead of a binder traceback after creating the file.
+
+_READ_COMMANDS = [
+    ["check-access", "a", "s::t"],
+    ["unsafe-tools", "a"],
+    ["blast-radius", "file:///x"],
+    ["unmapped-tools"],
+    ["orphan-policies"],
+    ["unbacked-edges"],
+    ["drift"],
+    ["destructive-unsafeguarded"],
+    ["annotation-contradictions"],
+    ["audit-report"],
+    ["rank-features", "a", "s::t"],
+    ["eligible-tools", "a", "s::t"],
+    ["selection-explain", "a", "s::t"],
+]
+
+
+def _empty_ladybug_file(path: Path) -> None:
+    import ladybug
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ladybug.Database(path).close()
+
+
+def _tables(path: Path) -> list[str]:
+    import ladybug
+
+    database = ladybug.Database(path, read_only=True)
+    try:
+        rows = ladybug.Connection(database).execute("CALL show_tables() RETURN *")
+        return sorted(row["name"] for row in rows.rows_as_dict().get_all())
+    finally:
+        database.close()
+
+
+@pytest.mark.parametrize("argv", _READ_COMMANDS, ids=lambda argv: argv[0])
+def test_read_command_on_a_missing_database_creates_nothing(embedded_path, argv):
+    pytest.importorskip("ladybug")
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr.splitlines() == [
+        f"ERROR: backend unavailable: BACKEND_UNAVAILABLE: Ladybug database {embedded_path} "
+        "does not exist or is not a file"
+    ]
+    assert not embedded_path.parent.exists()
+
+
+@pytest.mark.parametrize("argv", _READ_COMMANDS, ids=lambda argv: argv[0])
+def test_read_command_on_an_uninitialized_database_names_init_schema(embedded_path, argv):
+    pytest.importorskip("ladybug")
+    _empty_ladybug_file(embedded_path)
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr.splitlines() == [
+        "ERROR: backend schema is not initialized or incomplete — run 'toolgraph init-schema'"
+    ]
+    assert driver._ladybug_database is None
+    assert _tables(embedded_path) == []
+
+
+def test_read_session_is_session_on_neo4j(monkeypatch):
+    marker = object()
+
+    @contextmanager
+    def fake_session():
+        yield marker
+
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="neo4j"))
+    monkeypatch.setattr(driver, "session", fake_session)
+
+    with driver.read_session() as current:
+        assert current is marker
+
+
+def test_read_checks_a_handle_a_writer_opened_and_keeps_it(embedded_path):
+    pytest.importorskip("ladybug")
+    with driver.session():
+        pass  # a writer created and cached the database without a schema
+    writer_handle = driver._ladybug_database
+
+    with pytest.raises(driver.BackendConfigurationError) as raised, driver.read_session():
+        pass
+
+    assert raised.value.cause is driver.ConfigurationCause.SCHEMA_NOT_INITIALIZED
+    assert driver._ladybug_database is writer_handle
+
+
+def test_read_after_init_schema_in_the_same_process_succeeds(embedded_path):
+    pytest.importorskip("ladybug")
+    schema.init_schema()
+
+    assert queries.unmapped_tools(only_granted=False) == []
+
+
+def test_failed_read_releases_the_database_for_another_process(embedded_path):
+    """The serving process must not keep the lock on a database an operator
+    has to initialize from a second process."""
+    pytest.importorskip("ladybug")
+    _empty_ladybug_file(embedded_path)
+    with pytest.raises(driver.BackendConfigurationError), driver.read_session():
+        pass
+
+    repaired = subprocess.run(
+        [sys.executable, "-m", "toolgraph.cli", "init-schema"],
+        env={
+            "PATH": "",
+            "TOOLGRAPH_CONFIG": str(embedded_path.parent / "no-config.json"),
+            "TOOLGRAPH_BACKEND": "ladybug",
+            "TOOLGRAPH_DB_PATH": str(embedded_path),
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert repaired.returncode == 0, repaired.stderr
+    assert queries.unmapped_tools(only_granted=False) == []
+
+
+def test_database_deleted_between_check_and_open_fails_loudly(embedded_path, monkeypatch):
+    """Ladybug's writable open has no "must exist" mode, so a file another
+    process deletes after the existence check is created again, empty. The
+    schema check must then refuse it and drop the handle."""
+    pytest.importorskip("ladybug")
+    schema.init_schema()
+    driver.close_driver()
+    original = driver._open_ladybug_database
+
+    def deleted_first(path, **kwargs):
+        path.unlink()
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(driver, "_open_ladybug_database", deleted_first)
+
+    with pytest.raises(driver.BackendConfigurationError) as raised, driver.read_session():
+        pass
+
+    assert raised.value.cause is driver.ConfigurationCause.SCHEMA_NOT_INITIALIZED
+    assert driver._ladybug_database is None
+
+
+def test_failed_read_closes_the_handle_it_opened(embedded_path, monkeypatch):
+    """Explicit, not left to garbage collection: an exception traceback that
+    outlives the call would otherwise keep the lock."""
+    pytest.importorskip("ladybug")
+    _empty_ladybug_file(embedded_path)
+    opened = []
+    original = driver._open_ladybug_database
+
+    def recording(path, **kwargs):
+        opened.append(original(path, **kwargs))
+        return opened[-1]
+
+    monkeypatch.setattr(driver, "_open_ladybug_database", recording)
+
+    with pytest.raises(driver.BackendConfigurationError), driver.read_session():
+        pass
+
+    (handle,) = opened
+    assert handle.is_closed
+
+
+def test_every_read_checks_the_schema_again(embedded_path):
+    """Not once per handle: a version changed under a cached handle is
+    refused on the next read."""
+    pytest.importorskip("ladybug")
+    schema.init_schema()
+    assert queries.unmapped_tools(only_granted=False) == []
+    with driver.session() as s:
+        s.run(
+            "MATCH (m:GraphMeta {id:'singleton'}) SET m.backend_schema_version = $version",
+            version=schema.BACKEND_SCHEMA_VERSION + 1,
+        )
+
+    with pytest.raises(driver.BackendConfigurationError) as raised:
+        queries.unmapped_tools(only_granted=False)
+
+    assert raised.value.cause is driver.ConfigurationCause.SCHEMA_VERSION_MISMATCH
+
+
+def test_failed_session_construction_closes_the_handle(embedded_path, monkeypatch):
+    pytest.importorskip("ladybug")
+    _empty_ladybug_file(embedded_path)
+    opened = []
+    original = driver._open_ladybug_database
+
+    def recording(path, **kwargs):
+        opened.append(original(path, **kwargs))
+        return opened[-1]
+
+    def interrupted(database):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(driver, "_open_ladybug_database", recording)
+    monkeypatch.setattr(driver, "LadybugSession", interrupted)
+
+    with pytest.raises(KeyboardInterrupt), driver.read_session():
+        pass
+
+    (handle,) = opened
+    assert handle.is_closed
+    assert driver._ladybug_database is None
+
+
+def test_writer_without_ladybug_touches_no_directory(embedded_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "ladybug", None)
+
+    with pytest.raises(driver.BackendConfigurationError) as raised, driver.session():
+        pass
+
+    assert raised.value.cause is driver.ConfigurationCause.LADYBUG_MISSING
+    assert not embedded_path.parent.exists()

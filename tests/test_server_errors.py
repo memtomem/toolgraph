@@ -711,9 +711,31 @@ def test_corrupt_ladybug_file_is_tagged(embedded_path, read_only):
     assert raised.value.cause is ConfigurationCause.BACKEND_CORRUPT
 
 
-def _untagged_producers():
+def test_schema_version_mismatch_is_tagged():
     from toolgraph.graph import schema
 
+    with pytest.raises(BackendConfigurationError) as raised:
+        schema._refuse_version_mismatch(schema.BACKEND_SCHEMA_VERSION + 1)
+
+    assert raised.value.cause is ConfigurationCause.SCHEMA_VERSION_MISMATCH
+
+
+def test_uninitialized_schema_is_tagged(embedded_path):
+    pytest.importorskip("ladybug")
+    import ladybug
+
+    from toolgraph.graph import schema
+
+    embedded_path.parent.mkdir(parents=True, exist_ok=True)
+    ladybug.Database(embedded_path).close()
+
+    with pytest.raises(BackendConfigurationError) as raised:
+        schema.check_backend_schema_version()
+
+    assert raised.value.cause is ConfigurationCause.SCHEMA_NOT_INITIALIZED
+
+
+def _untagged_producers():
     def unknown_backend():
         with pytest.MonkeyPatch.context() as mp:
             mp.setitem(vars(config), "settings", config.Settings(backend="sqlite"))
@@ -730,9 +752,6 @@ def _untagged_producers():
         "unsupported-expression": lambda: driver._ladybug_query(
             "RETURN datetime('2020-01-01') AS x"
         ),
-        "schema-version": lambda: schema._refuse_version_mismatch(
-            schema.BACKEND_SCHEMA_VERSION + 1
-        ),
     }
 
 
@@ -744,15 +763,11 @@ def test_producers_that_are_not_operator_configuration_stay_untagged(name):
     assert raised.value.cause is None
 
 
-async def test_corrupt_ladybug_file_over_a_real_stdio_server(tmp_path):
-    """The envelope and the one-line log, from a real server process."""
-    pytest.importorskip("ladybug")
+async def _call_real_stdio_server(tmp_path, db_path) -> tuple[CallToolResult, str]:
+    """``check_access`` against a real server process on *db_path*, and its log."""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
-    path = tmp_path / "private" / "SENTINEL_LEAK.lbug"
-    path.parent.mkdir()
-    path.write_bytes(b"not a database" * 100)
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "toolgraph.server.app"],
@@ -760,7 +775,7 @@ async def test_corrupt_ladybug_file_over_a_real_stdio_server(tmp_path):
             "PATH": os.environ.get("PATH", ""),
             "TOOLGRAPH_CONFIG": str(tmp_path / "no-config.json"),
             "TOOLGRAPH_BACKEND": "ladybug",
-            "TOOLGRAPH_DB_PATH": str(path),
+            "TOOLGRAPH_DB_PATH": str(db_path),
         },
     )
     errlog = tmp_path / "server.err"
@@ -771,11 +786,47 @@ async def test_corrupt_ladybug_file_over_a_real_stdio_server(tmp_path):
         ):
             await session.initialize()
             result = await session.call_tool("check_access", {"agent": "a", "tool": "s::t"})
+    return result, errlog.read_text()
+
+
+async def test_corrupt_ladybug_file_over_a_real_stdio_server(tmp_path):
+    """The envelope and the one-line log, from a real server process."""
+    pytest.importorskip("ladybug")
+    path = tmp_path / "private" / "SENTINEL_LEAK.lbug"
+    path.parent.mkdir()
+    path.write_bytes(b"not a database" * 100)
+
+    result, log = await _call_real_stdio_server(tmp_path, path)
 
     assert result.is_error is True
     assert result.structured_content == _misconfigured(ConfigurationCause.BACKEND_CORRUPT)
     assert "SENTINEL_LEAK" not in result.model_dump_json()
-    log = errlog.read_text()
     assert "backend_corrupt" in log
     assert "Traceback" not in log
     assert "unexpected exception" not in log
+
+
+async def test_missing_ladybug_database_over_a_real_stdio_server(tmp_path):
+    """A read tool reports the outage and leaves no database behind."""
+    pytest.importorskip("ladybug")
+    path = tmp_path / "missing" / "graph.lbug"
+
+    result, log = await _call_real_stdio_server(tmp_path, path)
+
+    assert result.structured_content == _BACKEND_PAYLOAD
+    assert not path.parent.exists()
+    assert "Traceback" not in log
+
+
+async def test_uninitialized_ladybug_database_over_a_real_stdio_server(tmp_path):
+    pytest.importorskip("ladybug")
+    import ladybug
+
+    path = tmp_path / "graph.lbug"
+    ladybug.Database(path).close()
+
+    result, log = await _call_real_stdio_server(tmp_path, path)
+
+    assert result.structured_content == _misconfigured(ConfigurationCause.SCHEMA_NOT_INITIALIZED)
+    assert "schema_not_initialized" in log
+    assert "Traceback" not in log

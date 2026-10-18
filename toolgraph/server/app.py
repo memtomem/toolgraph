@@ -65,6 +65,14 @@ _BACKEND_MISCONFIGURED_MESSAGES = {
         "Toolgraph backend is misconfigured: the configured database file is not a valid "
         "Ladybug database; see the server log."
     ),
+    ConfigurationCause.SCHEMA_NOT_INITIALIZED: (
+        "Toolgraph backend is misconfigured: the graph schema is not initialized; "
+        "see the server log."
+    ),
+    ConfigurationCause.SCHEMA_VERSION_MISMATCH: (
+        "Toolgraph backend is misconfigured: the graph schema version does not match this "
+        "Toolgraph build; see the server log."
+    ),
 }
 
 

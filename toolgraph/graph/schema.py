@@ -14,6 +14,7 @@ from uuid import uuid4
 from toolgraph.graph.driver import (
     BackendConfigurationError,
     BackendUnavailableError,
+    ConfigurationCause,
     _translating_backend_errors,
     acquire_readonly_session,
     backend_name,
@@ -138,7 +139,8 @@ def _refuse_version_mismatch(stored: int | None) -> None:
                 "upgrade toolgraph to a version that understands it"
                 if stored > BACKEND_SCHEMA_VERSION
                 else "migrate the database (no automatic migration exists)"
-            )
+            ),
+            cause=ConfigurationCause.SCHEMA_VERSION_MISMATCH,
         )
 
 
@@ -155,7 +157,8 @@ def check_backend_schema_version(s: Any = None) -> None:
     # exists. Do not migrate it from a reader, or confuse it with missing tables.
     if info["missing_tables"] or info["missing_constraints"]:
         raise BackendConfigurationError(
-            "backend schema is not initialized or incomplete — run 'toolgraph init-schema'"
+            "backend schema is not initialized or incomplete — run 'toolgraph init-schema'",
+            cause=ConfigurationCause.SCHEMA_NOT_INITIALIZED,
         )
 
 

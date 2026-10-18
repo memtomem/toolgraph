@@ -45,6 +45,8 @@ class ConfigurationCause(StrEnum):
     NEO4J_SERVER_TOO_OLD = "neo4j_server_too_old"
     LADYBUG_MISSING = "ladybug_missing"
     BACKEND_CORRUPT = "backend_corrupt"
+    SCHEMA_NOT_INITIALIZED = "schema_not_initialized"
+    SCHEMA_VERSION_MISMATCH = "schema_version_mismatch"
 
 
 class BackendConfigurationError(RuntimeError):
@@ -353,32 +355,46 @@ def _not_a_database(path: Path) -> BackendConfigurationError:
     )
 
 
-def _get_ladybug_database() -> Any:
-    global _ladybug_database
-    if _ladybug_database is not None:
-        return _ladybug_database
+def _missing_database(path: Path) -> BackendUnavailableError:
+    return BackendUnavailableError(
+        f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist or is not a file"
+    )
+
+
+def _open_ladybug_database(path: Path, *, create: bool) -> Any:
+    """Open *path* writable. Ladybug creates the file when it is missing.
+
+    ``create`` makes the parent directory, after the dependency is resolved,
+    so a broken installation leaves the filesystem untouched.
+    """
     try:
         import ladybug as lb
     except ImportError as exc:  # environment dependent
         raise BackendConfigurationError(
             _LADYBUG_MISSING, cause=ConfigurationCause.LADYBUG_MISSING
         ) from exc
-    with _backend_lock:
-        if _ladybug_database is not None:
-            return _ladybug_database
-        path = Path(config.settings.db_path)
+    if create:
         path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            _ladybug_database = lb.Database(path)
-        except RuntimeError as exc:
-            message = str(exc)
-            if "lock" in message.lower() or "another process" in message.lower():
-                raise BackendLockedError(
-                    f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
-                ) from exc
-            if _NOT_A_DATABASE in message:
-                raise _not_a_database(path) from exc
-            raise
+    try:
+        return lb.Database(path)
+    except RuntimeError as exc:
+        message = str(exc)
+        if "lock" in message.lower() or "another process" in message.lower():
+            raise BackendLockedError(
+                f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
+            ) from exc
+        if _NOT_A_DATABASE in message:
+            raise _not_a_database(path) from exc
+        raise
+
+
+def _get_ladybug_database() -> Any:
+    global _ladybug_database
+    if _ladybug_database is not None:
+        return _ladybug_database
+    with _backend_lock:
+        if _ladybug_database is None:
+            _ladybug_database = _open_ladybug_database(Path(config.settings.db_path), create=True)
         return _ladybug_database
 
 
@@ -417,6 +433,62 @@ def session() -> Iterator[Session | LadybugSession]:
 
 
 @contextmanager
+def read_session() -> Iterator[Session | LadybugSession]:
+    """Yield a session for a pure read; on Ladybug it never creates a database.
+
+    Neo4j gets exactly ``session()``. Ladybug shares the process's writable
+    handle, as ``session()`` does, so a serving process still owns the file
+    (ADR-0011): a read-only handle would let another process write under it.
+    Opening that handle per read instead costs about 24 ms each time.
+
+    A missing file is refused rather than created. Every read first checks
+    the schema, so an empty or foreign-version file fails with one
+    configuration error instead of a native binder error. A handle this read
+    opened is published only after the check passes, and closed when it
+    fails, so the process does not keep the lock on a database that an
+    operator must initialize from another process.
+
+    Ladybug's writable open has no "must exist" mode: if another process
+    deletes the file between the existence check and the open, Ladybug
+    creates it empty again. The schema check then fails loudly and the
+    handle is closed.
+    """
+    if backend_name() == "neo4j":
+        with session() as current:
+            yield current
+        return
+    from toolgraph.graph.schema import check_backend_schema_version  # schema imports this module
+
+    global _ladybug_database
+    with _backend_lock:
+        database = _ladybug_database
+        opened = database is None
+        if opened:
+            path = Path(config.settings.db_path)
+            if not path.is_file():
+                raise _missing_database(path)
+            database = _open_ladybug_database(path, create=False)
+        current = None
+        try:
+            current = LadybugSession(database)
+            check_backend_schema_version(current)
+        except BaseException:
+            try:
+                if current is not None:
+                    current.close()
+            finally:
+                if opened:
+                    database.close()
+            raise
+        if opened:
+            _ladybug_database = database
+    try:
+        yield current
+    finally:
+        current.close()
+
+
+@contextmanager
 def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
     """Borrow an open database or open an existing embedded file read-only.
 
@@ -447,9 +519,7 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
         return
     path = Path(config.settings.db_path)
     if not path.is_file():
-        raise BackendUnavailableError(
-            f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist or is not a file"
-        )
+        raise _missing_database(path)
     owned = None
     with _backend_lock:
         database = _ladybug_database
