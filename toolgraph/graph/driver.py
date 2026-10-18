@@ -562,6 +562,24 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
 
 
 def close_driver() -> None:
+    """Close the process's backend handles.
+
+    Call it only when no session is open, on any thread including the
+    calling one. ``session()``, ``read_session()`` and the Neo4j branch of
+    ``acquire_readonly_session()`` release the lifecycle lock before
+    yielding, so a close does not wait for them: on Ladybug the session's
+    next query fails with ``Database is closed``, and the Neo4j driver
+    documents using a session while the driver closes as unspecified
+    behavior. Only
+    a Ladybug ``acquire_readonly_session()`` holds the lock for its whole
+    context, so a close from another thread waits for it; the lock is
+    reentrant, so it does not stop the same thread.
+
+    Toolgraph calls this only from single-threaded CLI code with no session
+    open (``config.configure()`` for ``--config``, and ``toolgraph init``),
+    and ``serve`` never calls it, which is why sessions are not
+    reference-counted.
+    """
     global _driver, _ladybug_database
     with _backend_lock:
         if _driver is not None:
