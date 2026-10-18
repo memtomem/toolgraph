@@ -12,27 +12,13 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
-
-from neo4j import (
-    READ_ACCESS,
-    Driver,
-    GraphDatabase,
-    NotificationDisabledClassification,
-    Session,
-)
-from neo4j.exceptions import (
-    AuthError,
-    ClientError,
-    ConfigurationError,
-    ConnectionAcquisitionTimeoutError,
-    DatabaseUnavailable,
-    ServiceUnavailable,
-    SessionExpired,
-)
+from typing import TYPE_CHECKING, Any
 
 from toolgraph import config
 from toolgraph.models import TOOL_HINT_FIELDS
+
+if TYPE_CHECKING:
+    from neo4j import Driver, Session
 
 _driver: Driver | None = None
 _ladybug_database: Any | None = None
@@ -59,12 +45,22 @@ class BackendLockedError(BackendUnavailableError):
     pass
 
 
-_NATIVE_UNAVAILABLE_ERRORS = (
-    ServiceUnavailable,
-    SessionExpired,
-    ConnectionAcquisitionTimeoutError,
-    DatabaseUnavailable,
-)
+def _neo4j() -> Any:
+    """Import the Neo4j driver; the only runtime import of ``neo4j``.
+
+    The driver is the ``[neo4j]`` extra, so every Neo4j path starts here and a
+    missing extra is one configuration error rather than an ``ImportError``.
+    Ladybug paths never call it.
+    """
+    try:
+        import neo4j
+        import neo4j.exceptions
+    except ImportError as exc:
+        raise BackendConfigurationError(
+            "backend=neo4j requires the 'neo4j' extra: "
+            "install with `uv sync --extra neo4j` or `pip install toolgraph[neo4j]`"
+        ) from exc
+    return neo4j
 
 
 # Rejected credentials that the driver hydrates as a plain ClientError rather
@@ -83,8 +79,8 @@ _NATIVE_AUTH_CLIENT_CODES = frozenset(
 # no expected exceptions). The server reports each as an UNRECOGNIZED
 # notification and the driver logs it at WARNING, which the CLI would print
 # to stderr: 92 lines across a README walkthrough on Neo4j 5.26. Other
-# classifications (deprecation, performance) still arrive.
-_DISABLED_NOTIFICATIONS = [NotificationDisabledClassification.UNRECOGNIZED]
+# classifications (deprecation, performance) still arrive. The disabled
+# classification is applied in get_driver().
 
 # Notification filtering needs Bolt 5.2 (Neo4j 5.7). Older servers fail every
 # query with this driver message, so it is the minimum server version. The
@@ -112,25 +108,33 @@ def _credentials_rejected(code: str | None) -> BackendConfigurationError:
 
 @contextmanager
 def _translating_backend_errors() -> Iterator[None]:
-    """Type native backend failures at the driver seam.
+    """Type native Neo4j failures at the driver seam.
 
     The outage taxonomy becomes ``BackendUnavailableError`` (retryable).
     Rejected credentials and a server older than the supported minimum become
     ``BackendConfigurationError``: loud and not retryable, but one diagnostic
     line rather than a native traceback. Every other client error (Cypher,
-    permissions) passes through untouched.
+    permissions) passes through untouched. Neo4j paths only: it imports the
+    driver, and Ladybug raises none of these.
     """
+    errors = _neo4j().exceptions
+    unavailable = (
+        errors.ServiceUnavailable,
+        errors.SessionExpired,
+        errors.ConnectionAcquisitionTimeoutError,
+        errors.DatabaseUnavailable,
+    )
     try:
         yield
-    except _NATIVE_UNAVAILABLE_ERRORS as exc:
+    except unavailable as exc:
         raise BackendUnavailableError(str(exc)) from exc
-    except AuthError as exc:
+    except errors.AuthError as exc:
         raise _credentials_rejected(exc.code) from exc
-    except ClientError as exc:
+    except errors.ClientError as exc:
         if exc.code in _NATIVE_AUTH_CLIENT_CODES:
             raise _credentials_rejected(exc.code) from exc
         raise
-    except ConfigurationError as exc:
+    except errors.ConfigurationError as exc:
         if str(exc).startswith(_NO_NOTIFICATION_FILTERING):
             raise _server_too_old() from exc
         raise
@@ -255,13 +259,23 @@ def get_driver() -> Driver:
     if _driver is None:
         with _backend_lock:
             if _driver is None:
-                _driver = GraphDatabase.driver(
+                neo4j = _neo4j()
+                _driver = neo4j.GraphDatabase.driver(
                     config.settings.neo4j_uri,
                     auth=(config.settings.neo4j_user, config.settings.neo4j_password),
-                    notifications_disabled_classifications=_DISABLED_NOTIFICATIONS,
+                    notifications_disabled_classifications=[
+                        neo4j.NotificationDisabledClassification.UNRECOGNIZED
+                    ],
                 )
     return _driver
 
+
+# Ladybug is a core dependency, so a missing one is a broken installation;
+# there is no extra left to install.
+_LADYBUG_MISSING = (
+    "Ladybug is not importable, but it is a core dependency of Toolgraph; "
+    "reinstall Toolgraph to repair the installation"
+)
 
 # Ladybug's only signal for a file that is not one of its databases. Measured
 # on 0.18.2 and 0.18.3 for garbage and zero-filled files; an empty file opens.
@@ -284,10 +298,7 @@ def _get_ladybug_database() -> Any:
     try:
         import ladybug as lb
     except ImportError as exc:  # environment dependent
-        raise BackendConfigurationError(
-            "backend=ladybug requires the 'ladybug' extra: "
-            "install with `uv sync --extra ladybug` or `pip install toolgraph[ladybug]`"
-        ) from exc
+        raise BackendConfigurationError(_LADYBUG_MISSING) from exc
     with _backend_lock:
         if _ladybug_database is not None:
             return _ladybug_database
@@ -325,16 +336,18 @@ def session() -> Iterator[Session | LadybugSession]:
     mid-query is thrown back in here by the caller's ``with`` block, so one
     boundary covers acquisition and execution alike.
     """
-    with _translating_backend_errors():
-        if backend_name() == "neo4j":
-            with get_driver().session(database=config.settings.neo4j_database) as current:
-                yield current
-            return
-        current = LadybugSession(_get_ladybug_database())
-        try:
+    if backend_name() == "neo4j":
+        with (
+            _translating_backend_errors(),
+            get_driver().session(database=config.settings.neo4j_database) as current,
+        ):
             yield current
-        finally:
-            current.close()
+        return
+    current = LadybugSession(_get_ladybug_database())
+    try:
+        yield current
+    finally:
+        current.close()
 
 
 @contextmanager
@@ -361,7 +374,7 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
             _translating_backend_errors(),
             get_driver().session(
                 database=config.settings.neo4j_database,
-                default_access_mode=READ_ACCESS,
+                default_access_mode=_neo4j().READ_ACCESS,
             ) as current,
         ):
             yield current
@@ -378,9 +391,7 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
             try:
                 import ladybug as lb
             except ImportError as exc:
-                raise BackendConfigurationError(
-                    "backend=ladybug requires the 'ladybug' extra"
-                ) from exc
+                raise BackendConfigurationError(_LADYBUG_MISSING) from exc
             try:
                 owned = database = lb.Database(path, read_only=True)
             except RuntimeError as exc:

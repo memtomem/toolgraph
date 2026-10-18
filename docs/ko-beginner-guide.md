@@ -169,9 +169,11 @@ toolgraph blast-radius draft-publish-deny
 Ladybug는 로컬 단일 프로세스 기본값입니다. 여러 프로세스나 운영자가
 그래프를 공유해야 할 때 Neo4j 5.7 이상을 사용합니다. 이 부분은 저장소가 필요합니다.
 `docker-compose.yml`과 `.env.example`은 패키지나 생성된 quickstart가 아니라
-clone에만 들어 있습니다.
+clone에만 들어 있습니다. Neo4j driver는 `neo4j` extra이므로 첫 명령으로
+Toolgraph를 그 extra와 함께 다시 설치합니다.
 
 ```bash
+uv tool install "toolgraph[neo4j]"
 git clone https://github.com/memtomem/toolgraph
 cd toolgraph
 docker compose up -d --wait

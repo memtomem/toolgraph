@@ -84,7 +84,10 @@ Maintainers should follow the [release runbook](https://github.com/memtomem/tool
 
 ### Install
 
-The recommended local backend is included through the `ladybug` extra:
+Ladybug, the recommended local backend, installs with Toolgraph. Releases up to
+0.2.0 installed it through the `ladybug` extra, which still resolves, so these
+commands work for every release. Ladybug ships wheels for macOS 15+, current
+manylinux and musllinux, and Windows; elsewhere pip builds it from source.
 
 ```bash
 uv tool install "toolgraph[ladybug]"
@@ -146,7 +149,8 @@ including Neo4j catalog permissions and Ladybug session serialization.
 
 Ladybug is the local single-process backend. Toolgraph commands own the DB
 sequentially; gateways read only the generated JSON bundle. Use Neo4j 5.7 or
-later for a shared service or multiple concurrent processes; against an older
+later for a shared service or multiple concurrent processes. The Neo4j driver
+is the `neo4j` extra: install `toolgraph[neo4j]`. Against an older
 server every command that opens the graph stops with `Neo4j server is older
 than 5.7, the minimum Toolgraph supports; upgrade the server`. The beginner guides explain the
 decision output and the memtomem-stm handoff.
@@ -154,7 +158,7 @@ decision output and the memtomem-stm handoff.
 For contributors and larger shared/fleet demos, clone the repository and run:
 
 ```bash
-uv sync --group dev --extra ladybug
+uv sync --group dev --extra neo4j
 docker compose up -d --wait
 cp .env.example .env
 bash scripts/demo.sh

@@ -12,14 +12,16 @@ maps.
 from __future__ import annotations
 
 import json
-
-from neo4j import ManagedTransaction
+from typing import TYPE_CHECKING
 
 from toolgraph.graph.driver import session
 from toolgraph.graph.schema import bump_generation, tool_key
 from toolgraph.models import CrawlResult
 from toolgraph.redaction import persisted_endpoint
 from toolgraph.uris import normalize_resource_uri
+
+if TYPE_CHECKING:
+    from neo4j import ManagedTransaction
 
 
 def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:

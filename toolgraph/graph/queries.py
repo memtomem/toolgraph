@@ -20,11 +20,13 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-
-from neo4j import Session
+from typing import TYPE_CHECKING
 
 from toolgraph.graph.driver import session
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
+
+if TYPE_CHECKING:
+    from neo4j import Session
 
 _GENERATION_RETRIES = 5
 # Exponential backoff between bracket retries (0.05/0.1/0.2/0.4s). Without

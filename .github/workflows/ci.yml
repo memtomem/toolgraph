@@ -148,6 +148,55 @@ jobs:
       # declared floor; keep this list in step with the script's legs.
       - run: uv run --python .minimum-venv --no-project python scripts/verify_mcp_floor.py
 
+  # ADR-0017 step 2: Ladybug is a core dependency and the Neo4j driver is
+  # the `neo4j` extra. This is the job that asserts the driver is absent and
+  # drives both the CLI and the MCP server without it; jobs that install the
+  # dev group get it through testcontainers[neo4j]. The negative leg runs in
+  # a directory with no config file: in the initialized one the env/file
+  # conflict check would answer before the missing extra does.
+  no-extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+      - run: uv build
+      - run: uv venv .no-extras-venv
+      - name: Locate built wheel
+        run: echo "WHEEL=$(find dist -maxdepth 1 -name '*.whl' -print -quit)" >> "$GITHUB_ENV"
+      - run: uv pip install --python .no-extras-venv "${{ env.WHEEL }}"
+      - name: The Neo4j driver is not installed
+        run: |
+          if uv run --python .no-extras-venv --no-project python -c "import neo4j"; then
+            echo "neo4j is importable without the extra" >&2
+            exit 1
+          fi
+      - run: uv run --python .no-extras-venv --no-project toolgraph example init smoke
+      - run: uv run --python ../.no-extras-venv --no-project toolgraph init
+        working-directory: smoke
+      - run: uv run --python ../.no-extras-venv --no-project toolgraph crawl --servers servers.yaml
+        working-directory: smoke
+      - run: uv run --python ../.no-extras-venv --no-project toolgraph ingest-manifest --governance governance.yaml --strict-drift
+        working-directory: smoke
+      - run: uv run --python ../.no-extras-venv --no-project toolgraph eligible-tools vibe-coder "policy-gateway::read_note" "policy-gateway::publish_note"
+        working-directory: smoke
+      - run: uv run --python ../.no-extras-venv --no-project toolgraph policy compile --agent vibe-coder --profile review --output .toolgraph/policy-bundle.json
+        working-directory: smoke
+      - run: uv run --python ../.no-extras-venv --no-project python ../scripts/smoke_no_extras.py
+        working-directory: smoke
+      - name: Selecting Neo4j without the extra is one error line
+        run: |
+          mkdir neo4j-without-extra && cd neo4j-without-extra
+          set +e
+          TOOLGRAPH_BACKEND=neo4j uv run --python ../.no-extras-venv --no-project toolgraph check 2> stderr.txt
+          code=$?
+          set -e
+          cat stderr.txt
+          test "$code" -eq 1
+          test "$(wc -l < stderr.txt)" -eq 1
+          grep -q "toolgraph\[neo4j\]" stderr.txt
+
   audit-runtime:
     runs-on: ubuntu-latest
     steps:
@@ -220,6 +269,7 @@ jobs:
       - test-neo4j
       - artifact-smoke
       - minimum-mcp
+      - no-extras
       - notebooks
       - audit-runtime
       - audit-extras

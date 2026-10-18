@@ -17,7 +17,7 @@ git clone https://github.com/memtomem/toolgraph.git
 cd toolgraph
 
 # Requires Python 3.12+ and uv
-uv sync --group dev --extra ladybug
+uv sync --group dev --extra neo4j
 
 # Lint and format check (same commands CI runs)
 uv run ruff check .
@@ -43,9 +43,9 @@ The lint rule set is named in `[tool.ruff]` in `pyproject.toml`, so a newer
 selected rules themselves can still evolve). Widen the rule set in its own
 change, not as a drive-by.
 
-`make install` includes the `ladybug` extra, matching the command above and
-CI. The shared backend regression fixture requires Ladybug: a missing install
-is an error, not a skipped conformance check.
+`make install` runs the command above: Ladybug is a core dependency and
+`--extra neo4j` adds the Neo4j driver. The shared backend regression fixture
+requires Ladybug: a missing install is an error, not a skipped conformance check.
 
 ## Pull requests
 

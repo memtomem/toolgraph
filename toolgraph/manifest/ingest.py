@@ -15,9 +15,7 @@ unknown tools, and undefined policy ids become warnings that abort the ingest.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any
-
-from neo4j import ManagedTransaction, Session
+from typing import TYPE_CHECKING, Any
 
 from toolgraph.graph import queries
 from toolgraph.graph.driver import acquire_readonly_session, session
@@ -26,6 +24,9 @@ from toolgraph.graph.schema import bump_generation, check_backend_schema_version
 from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
+
+if TYPE_CHECKING:
+    from neo4j import ManagedTransaction, Session
 
 
 @dataclass

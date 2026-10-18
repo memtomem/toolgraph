@@ -11,8 +11,8 @@ help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Install deps (incl. dev) via uv
-	uv sync --group dev --extra ladybug
+install: ## Install deps (incl. dev and the Neo4j driver) via uv
+	uv sync --group dev --extra neo4j
 
 up: ## Start Neo4j and wait until healthy
 	docker compose up -d --wait

@@ -176,9 +176,11 @@ graph state; failed compilation leaves the previous bundle intact.
 Ladybug is the default single-process local backend. Use Neo4j 5.7 or later
 when multiple processes or operators need a shared graph. This part needs the repository:
 `docker-compose.yml` and `.env.example` ship with the clone, not with the
-package or the generated quickstart.
+package or the generated quickstart. The Neo4j driver is the `neo4j` extra,
+so the first command reinstalls Toolgraph with it.
 
 ```bash
+uv tool install "toolgraph[neo4j]"
 git clone https://github.com/memtomem/toolgraph
 cd toolgraph
 docker compose up -d --wait
