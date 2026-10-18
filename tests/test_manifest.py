@@ -530,7 +530,7 @@ def test_ingest_reuses_resolution_across_manifest_rows(backend_graph):
     assert ingest.governance_counts()["can_call"] == 3
 
 
-def test_ingest_diagnostics_and_rollback(backend_graph):
+def test_unresolved_grants_warn_and_leave_graph_unchanged(backend_graph):
     _seed_crawl()
     assert ingest.ingest_governance(_governance()).applied
     before = queries.graph_state()
