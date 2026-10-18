@@ -189,7 +189,9 @@ jobs:
         run: |
           mkdir neo4j-without-extra && cd neo4j-without-extra
           set +e
-          TOOLGRAPH_BACKEND=neo4j uv run --python ../.no-extras-venv --no-project toolgraph check 2> stderr.txt
+          # env -i: an inherited TOOLGRAPH_CONFIG or NEO4J_* would answer first.
+          env -i PATH="$PATH" HOME="$HOME" TOOLGRAPH_BACKEND=neo4j \
+            uv run --python ../.no-extras-venv --no-project toolgraph check 2> stderr.txt
           code=$?
           set -e
           cat stderr.txt
