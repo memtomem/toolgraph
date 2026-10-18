@@ -82,6 +82,16 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- `.env.example` no longer presents `TOOLGRAPH_SERVERS=servers.yaml` and
+  `TOOLGRAPH_GOVERNANCE=governance.yaml` as configured paths. Those values
+  are the built-in defaults, and the repository root has neither file, so
+  after `cp .env.example .env` a bare `toolgraph crawl` still exits 1 with
+  `Invalid servers config at servers.yaml` (`ingest-manifest`: `Invalid
+  governance config at governance.yaml`). The lines are now commented out
+  with a note to pass `--servers examples/servers.yaml` explicitly. They are
+  not pointed at `examples/`: a bare `crawl` would then reconcile the graph
+  against the example fleet and retire every other server.
+
 - A Neo4j that rejects the credentials no longer makes CLI commands print a
   native traceback. Wrong, expired or rate-limited credentials and an
   expired auth-provider token are typed at the driver seam as a

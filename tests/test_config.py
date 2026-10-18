@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -115,7 +116,11 @@ def test_doctor_reports_where_the_backend_choice_comes_from(ambient, monkeypatch
 
 
 def _run(code: str, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TOOLGRAPH_")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith("TOOLGRAPH_") and k != "PYTHON_DOTENV_DISABLED"
+    }
     return subprocess.run(
         [sys.executable, "-c", code, *args],
         cwd=cwd,
@@ -150,6 +155,27 @@ def test_the_cli_still_reads_dotenv(tmp_path):
 
     assert proc.returncode == 0, proc.stderr
     assert (tmp_path / "from-dotenv.lbug").exists()
+
+
+@pytest.mark.parametrize(
+    ("command", "message"),
+    [
+        ("crawl", "Invalid servers config at servers.yaml"),
+        ("ingest-manifest", "Invalid governance config at governance.yaml"),
+    ],
+)
+def test_env_example_does_not_redirect_omitted_inputs_to_the_examples(tmp_path, command, message):
+    root = Path(__file__).resolve().parents[1]
+    shutil.copy(root / ".env.example", tmp_path / ".env")
+    # Invalid stand-ins: a redirect fails on these before any server or database.
+    (tmp_path / "examples").mkdir()
+    for name in ("servers.yaml", "governance.yaml"):
+        (tmp_path / "examples" / name).write_text("[not a mapping]\n")
+
+    proc = _run("from toolgraph.cli import app; app()", tmp_path, command)
+
+    assert proc.returncode == 1
+    assert proc.stderr.startswith(f"{message}: ")
 
 
 def test_check_does_not_create_a_missing_database(ambient, monkeypatch):
