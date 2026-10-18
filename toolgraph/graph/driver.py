@@ -16,6 +16,8 @@ from typing import Any
 
 from neo4j import READ_ACCESS, Driver, GraphDatabase, Session
 from neo4j.exceptions import (
+    AuthError,
+    ClientError,
     ConnectionAcquisitionTimeoutError,
     DatabaseUnavailable,
     ServiceUnavailable,
@@ -58,17 +60,48 @@ _NATIVE_UNAVAILABLE_ERRORS = (
 )
 
 
+# Rejected credentials that the driver hydrates as a plain ClientError rather
+# than an AuthError subclass (neo4j 6.4). Matched by exact code: a broader
+# ``Security.*`` match would swallow query-level Forbidden errors.
+_NATIVE_AUTH_CLIENT_CODES = frozenset(
+    {
+        "Neo.ClientError.Security.CredentialsExpired",
+        "Neo.ClientError.Security.AuthenticationRateLimit",
+    }
+)
+
+
+def _credentials_rejected(code: str | None) -> BackendConfigurationError:
+    # Built from the server's status code and fixed text only. The driver's
+    # message is never echoed, so no credential or URI can reach the output.
+    # The wording stays neutral: the AuthError family also covers an expired
+    # auth-provider token and the legacy AuthorizationFailed code, so the
+    # status code, not the sentence, says which case this is.
+    return BackendConfigurationError(
+        f"Neo4j refused authentication ({code}); check NEO4J_USER, NEO4J_PASSWORD "
+        "and the account's auth provider"
+    )
+
+
 @contextmanager
 def _translating_backend_errors() -> Iterator[None]:
-    """Re-raise the narrow native outage taxonomy as ``BackendUnavailableError``.
+    """Type native backend failures at the driver seam.
 
-    Deliberately narrower than "any backend exception": invalid configuration,
-    authentication, and Cypher/client errors must stay loud contract errors.
+    The outage taxonomy becomes ``BackendUnavailableError`` (retryable).
+    Rejected credentials become ``BackendConfigurationError``: loud and not
+    retryable, but one diagnostic line rather than a native traceback. Every
+    other client error (Cypher, permissions) passes through untouched.
     """
     try:
         yield
     except _NATIVE_UNAVAILABLE_ERRORS as exc:
         raise BackendUnavailableError(str(exc)) from exc
+    except AuthError as exc:
+        raise _credentials_rejected(exc.code) from exc
+    except ClientError as exc:
+        if exc.code in _NATIVE_AUTH_CLIENT_CODES:
+            raise _credentials_rejected(exc.code) from exc
+        raise
 
 
 def is_backend_unavailable(exc: BaseException) -> bool:

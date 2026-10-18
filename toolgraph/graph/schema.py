@@ -229,8 +229,8 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 with _translating_backend_errors():
                     rows = sess.run("CALL show_tables() RETURN *")
                     live_tables = sorted([r.get("name") for r in rows if r.get("name")])
-            except BackendUnavailableError:
-                raise
+            except (BackendUnavailableError, BackendConfigurationError):
+                raise  # typed at the seam: an outage, or rejected credentials
             except Exception as exc:
                 raise BackendConfigurationError(
                     "cannot inspect backend schema catalog; check connectivity and catalog read "
@@ -252,8 +252,8 @@ def inspect_backend_schema(s: Any = None) -> dict[str, Any]:
                 with _translating_backend_errors():
                     rows = sess.run("SHOW CONSTRAINTS")
                     live_constraints = sorted([r.get("name") for r in rows if r.get("name")])
-            except BackendUnavailableError:
-                raise
+            except (BackendUnavailableError, BackendConfigurationError):
+                raise  # typed at the seam: an outage, or rejected credentials
             except Exception as exc:
                 raise BackendConfigurationError(
                     "cannot inspect backend schema catalog; check connectivity and catalog read "
