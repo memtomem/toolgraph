@@ -44,7 +44,7 @@ def _gov() -> Governance:
 
 
 @pytest.fixture
-def drifted(graph):
+def drifted(backend_graph):
     """old_tool granted+governed, then the server stops exposing it."""
     _crawl(["old_tool"])
     report = ingest_governance(_gov())
@@ -70,7 +70,7 @@ def test_strict_drift_rejects_whole_manifest(drifted):
     assert governance_counts()["can_call"] == 1
 
 
-def test_clean_manifest_has_no_notices(graph):
+def test_clean_manifest_has_no_notices(backend_graph):
     _crawl(["read_file"])
     report = ingest_governance(
         Governance(

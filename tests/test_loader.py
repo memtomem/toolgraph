@@ -31,7 +31,7 @@ def _sample() -> CrawlResult:
     )
 
 
-def test_load_is_idempotent(graph):
+def test_load_is_idempotent(backend_graph):
     cr = _sample()
     loader.load_crawl_result(cr)
     first = loader.graph_counts()
@@ -42,14 +42,14 @@ def test_load_is_idempotent(graph):
     assert first == {"mcpserver": 1, "tool": 2, "resource": 1, "exposes": 2, "provides": 1}
 
 
-def test_input_schema_roundtrips_as_json(graph):
+def test_input_schema_roundtrips_as_json(backend_graph):
     loader.load_crawl_result(_sample())
     with driver.session() as s:
         rec = s.run("MATCH (t:Tool {name:'read_file'}) RETURN t.input_schema AS s").single()
     assert json.loads(rec["s"]) == {"type": "object"}
 
 
-def test_init_schema_refuses_mismatched_backend_schema_version(graph):
+def test_init_schema_refuses_mismatched_backend_schema_version(backend_graph):
     import pytest
 
     from toolgraph.graph import driver, schema
@@ -69,7 +69,7 @@ def test_init_schema_refuses_mismatched_backend_schema_version(graph):
     schema.init_schema()
 
 
-def test_reset_refuses_mismatched_backend_schema_version(graph):
+def test_reset_refuses_mismatched_backend_schema_version(backend_graph):
     from typer.testing import CliRunner
 
     from toolgraph import cli
@@ -108,7 +108,7 @@ def test_tool_key_components_must_not_contain_delimiter():
         CrawlResult(server_name="a::b")
 
 
-def test_loader_never_persists_raw_endpoint(graph):
+def test_loader_never_persists_raw_endpoint(backend_graph):
     loader.load_crawl_result(
         CrawlResult(
             server_name="secret-test",
@@ -127,7 +127,7 @@ def test_loader_never_persists_raw_endpoint(graph):
     assert row["evidence"] == "crawled from https://example.test"
 
 
-def test_recrawl_removes_stale_tool(graph):
+def test_recrawl_removes_stale_tool(backend_graph):
     load_crawl("sample", ["read_file", "write_file"])
     assert loader.graph_counts()["tool"] == 2
     load_crawl("sample", ["read_file"])  # write_file gone
@@ -136,7 +136,7 @@ def test_recrawl_removes_stale_tool(graph):
     assert counts["exposes"] == 1
 
 
-def test_recrawl_keeps_governed_tool_and_warns(graph):
+def test_recrawl_keeps_governed_tool_and_warns(backend_graph):
     load_crawl("sample", ["read_file", "write_file"])
     ingest_governance(
         Governance(

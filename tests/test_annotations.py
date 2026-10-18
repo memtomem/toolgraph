@@ -43,9 +43,16 @@ async def test_crawl_extracts_tool_annotations():
 
 
 def _tool_props(key: str) -> dict:
+    """The node's set properties, in one shape for both backends.
+
+    Neo4j cannot store null, so a cleared property is absent. Ladybug's fixed
+    schema keeps every column, null when cleared, and adds ``_ID``/``_LABEL``.
+    """
     with driver.session() as s:
         rec = s.run("MATCH (t:Tool {key:$key}) RETURN t", key=key).single()
-        return dict(rec["t"]) if rec else {}
+    if not rec:
+        return {}
+    return {k: v for k, v in dict(rec["t"]).items() if v is not None and not k.startswith("_")}
 
 
 def test_tool_hint_fields_match_the_model():
@@ -56,7 +63,7 @@ def test_tool_hint_fields_match_the_model():
     assert hints == TOOL_HINT_FIELDS
 
 
-def test_loader_stores_and_clears_annotations(graph):
+def test_loader_stores_and_clears_annotations(backend_graph):
     loader.load_crawl_result(
         CrawlResult(
             server_name="sample",
@@ -78,7 +85,7 @@ def test_loader_stores_and_clears_annotations(graph):
     assert "destructive_hint" not in _tool_props("sample::write_file")
 
 
-def test_drifted_tool_makes_no_annotation_claims(graph):
+def test_drifted_tool_makes_no_annotation_claims(backend_graph):
     """A governed tool the server stopped exposing is KEPT (a DENY must not
     silently become ALLOW) — but the server no longer claims anything about
     it, so its annotation hints must clear with the EXPOSES edge. Without
@@ -136,7 +143,7 @@ def _seed_destructive(governed_by: dict | None = None, data_access: list | None 
     assert report.applied, report.warnings
 
 
-def test_destructive_unsafeguarded_surfaces_ungoverned_tool(graph):
+def test_destructive_unsafeguarded_surfaces_ungoverned_tool(backend_graph):
     _seed_destructive()
     rows = queries.destructive_unsafeguarded()
     assert [r["tool_key"] for r in rows] == ["sample::write_file"]
@@ -151,7 +158,7 @@ def test_destructive_unsafeguarded_surfaces_ungoverned_tool(graph):
     }
 
 
-def test_destructive_unsafeguarded_cleared_by_resource_path(graph):
+def test_destructive_unsafeguarded_cleared_by_resource_path(backend_graph):
     """A policy bound to a resource the tool touches counts as a safeguard."""
     _seed_destructive(
         data_access=[DataAccess(tool="sample::write_file", resource=CSV, mode="WRITES")],
@@ -160,12 +167,12 @@ def test_destructive_unsafeguarded_cleared_by_resource_path(graph):
     assert queries.destructive_unsafeguarded() == []
 
 
-def test_destructive_unsafeguarded_cleared_by_direct_governance(graph):
+def test_destructive_unsafeguarded_cleared_by_direct_governance(backend_graph):
     _seed_destructive(governed_by={"sample::write_file": ["pii-deny"]})
     assert queries.destructive_unsafeguarded() == []
 
 
-def test_destructive_unsafeguarded_ignores_unhinted_tools(graph):
+def test_destructive_unsafeguarded_ignores_unhinted_tools(backend_graph):
     """An ungoverned tool with no destructive hint is unmapped-tools territory,
     not this queue."""
     _seed_destructive()
@@ -176,7 +183,7 @@ def test_destructive_unsafeguarded_ignores_unhinted_tools(graph):
 # --- annotation-contradictions --------------------------------------------
 
 
-def test_annotation_contradiction_cites_both_provenances(graph):
+def test_annotation_contradiction_cites_both_provenances(backend_graph):
     _seed_destructive(
         data_access=[
             DataAccess(
@@ -205,7 +212,7 @@ def test_annotation_contradiction_cites_both_provenances(graph):
     }
 
 
-def test_no_contradiction_without_read_only_hint(graph):
+def test_no_contradiction_without_read_only_hint(backend_graph):
     """WRITES on a tool that never claimed read-only is normal authoring."""
     _seed_destructive(
         data_access=[DataAccess(tool="sample::write_file", resource=CSV, mode="WRITES")],
@@ -213,7 +220,7 @@ def test_no_contradiction_without_read_only_hint(graph):
     assert queries.annotation_contradictions() == []
 
 
-def test_no_contradiction_for_authored_reads(graph):
+def test_no_contradiction_for_authored_reads(backend_graph):
     """READS on a read-only-hinted tool agrees with the claim — no row."""
     _seed_destructive(
         data_access=[DataAccess(tool="sample::read_file", resource=CSV, mode="READS")],

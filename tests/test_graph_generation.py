@@ -43,11 +43,11 @@ def _governance() -> Governance:
     )
 
 
-def test_generation_is_zero_on_empty_graph(graph):
+def test_generation_is_zero_on_empty_graph(backend_graph):
     assert queries.graph_generation() == 0
 
 
-def test_crawl_load_increments_even_when_idempotent(graph):
+def test_crawl_load_increments_even_when_idempotent(backend_graph):
     loader.load_crawl_result(_crawl())
     assert queries.graph_generation() == 1
     # An identical re-crawl is a no-op on nodes/edges but still a successful
@@ -56,7 +56,7 @@ def test_crawl_load_increments_even_when_idempotent(graph):
     assert queries.graph_generation() == 2
 
 
-def test_clean_ingest_increments_rejected_ingest_does_not(graph):
+def test_clean_ingest_increments_rejected_ingest_does_not(backend_graph):
     loader.load_crawl_result(_crawl())
     before = queries.graph_generation()
 
@@ -76,7 +76,7 @@ def test_clean_ingest_increments_rejected_ingest_does_not(graph):
     assert queries.graph_generation() == after_clean
 
 
-def test_mcp_responses_carry_graph_generation(graph):
+def test_mcp_responses_carry_graph_generation(backend_graph):
     loader.load_crawl_result(_crawl())
     ingest_governance(_governance())
     # Direct invocation of the @mcp.tool() functions (no MCP transport needed
@@ -97,7 +97,7 @@ def test_mcp_responses_carry_graph_generation(graph):
     assert got["graph_generation"] == expected
 
 
-def test_mcp_stamp_retries_when_generation_moves_mid_read(graph, monkeypatch):
+def test_mcp_stamp_retries_when_generation_moves_mid_read(backend_graph, monkeypatch):
     """Codex review of PR #22: result and generation are separate reads under
     read-committed isolation, so a write landing between them must not mispair
     state with generation. The bracket (read gen, fetch, read gen, compare)

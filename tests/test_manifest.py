@@ -54,7 +54,7 @@ def _governance() -> Governance:
     )
 
 
-def test_ingest_is_idempotent(graph):
+def test_ingest_is_idempotent(backend_graph):
     _seed_crawl()
     gov = _governance()
 
@@ -75,7 +75,7 @@ def test_ingest_is_idempotent(graph):
     }
 
 
-def test_unresolved_tool_ref_warns(graph):
+def test_unresolved_tool_ref_warns(backend_graph):
     _seed_crawl()
     gov = Governance(
         agents=["planner"],
@@ -85,7 +85,7 @@ def test_unresolved_tool_ref_warns(graph):
     assert any("does_not_exist" in w for w in warnings)
 
 
-def test_duplicate_grant_entries_keep_the_later_manifest_entry(graph):
+def test_duplicate_grant_entries_keep_the_later_manifest_entry(backend_graph):
     """UNWIND batching must preserve the old per-row last-write-wins rule."""
     loader.load_crawl_result(
         CrawlResult(
@@ -125,7 +125,7 @@ class CountingSession:
         return self.session.run(query, **params)
 
 
-def test_phase2_prunes_orphan_agent_node_on_re_ingest(graph):
+def test_phase2_prunes_orphan_agent_node_on_re_ingest(backend_graph):
     """A manifest that drops an agent re-ingest must DELETE the old node so
     AGENT_NOT_FOUND fires for it (instead of returning silent []).
     Without pruning, R2's existence signals lie."""
@@ -165,7 +165,7 @@ def test_phase2_prunes_orphan_agent_node_on_re_ingest(graph):
     assert res["verdict"] == "AGENT_NOT_FOUND"
 
 
-def test_phase2_prunes_orphan_policy_node_on_re_ingest(graph):
+def test_phase2_prunes_orphan_policy_node_on_re_ingest(backend_graph):
     """A policy dropped from the manifest must DELETE the old node so
     blast_radius(old-policy) returns found:False, not the misleading
     found:True with an empty impacted list."""
@@ -201,7 +201,7 @@ def test_phase2_prunes_orphan_policy_node_on_re_ingest(graph):
     assert queries.blast_radius("old-deny")["found"] is False
 
 
-def test_phase2_cleans_stale_prov_properties_on_policy_node(graph):
+def test_phase2_cleans_stale_prov_properties_on_policy_node(backend_graph):
     """Pre-completion-round policies persisted prov_source/prov_confidence/
     prov_evidence on the node. The deletion path is REMOVE-on-MERGE so an
     upgrading graph doesn't leave stale node properties around."""
@@ -241,13 +241,13 @@ def test_phase2_cleans_stale_prov_properties_on_policy_node(graph):
     assert rec["ev"] is None
 
 
-def test_duplicate_policy_id_with_conflicting_effects_is_rejected(graph):
+def test_duplicate_policy_id_with_conflicting_effects_is_rejected(backend_graph):
     """Codex R3.5: a manifest with two Policy entries sharing an id (e.g.
     [DENY, ALLOW] for 'legacy') silently overwrites effect on the Policy
     node via MERGE+SET. If the surviving effect is ALLOW, exceptions
     against 'legacy' pass deny-policy validation but then can never
     classify a row. Reject at ingest."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -277,7 +277,7 @@ def test_policy_extra_forbid_rejects_legacy_provenance_block():
     assert "extra" in str(exc_info.value).lower() or "provenance" in str(exc_info.value).lower()
 
 
-def test_bare_string_governed_by_via_model_copy_still_normalizes(graph):
+def test_bare_string_governed_by_via_model_copy_still_normalizes(backend_graph):
     """Pydantic v2's model_copy(update=...) BYPASSES model_validators, so the
     union-type normalization must live inside ingest, not the model. Drive
     a list[str] through ingest via model_copy — the existing
@@ -311,11 +311,11 @@ def test_bare_string_governed_by_via_model_copy_still_normalizes(graph):
     assert queries.check_access("planner", "read_file")["verdict"] == "DENY"
 
 
-def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
+def test_phase2_prunes_authored_only_resource_on_re_ingest(backend_graph):
     """ENV is authored-only (never crawled). Dropping it from the manifest
     must delete the node — otherwise blast_radius answers found:true /
     impacted:[] for a resource nothing governs or touches anymore."""
-    crawl_sample(graph)
+    crawl_sample(backend_graph)
     base = dict(
         agents=["planner"],
         policies=[Policy(id="secrets-deny", effect="DENY")],
@@ -340,10 +340,10 @@ def test_phase2_prunes_authored_only_resource_on_re_ingest(graph):
     assert res["impacted"] == []
 
 
-def test_phase2_keeps_crawled_resource_without_governance(graph):
+def test_phase2_keeps_crawled_resource_without_governance(backend_graph):
     """A crawled resource (live PROVIDES) is the loader's property: ingest
     must never prune it, even when no manifest mentions it."""
-    crawl_sample(graph)
+    crawl_sample(backend_graph)
     assert ingest_governance(Governance(agents=["planner"])).warnings == []
     assert queries.blast_radius(CSV)["found"] is True
 
@@ -371,7 +371,7 @@ def test_governance_yaml_rejects_unknown_nested_field(tmp_path):
         load_governance(path)
 
 
-def test_ambiguous_bare_name_in_ingest_warns(graph):
+def test_ambiguous_bare_name_in_ingest_warns(backend_graph):
     load_crawl("alpha", ["read_file"])
     load_crawl("beta", ["read_file"])
     warnings = ingest_governance(
@@ -389,7 +389,7 @@ def test_ambiguous_bare_name_in_ingest_warns(graph):
     )
 
 
-def test_missing_policy_id_warns(graph):
+def test_missing_policy_id_warns(backend_graph):
     load_crawl("sample", ["read_file"])
     warnings = ingest_governance(
         Governance(
@@ -403,7 +403,7 @@ def test_missing_policy_id_warns(graph):
     assert governance_counts()["governed_by"] == 0
 
 
-def test_revoking_a_grant_removes_the_edge(graph):
+def test_revoking_a_grant_removes_the_edge(backend_graph):
     load_crawl("sample", ["read_file"])
     full = Governance(
         agents=["planner"],
@@ -417,7 +417,7 @@ def test_revoking_a_grant_removes_the_edge(graph):
     assert governance_counts()["can_call"] == 0
 
 
-def test_failed_ingest_does_not_mutate_graph(graph):
+def test_failed_ingest_does_not_mutate_graph(backend_graph):
     load_crawl("sample", ["read_file"])
     good = Governance(
         agents=["planner"],

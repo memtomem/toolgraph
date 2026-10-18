@@ -186,7 +186,7 @@ def test_duplicate_checks_match_independent_oracle():
 # --- retirement semantics (real graph) ------------------------------------
 
 
-def test_removed_server_subgraph_is_retired(graph):
+def test_removed_server_subgraph_is_retired(backend_graph):
     _load("alpha", [ToolRecord(name="read_file")])
     _load("beta", [ToolRecord(name="write_file")])
 
@@ -199,7 +199,7 @@ def test_removed_server_subgraph_is_retired(graph):
     assert counts["tool"] == 1 and counts["exposes"] == 1
 
 
-def test_retire_is_idempotent_and_noop_keeps_generation(graph):
+def test_retire_is_idempotent_and_noop_keeps_generation(backend_graph):
     _load("alpha", [ToolRecord(name="read_file")])
     _load("beta", [ToolRecord(name="write_file")])
     loader.retire_unlisted_servers({"alpha"})
@@ -212,7 +212,7 @@ def test_retire_is_idempotent_and_noop_keeps_generation(graph):
     assert _generation() == gen
 
 
-def test_retire_bumps_generation_when_something_changed(graph):
+def test_retire_bumps_generation_when_something_changed(backend_graph):
     _load("alpha", [ToolRecord(name="read_file")])
     _load("beta", [ToolRecord(name="write_file")])
     gen = _generation()
@@ -220,7 +220,7 @@ def test_retire_bumps_generation_when_something_changed(graph):
     assert _generation() == gen + 1
 
 
-def test_governed_tool_kept_drifted_with_hints_cleared(graph):
+def test_governed_tool_kept_drifted_with_hints_cleared(backend_graph):
     _load(
         "beta",
         [ToolRecord(name="drop_table", destructive_hint=True, read_only_hint=False)],
@@ -252,7 +252,7 @@ def test_governed_tool_kept_drifted_with_hints_cleared(graph):
     assert queries.destructive_unsafeguarded() == []
 
 
-def test_resource_lifecycle_follows_adr_0001(graph):
+def test_resource_lifecycle_follows_adr_0001(backend_graph):
     _load("alpha", resources=["file:///shared.csv"])
     _load("beta", resources=["file:///shared.csv", "file:///b-only.csv", "file:///gov.csv"])
     report = ingest_governance(
@@ -272,7 +272,7 @@ def test_resource_lifecycle_follows_adr_0001(graph):
     assert loader.graph_counts()["provides"] == 1
 
 
-def test_rename_unambiguates_bare_twin(graph):
+def test_rename_unambiguates_bare_twin(backend_graph):
     _load("sample", [ToolRecord(name="write_file")])
     _load("sample_v2", [ToolRecord(name="write_file")])
     ingest_governance(Governance(agents=["planner"]))
@@ -284,7 +284,7 @@ def test_rename_unambiguates_bare_twin(graph):
     assert queries.check_access("planner", "write_file")["verdict"] == "NOT_GRANTED"
 
 
-def test_reingest_without_tool_collects_retired_governed_ghost(graph):
+def test_reingest_without_tool_collects_retired_governed_ghost(backend_graph):
     """The kept-tool warning's exit path must actually work: once the
     manifest stops mentioning a retired server's governed tool, re-ingest
     deletes the degree-0 ghost — no crawl will ever reconcile that server's
@@ -414,7 +414,7 @@ def test_crawl_repeating_an_empty_retirement_keeps_generation(backend_graph, tmp
     assert _generation() == generation
 
 
-def test_unnamed_failure_skips_prune_and_keeps_graph(graph, tmp_path):
+def test_unnamed_failure_skips_prune_and_keeps_graph(backend_graph, tmp_path):
     _load("ghost", [ToolRecord(name="haunt")])
     path = _write_servers_yaml(
         tmp_path,
@@ -443,7 +443,7 @@ def test_no_prune_flag_preserves_unlisted_servers(backend_graph, tmp_path):
     assert after["deny"] == "DENY" and after["instance"] == before["instance"]
 
 
-def test_duplicate_name_overrides_reject_before_crawl(graph, tmp_path):
+def test_duplicate_name_overrides_reject_before_crawl(backend_graph, tmp_path):
     _load("ghost", [ToolRecord(name="haunt")])
     path = _write_servers_yaml(
         tmp_path,
