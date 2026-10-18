@@ -10,7 +10,6 @@ from __future__ import annotations
 import functools
 import json
 import os
-import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,7 +20,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
-from toolgraph.redaction import CREDENTIAL_KEYWORDS, CREDENTIAL_URI
+from toolgraph.redaction import is_credential_shaped
 
 if os.name == "nt":  # exercised on Windows CI/users
     import msvcrt
@@ -42,7 +41,6 @@ DISPOSITIONS = frozenset({"open", "accepted", "dismissed"})
 # identity.  Reusing it lets operators correlate a Toolgraph disposition with
 # the corresponding SyncMill human-required board item without sharing state.
 _ITEM_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://syncmill.dev/review-items/tracegraph")
-_CREDENTIAL_ASSIGNED = re.compile(rf"\b(?:{CREDENTIAL_KEYWORDS})\s*=", re.IGNORECASE)
 
 
 class ReviewCandidateError(ValueError):
@@ -63,6 +61,8 @@ def _normalized_reviewer(value: str) -> str:
         or "\0" in reviewer
     ):
         raise ValueError("reviewer must be a non-empty single line of at most 256 characters")
+    if is_credential_shaped(reviewer):
+        raise ValueError("reviewer must not contain credentials")
     return reviewer
 
 
@@ -72,8 +72,11 @@ def _normalized_note(value: str | None) -> str | None:
     note = value.strip()
     if not note or len(note) > 500 or "\n" in note or "\r" in note or "\0" in note:
         raise ValueError("note must be a non-empty single line of at most 500 characters")
-    if CREDENTIAL_URI.search(note) or _CREDENTIAL_ASSIGNED.search(note):
-        raise ValueError("note must not contain credentials")
+    if is_credential_shaped(note):
+        # `token: rotated weekly` cannot be told from `token: abc123`.
+        raise ValueError(
+            "note must not contain credentials; rephrase any credential name followed by ':' or '='"
+        )
     return note
 
 
@@ -87,6 +90,13 @@ class ReviewCandidate(BaseModel):
     pattern_version: int = Field(ge=1)
     tool_key: str = Field(min_length=4, max_length=512, pattern=r"^\S+::\S+$")
     artifact_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @field_validator("run_id", "tool_key")
+    @classmethod
+    def _identity_is_credential_free(cls, value: str) -> str:
+        if is_credential_shaped(value):
+            raise ValueError("must not contain credentials")
+        return value
 
 
 class AnnotationCandidate(ReviewCandidate):

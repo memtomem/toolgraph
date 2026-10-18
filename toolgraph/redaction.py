@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import shlex
 from pathlib import Path, PureWindowsPath
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from toolgraph.models import ServerSpec
 
@@ -115,6 +115,49 @@ def contains_credential(text: str) -> bool:
     """
     return bool(
         _CREDENTIAL_ASSIGNMENT.search(text) or _AUTHORIZATION.search(text) or _BEARER.search(text)
+    )
+
+
+# The refusal form of the two rules above. A single ':' is also how a tool or
+# agent name is versioned (`get_token:v2`, `agent-token:blue`), so here a bare
+# ':' is an assignment only when whitespace or a quote follows it (`api_key: x`,
+# `token: rotated weekly`); after a quoted name (`"token":123`) it always is.
+# Free text cannot tell `token: abc123` from `token: rotated weekly`; both are
+# refused.
+_REFUSED_ASSIGNMENT = re.compile(
+    rf"(?i)({CREDENTIAL_KEYWORDS}|authorization)"
+    r"(?:['\"]\s*[:=]|\s*=|\s*:(?=\s|['\"]))"
+)
+# `Authorization:Basic dXNlcjpwYXNz`: a scheme word, then the credential.
+_REFUSED_AUTHORIZATION = re.compile(r"(?i)authorization['\"]?\s*:\s*[a-z][\w-]*\s+\S")
+
+
+def _inspected(text: str) -> tuple[str, ...]:
+    # One percent-decoding pass, for inspection only: the value itself is
+    # never rewritten. `+` stays literal, and a doubly encoded key such as
+    # `%2574oken` is not decoded a second time.
+    decoded = unquote(text)
+    return (text,) if decoded == text else (text, decoded)
+
+
+def is_credential_shaped(text: str) -> bool:
+    """True when a value that is stored or emitted as given holds a credential.
+
+    The one refusal rule for every value Toolgraph refuses rather than
+    scrubs: artifact identities, graph instance ids, review notes and review
+    metadata, and every control-plan key and string. Covers credential URIs
+    and queries, ``name=value`` and ``name: value`` assignments,
+    ``Authorization`` and ``Bearer`` values, in the raw text and after one
+    percent-decoding pass. ``server::tool`` and single-colon names such as
+    ``get_token:v2`` pass.
+    """
+    return any(
+        CREDENTIAL_URI.search(form)
+        or CREDENTIAL_QUERY.search(form)
+        or _REFUSED_ASSIGNMENT.search(form)
+        or _REFUSED_AUTHORIZATION.search(form)
+        or _BEARER.search(form)
+        for form in _inspected(text)
     )
 
 

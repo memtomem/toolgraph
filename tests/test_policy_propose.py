@@ -441,16 +441,19 @@ def _seed_matching_graph(gov_path: Path) -> None:
 
 @pytest.mark.parametrize("extra", [[], ["--json"]])
 @pytest.mark.parametrize(
-    ("field", "value", "position"),
+    ("field", "value"),
     [
-        ("tool_key", "filesystem::read_file?token=hunter2", "additions[0].tool"),
-        ("tool_key", "filesystem::password=hunter2", "additions[0].tool"),
-        ("candidate", "Authorization: Bearer hunter2", "insufficient_evidence[0].tool"),
+        ("tool_key", "filesystem::read_file?token=hunter2"),
+        ("tool_key", "filesystem::read_file?%74oken=hunter2"),
+        ("tool_key", "filesystem::password=hunter2"),
+        ("candidate", "Authorization: Bearer hunter2"),
     ],
 )
 def test_cli_propose_refuses_a_credential_shaped_ref(
-    backend_graph, sample_gov_path, sample_observed_jsonl, extra, field, value, position
+    backend_graph, sample_gov_path, sample_observed_jsonl, extra, field, value
 ):
+    # Refused at the export line, before a duplicate-row or tool_key message
+    # could quote it.
     _seed_matching_graph(sample_gov_path)
     lines = sample_observed_jsonl.read_text().splitlines()
     row = json.loads(lines[1])
@@ -467,7 +470,7 @@ def test_cli_propose_refuses_a_credential_shaped_ref(
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == (
-        f"ERROR: refusing to emit a proposal: {position} contains credential-shaped data\n"
+        f"ERROR: {sample_observed_jsonl}:2: {field} contains credential-shaped data\n"
     )
 
 

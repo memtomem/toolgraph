@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from toolgraph.artifact_safety import safe_artifact
 from toolgraph.artifacts import rfc3339_offset_error, sha256_prefixed
 from toolgraph.graph import driver, queries, selector
-from toolgraph.redaction import CREDENTIAL_QUERY, CREDENTIAL_URI
+from toolgraph.redaction import is_credential_shaped
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
@@ -264,6 +264,10 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
         raise ControlPlanError(f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit")
     if isinstance(value, dict):
         for key, child in value.items():
+            if is_credential_shaped(str(key)):
+                # The key is the secret: name only where it sits.
+                where = ".".join(path) or "the top level"
+                raise ControlPlanError(f"control plan contains a credential-shaped key in {where}")
             lowered = str(key).lower()
             if lowered in _FORBIDDEN_KEYS or any(
                 fragment in lowered for fragment in _FORBIDDEN_KEY_FRAGMENTS
@@ -277,10 +281,8 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
             _assert_body_free(child, path=(*path, str(index)))
         return
     if isinstance(value, str):
-        if CREDENTIAL_URI.search(value):
-            raise ControlPlanError("control plan contains a credential-bearing URI")
-        if CREDENTIAL_QUERY.search(value):
-            raise ControlPlanError("control plan contains a credential-bearing query")
+        if is_credential_shaped(value):
+            raise ControlPlanError("control plan contains credential-shaped data")
         if _ABSOLUTE_PATH.match(value):
             raise ControlPlanError("control plan contains an absolute filesystem path")
 
@@ -289,7 +291,10 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     value: dict = {}
     for key, child in pairs:
         if key in value:
-            raise ControlPlanError(f"control plan contains duplicate key {key!r}")
+            # Parsing runs before the body check, so a credential-shaped key
+            # must not be echoed here either.
+            shown = "a credential-shaped key" if is_credential_shaped(key) else repr(key)
+            raise ControlPlanError(f"control plan contains duplicate key {shown}")
         value[key] = child
     return value
 

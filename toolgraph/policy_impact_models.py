@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Annotated, Any, Literal
-from urllib.parse import unquote
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from toolgraph.artifact_safety import validate_identity
 from toolgraph.artifacts import rfc3339_offset_error
-from toolgraph.redaction import contains_credential
 
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Reason = Literal[
@@ -30,10 +28,6 @@ def clean_identity(value: str) -> str:
     if not value or value != value.strip() or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("identity must be nonblank, trimmed and free of control characters")
     validate_identity(value)
-    # Inspection only: decoding must never rewrite an opaque identifier.
-    if contains_credential(value) or contains_credential(unquote(value)):
-        raise ValueError("identity contains credential-shaped data")
-    validate_identity(unquote(value))
     return value
 
 

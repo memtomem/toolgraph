@@ -102,6 +102,19 @@ All notable changes to Toolgraph are documented here.
   of a traceback. `BackendConfigurationError` now takes exactly one message
   and an optional keyword `cause`, so constructing it with no arguments or
   with two positional arguments raises `TypeError`.
+- More values are refused as credential-shaped (#130). Review notes, reviewer
+  names, review-report run ids and tool keys, every control-plan key and string
+  value, and artifact identities (now including `graph_instance_id` and
+  `graph_state.instance_id`) refuse `name=value` and `name: value` assignments
+  of a token, password, secret, credential, API key or authorization name,
+  `Bearer` values, and credential URIs and queries, also when the name is
+  percent-encoded (`?%74oken=`). A review note such as `token: rotated weekly`
+  now has to be rephrased. `policy propose` reports a refused export value
+  by its input line (`<file>:<line>: tool_key contains credential-shaped
+  data`) instead of its position in the proposal, and refuses it before any
+  other error could quote it. In the other direction, `policy impact` now
+  accepts single-colon names such as `srv::get_token:v2` and
+  `agent-token:blue`, which it refused before.
 
 ### Added
 
@@ -188,6 +201,15 @@ All notable changes to Toolgraph are documented here.
   line the policy was written for.
 
 ### Fixed
+
+- Values that Toolgraph refuses rather than scrubs go through one rule,
+  `toolgraph.redaction.is_credential_shaped`, instead of five detectors that
+  disagreed (#130). Review notes accepted `Bearer abc123`, `"token"=abc` and
+  `mycredential=x`; control plans accepted `password=hunter2` and
+  credential-shaped keys, and echoed a forbidden or duplicate key in the
+  error; review metadata and graph instance ids were not checked; percent-encoded
+  query keys passed everywhere but `policy impact`. Errors name where a refused
+  value sits, never the value.
 
 - Commands and MCP tools that only read the graph no longer create a missing
   Ladybug database. Pointed at a path that was never initialized, the read

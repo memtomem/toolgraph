@@ -539,7 +539,9 @@ def test_invalid_plan_error_names_the_field_but_not_its_value():
 
 def test_unqualified_candidate_error_names_the_index_not_the_value():
     document = control_plan_document()
-    document["principals"][0]["candidate_tools"].append("Bearer TOPSECRET123")
+    # Not credential-shaped, so the body check passes it and the model's
+    # qualification check is the one that must not echo it.
+    document["principals"][0]["candidate_tools"].append("TOPSECRET123")
     index = len(document["principals"][0]["candidate_tools"]) - 1
 
     with pytest.raises(ControlPlanError) as raised:
@@ -553,7 +555,7 @@ def test_unqualified_candidate_error_names_the_index_not_the_value():
 
 def test_undeclared_principal_error_names_the_position_not_the_value():
     document = control_plan_document()
-    document["nodes"][1]["principals"][1] = "Bearer TOPSECRET123"
+    document["nodes"][1]["principals"][1] = "TOPSECRET123"
 
     with pytest.raises(ControlPlanError) as raised:
         load_control_plan(control_plan_raw(document))
