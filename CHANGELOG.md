@@ -18,20 +18,40 @@ All notable changes to Toolgraph are documented here.
   `.env` copied from `.env.example` already sets it; a hand-written `.env`
   with only `NEO4J_*` lines does not. A `--config` file without `backend`
   also meant Neo4j; it is now refused with exit 1 and a line naming the file,
-  and the environment is still not consulted. Library
-  callers that read `toolgraph.config.settings` with nothing configured get
-  `RuntimeConfigurationError`; `Settings(backend=...)` is unaffected.
-- The Neo4j driver is now the `neo4j` extra; Ladybug is a core dependency
-  (ADR-0017). A Neo4j deployment installs `toolgraph[neo4j]`
+  and the environment is still not consulted.
+  `serve` also refuses at startup, with one line and exit 1, an unknown
+  `TOOLGRAPH_BACKEND`, a backend variable that conflicts with the config file
+  and an unreadable or malformed config file found through
+  `TOOLGRAPH_CONFIG` or the working directory; 0.2.0 started in all four
+  cases and failed each tool call instead. (A malformed `--config` file was
+  already refused before serving, exit 2.) A missing `neo4j` extra or an
+  unreachable backend still surfaces per tool call.
+  Library callers that read `toolgraph.config.settings` with nothing
+  configured get `RuntimeConfigurationError`; `Settings(backend=...)` is
+  unaffected. `config.configure(path)` still reads the file at once but no
+  longer builds the settings: they are built when `config.settings` is next
+  read, so a file without `backend` is refused there, and a `NEO4J_*`
+  variable changed in between is the one used. Read `config.settings` right
+  after `configure()` to keep 0.2.0's timing.
+- The Neo4j driver is now the `neo4j` extra, and Ladybug is a core
+  dependency (ADR-0017). A Neo4j deployment installs `toolgraph[neo4j]`
   (`uv sync --extra neo4j` from a checkout). Without it, a command that
   opens a Neo4j graph exits 1 with one line: `ERROR: backend=neo4j requires
   the 'neo4j' extra: install with ...`. `toolgraph[ladybug]` still resolves,
-  as an empty extra, so existing install recipes keep working.
-- Installing Toolgraph now installs Ladybug on every platform. Ladybug
-  0.18.3 ships wheels for CPython 3.12–3.14 on macOS 15+ (arm64, x86_64),
-  manylinux (x86_64 glibc 2.27+, aarch64 glibc 2.26+), musllinux 1.2 and
-  Windows (amd64, arm64). Elsewhere, for example on macOS 14, pip builds
-  Ladybug from its source distribution; that build has not been verified.
+  as an empty extra, so existing install recipes keep working. Installing
+  Toolgraph now installs Ladybug on every platform. Ladybug 0.18.3 ships
+  wheels for CPython 3.12–3.14 on macOS 15+ (arm64, x86_64), manylinux
+  (x86_64 glibc 2.27+, aarch64 glibc 2.26+), musllinux 1.2 and Windows
+  (amd64, arm64). Elsewhere, for example on macOS 14, pip builds Ladybug
+  from its source distribution; that build has not been verified.
+- Neo4j 5.7 is now the minimum server version. Toolgraph asks the server
+  not to send `UNRECOGNIZED` notifications, which needs Bolt 5.2; against an
+  older server every command that opens the graph exits 1 with `Neo4j
+  server is older than 5.7, the minimum Toolgraph supports; upgrade the
+  server` (measured on 5.6 and 4.4). Before this change the README
+  walkthrough ran on 5.6, with notification noise, and on 4.4 seven of its
+  eighteen commands already failed with Cypher syntax errors. Library
+  callers get `BackendConfigurationError` from the same seams as below.
 - `toolgraph crawl` now requires the `servers` key in `servers.yaml`. A
   blank file, a comment-only file or `{}` exits 1 with `Invalid servers
   config` before any server is contacted; 0.2.0 treated those three as an
@@ -41,24 +61,47 @@ All notable changes to Toolgraph are documented here.
   coerced to an empty list.) To retire the whole fleet on purpose, write `servers: []`
   (library callers: `ServersConfig(servers=[])`); to crawl nothing and keep
   the graph, add `--no-prune`. See ADR-0014.
-- A server whose catalog exceeds 10,000 records or 4 MiB of retained record
-  JSON now fails its crawl instead of loading (ADR-0016). Raise the limit
-  with `--max-catalog-records` / `--max-catalog-bytes`, or pass
-  `budget=CatalogBudget(...)` from a library call.
+- Crawls behave differently in three smaller ways. A server whose catalog
+  exceeds 10,000 records or 4 MiB of retained record JSON now fails its
+  crawl instead of loading (ADR-0016); raise the limit with
+  `--max-catalog-records` / `--max-catalog-bytes`, or pass
+  `budget=CatalogBudget(...)` from a library call. A failed server's reason,
+  printed by `crawl` and returned in the failures of `crawl_all` /
+  `crawl_all_async`, names the underlying exceptions instead of
+  `ExceptionGroup: unhandled errors in a TaskGroup`. And `crawl_all` /
+  `crawl_all_async` raise `ValueError` for a `concurrency` that is not a
+  positive `int`: `0` used to hang, while a float or `bool` was accepted.
+- Read commands and MCP read tools no longer create a missing Ladybug
+  database: they exit 1 with one `BACKEND_UNAVAILABLE` line (MCP:
+  `backend_unavailable`). A Ladybug file without Toolgraph's schema, or with
+  another schema version, is refused by graph query commands, with a line
+  naming `init-schema` or the version mismatch, and by MCP read tools, as
+  `backend_misconfigured` with cause `schema_not_initialized` or
+  `schema_version_mismatch`; `check` tests connectivity only and still
+  prints `OK` for it. A script that let a read command
+  create the file runs `toolgraph init` or `init-schema` first. Writers
+  (`crawl`, `ingest-manifest`, `init-schema`) still create it.
+- `toolgraph check` and `doctor`'s Connectivity check now look in
+  `NEO4J_DATABASE`. With a database the server does not have, `check` exits
+  1 where 0.2.0 printed `OK`, and Connectivity FAILs where it passed. A
+  health check built on either now reports that setup as broken. Separately,
+  `doctor` and `doctor --json` report exactly one `Configuration` check;
+  when the settings could not be built, 0.2.0 reported a PASS or WARN
+  `Configuration` followed by a FAIL with the same name.
+- MCP tools report backend configuration problems as a new error kind,
+  `backend_misconfigured`, with `retryable: false` and a `cause`, where 0.2.0
+  returned the SDK's generic `Error executing tool <name>`. A client that
+  switches on `error_kind` should handle it; `backend_unavailable` is
+  unchanged. See the first bullet under Changed for the causes.
 - Code that calls `driver.session()`, `acquire_readonly_session()` or
   `verify_connectivity()` and catches `neo4j.exceptions.AuthError` (or a
   `ClientError` for expired credentials, the authentication rate limit or
   `Database.DatabaseNotFound`) now gets
   `toolgraph.graph.driver.BackendConfigurationError`, with the driver error
-  as `__cause__`.
-- Neo4j 5.7 is now the minimum server version. Toolgraph asks the server
-  not to send `UNRECOGNIZED` notifications, which needs Bolt 5.2; against an
-  older server every command that opens the graph exits 1 with `Neo4j
-  server is older than 5.7, the minimum Toolgraph supports; upgrade the
-  server` (measured on 5.6 and 4.4). Before this change the README
-  walkthrough ran on 5.6, with notification noise, and on 4.4 seven of its
-  eighteen commands already failed with Cypher syntax errors. Library
-  callers get `BackendConfigurationError` from the same seams as above.
+  as `__cause__`; the CLI prints these as one `ERROR:` line, exit 1, instead
+  of a traceback. `BackendConfigurationError` now takes exactly one message
+  and an optional keyword `cause`, so constructing it with no arguments or
+  with two positional arguments raises `TypeError`.
 
 ### Added
 
