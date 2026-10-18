@@ -194,11 +194,12 @@ fleet 설정에서는 모든 서버에 고유한 `name`을 지정하세요. 이�
 먼저 `toolgraph doctor`를 실행하고 `Configuration` 아래의 `backend_source`
 줄을 확인하세요.
 
-- `backend_source: default`이고 백엔드 `neo4j`에 대한 `Connectivity`가 FAIL:
-  설정 파일도 환경 변수도 백엔드를 고르지 않아 Neo4j로 넘어간 것입니다.
-  `Configuration` 항목에 `exists: False`도 보이면 quickstart 디렉터리 밖에
-  있거나 `toolgraph init`을 건너뛴 것입니다. 디렉터리로 `cd`하거나 `init`을
-  실행하세요.
+- `Configuration` 항목이 `no backend configured`로 FAIL이고
+  `backend_source: none`이 보임: 설정 파일도 환경 변수도 백엔드를 고르지
+  않았고, Toolgraph는 백엔드를 추측하지 않습니다. `exists: False`도 보이면
+  quickstart 디렉터리 밖에 있거나 `toolgraph init`을 건너뛴 것입니다.
+  디렉터리로 `cd`하거나 `init`을 실행하세요. 그래프를 여는 모든 명령이 같은
+  메시지로 멈춥니다.
 - `Configuration` 항목이 `conflicting backend configuration`으로
   FAIL: 셸이나 이 디렉터리의 `.env`에 설정된 `TOOLGRAPH_BACKEND` 또는
   `TOOLGRAPH_DB_PATH`가 `.toolgraph/config.json`과 다릅니다. 메시지에 변수

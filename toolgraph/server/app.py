@@ -16,15 +16,17 @@ eligibility into an authorization decision should reject or retry instead.
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from toolgraph.config import RuntimeConfigurationError
 from toolgraph.errors import ContractError
 from toolgraph.graph import queries, selector
-from toolgraph.graph.driver import is_backend_unavailable
+from toolgraph.graph.driver import BackendConfigurationError, backend_name, is_backend_unavailable
 from toolgraph.redaction import redact_text
 
 logger = logging.getLogger(__name__)
@@ -313,5 +315,21 @@ def selection_explain(agent: str, tool: str, profile: str = selector.DEFAULT_PRO
     return _with_generation(lambda: selector.selection_explain(agent, tool, profile=profile))
 
 
+def configuration_error() -> str | None:
+    """The one-line reason the server cannot pick a backend, if any.
+
+    Tools read the settings per call, so without this check an unconfigured
+    server would start and then fail every call behind the SDK's generic tool
+    error (ADR-0017 step 3). Both entry points run it before serving.
+    """
+    try:
+        backend_name()
+    except (RuntimeConfigurationError, BackendConfigurationError) as exc:
+        return f"ERROR: {redact_text(exc)}"
+    return None
+
+
 if __name__ == "__main__":
+    if error := configuration_error():
+        sys.exit(error)
     mcp.run()

@@ -235,8 +235,8 @@ def test_check_never_prints_neo4j_credentials(monkeypatch):
     from toolgraph import config
     from toolgraph.graph import driver
 
-    monkeypatch.setattr(
-        config,
+    monkeypatch.setitem(
+        vars(config),
         "settings",
         config.Settings(
             backend="neo4j",

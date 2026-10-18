@@ -591,6 +591,7 @@ def main() -> int:
         env = dict(os.environ)
         env.update(
             {
+                "TOOLGRAPH_BACKEND": "neo4j",
                 "NEO4J_URI": f"bolt://127.0.0.1:{port}",
                 "NEO4J_USER": "neo4j",
                 "NEO4J_PASSWORD": PASSWORD,

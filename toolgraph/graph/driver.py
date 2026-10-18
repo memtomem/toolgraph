@@ -1,8 +1,9 @@
 """Backend lifecycle and transaction/session compatibility helpers.
 
 The public module seam is intentionally small while graph services migrate to
-domain-level ports. Neo4j remains the compatibility default; Ladybug is an
-explicit embedded backend and never runs in the gateway call path.
+domain-level ports. The backend is always chosen explicitly (ADR-0017): Ladybug
+is the embedded local backend and never runs in the gateway call path; Neo4j
+is the shared backend, behind the ``neo4j`` extra.
 """
 
 from __future__ import annotations

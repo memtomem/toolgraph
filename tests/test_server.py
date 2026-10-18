@@ -59,9 +59,8 @@ def server_spec(backend_graph, tmp_path) -> ServerSpec:
     settings = config.settings
     env = {"TOOLGRAPH_CONFIG": str(tmp_path / "no-config.json")}
     if backend_graph == "neo4j":
-        # No TOOLGRAPH_BACKEND: this keeps covering the NEO4J_*-only fallback
-        # that ADR-0017 step 3 retires.
         env.update(
+            TOOLGRAPH_BACKEND="neo4j",
             NEO4J_URI=settings.neo4j_uri,
             NEO4J_USER=settings.neo4j_user,
             NEO4J_PASSWORD=settings.neo4j_password,

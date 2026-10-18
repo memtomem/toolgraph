@@ -202,11 +202,12 @@ stdio diagnostics intentionally show only the executable (for example,
 Start with `toolgraph doctor` and read the `backend_source` line under
 `Configuration`.
 
-- `backend_source: default` and a `Connectivity` FAIL for backend `neo4j`:
-  neither a config file nor the environment chose a backend, so Toolgraph fell
-  back to Neo4j. When the `Configuration` entry also shows `exists: False`,
-  you are outside the quickstart directory or `toolgraph init` was skipped.
-  `cd` into the directory or run `init`.
+- The `Configuration` entry FAILs with `no backend configured` and shows
+  `backend_source: none`: neither a config file nor the environment chose a
+  backend, and Toolgraph does not guess one. When it also shows
+  `exists: False`, you are outside the quickstart directory or `toolgraph init`
+  was skipped. `cd` into the directory or run `init`. Every command that opens
+  the graph stops with the same message.
 - The `Configuration` entry FAILs with
   `conflicting backend configuration`: `TOOLGRAPH_BACKEND` or
   `TOOLGRAPH_DB_PATH`, set in your shell or in a `.env` file in this

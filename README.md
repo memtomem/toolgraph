@@ -386,10 +386,13 @@ still set, the conflict remains. Use `init --backend neo4j`, or remove the
 variable. When it comes from `.env`, unsetting it in the shell is not enough:
 the next command loads it again, so edit `.env`.
 
-With no file and no variables, the backend is `neo4j` at `NEO4J_URI`
-(default `bolt://localhost:7687`). That is why a command run outside an
-initialized directory tries to reach Neo4j. `toolgraph init` defaults to
-Ladybug, with its database at `.toolgraph/toolgraph.lbug`.
+With no config file and no `TOOLGRAPH_BACKEND`, nothing names a backend and
+Toolgraph does not guess one (ADR-0017). A command that opens the graph exits
+1 with ``ERROR: no backend configured: run `toolgraph init`, or set
+TOOLGRAPH_BACKEND to ladybug or neo4j``. `NEO4J_*` variables alone do not select
+Neo4j; they configure it once it is selected. A `--config` file without a
+`backend` field is refused the same way, naming the file. `toolgraph init`
+defaults to Ladybug, with its database at `.toolgraph/toolgraph.lbug`.
 
 `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `NEO4J_DATABASE`, and the default
 input paths `TOOLGRAPH_SERVERS` / `TOOLGRAPH_GOVERNANCE` (used when `crawl
@@ -410,12 +413,12 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
-| commands that read or write the graph | 1 with one `ERROR:` line on stderr for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, or a Neo4j server older than 5.7. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a conflict or an unreadable config file does not stop it; and `serve` meets them per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
 | `init` | 0 · 1 when `--state-dir` cannot be created · 2 on a `--backend` other than `ladybug` / `neo4j` |
-| `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict |
+| `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict or no configured backend |
 | `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) |
 | `ingest-manifest` | 1 on an unreadable or invalid file · 1 when the manifest is REJECTED (graph unchanged) |
 | `ingest-manifest --dry-run [--json]` | 0 when the manifest would apply · 1 when it would be rejected (the `--json` report is still printed) · 2 for `--json` without `--dry-run` |

@@ -6,6 +6,21 @@ All notable changes to Toolgraph are documented here.
 
 ### Upgrading from 0.2.0
 
+- There is no implicit backend any more (ADR-0017). 0.2.0 chose Neo4j at
+  `NEO4J_URI` whenever neither `TOOLGRAPH_BACKEND` nor a `backend` field in
+  the runtime config file named one; now a command that opens the graph
+  exits 1 with ``ERROR: no backend configured: run `toolgraph init`, or set
+  TOOLGRAPH_BACKEND to ladybug or neo4j``, `doctor` reports a Configuration
+  FAIL (`backend_source: none`), and `serve` and `python -m
+  toolgraph.server.app` exit 1 with that line before serving. `NEO4J_*`
+  variables alone no longer select Neo4j. A deployment that relied on the
+  fallback sets `TOOLGRAPH_BACKEND=neo4j` and installs `toolgraph[neo4j]`. A
+  `.env` copied from `.env.example` already sets it; a hand-written `.env`
+  with only `NEO4J_*` lines does not. A `--config` file without `backend`
+  also meant Neo4j; it is now refused with exit 1 and a line naming the file,
+  and the environment is still not consulted. Library
+  callers that read `toolgraph.config.settings` with nothing configured get
+  `RuntimeConfigurationError`; `Settings(backend=...)` is unaffected.
 - The Neo4j driver is now the `neo4j` extra; Ladybug is a core dependency
   (ADR-0017). A Neo4j deployment installs `toolgraph[neo4j]`
   (`uv sync --extra neo4j` from a checkout). Without it, a command that
@@ -73,6 +88,14 @@ All notable changes to Toolgraph are documented here.
   `notebook` dependency group in `uv.lock`, so Dependabot updates them.
 
 ### Changed
+
+- Toolgraph no longer chooses a backend when nothing names one (ADR-0017
+  step 3). The backend comes from `TOOLGRAPH_BACKEND` or the runtime config
+  file's `backend` field, or with `--config` from that file alone; otherwise
+  commands that open the graph, `serve` and the MCP server module refuse with
+  one line, and `doctor` reports a Configuration FAIL. Commands that do not
+  open the graph (help, `--version`, `example init`, `review-candidates`,
+  `init`) are unaffected.
 
 - Ladybug moves into the core dependencies and `neo4j` to a `[neo4j]`
   extra (ADR-0017 step 2). No Ladybug path imports the Neo4j driver, so a

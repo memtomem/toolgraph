@@ -246,7 +246,7 @@ def test_scope_validation_precedes_database_access(monkeypatch):
 
 def test_missing_database_not_created(tmp_path, monkeypatch):
     path = tmp_path / "absent" / "graph.lbug"
-    monkeypatch.setattr(config, "settings", config.Settings(backend="ladybug", db_path=path))
+    monkeypatch.setitem(vars(config), "settings", config.Settings(backend="ladybug", db_path=path))
     driver.close_driver()
     with pytest.raises(driver.BackendUnavailableError):
         impact(Governance())

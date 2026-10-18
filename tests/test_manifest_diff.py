@@ -44,8 +44,8 @@ def _seed_sample_crawl() -> None:
 def test_dry_run_non_existent_ladybug_db_never_creates_file(tmp_path, monkeypatch):
     non_existent_dir = tmp_path / "does_not_exist"
     non_existent_db = non_existent_dir / "test.lbug"
-    monkeypatch.setattr(
-        config,
+    monkeypatch.setitem(
+        vars(config),
         "settings",
         config.Settings(backend="ladybug", db_path=non_existent_db),
     )
