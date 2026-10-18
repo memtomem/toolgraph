@@ -1,6 +1,6 @@
 # 0017 — Ladybug becomes the default backend; Neo4j becomes an optional extra
 
-Status: Proposed · Date: 2026-10-18
+Status: Accepted · Date: 2026-10-18 · Accepted: 2026-10-18
 
 Amends [ADR-0011](0011-embedded-ladybug-backend.md).
 
@@ -84,6 +84,16 @@ Measured on 2026-10-18 at main `2ccc6fa`, with the repository's
 
    Converting a test must not weaken its assertions. Steps 2–4 do not start
    until this lands.
+
+   *Completed 2026-10-18* by #181 (CLI contract and MCP server), #182 (query
+   layer) and #183 (write path). Of the 296 tests that start Neo4j, 3 still
+   run on Neo4j only: native read-access enforcement and server notifications
+   in `test_config.py`, and the fixture-isolation regression. No test needed a
+   backend fix. One difference surfaced, in result shape: a cleared node
+   property is absent on Neo4j and null on Ladybug, whose node dicts also
+   carry `_ID` and `_LABEL`. The test helper `_tool_props` in
+   `tests/test_annotations.py` now drops null values and keys beginning with
+   `_` before the assertions compare node properties.
 2. **Dependencies.** `ladybug` moves into the core dependencies and `neo4j`
    to a `[neo4j]` extra. `[ladybug]` stays as an empty extra, so existing
    recipes keep resolving: `toolgraph[ladybug]` in the README and guides,
