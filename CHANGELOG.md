@@ -146,6 +146,24 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- Commands and MCP tools that only read the graph no longer create a missing
+  Ladybug database. Pointed at a path that was never initialized, the read
+  commands (`check-access`, `unmapped-tools`, `audit-report`, `drift` and
+  the rest) created the file, then failed with a 72-98 line `Binder
+  exception: Table ... does not exist` traceback, and `check` printed `OK`
+  for that path from then on. Now a missing file gives one line, `ERROR:
+  backend unavailable: BACKEND_UNAVAILABLE: Ladybug database <path> does
+  not exist or is not a file`, and MCP returns `backend_unavailable`, as
+  `check` already did. A Ladybug file without Toolgraph's schema gives
+  `ERROR: backend schema is not initialized or incomplete — run 'toolgraph
+  init-schema'`, and MCP returns `backend_misconfigured` with cause
+  `schema_not_initialized` (`schema_version_mismatch` for another schema
+  version). A read that opened the database and fails this way closes it,
+  so `init-schema` from another process can repair it while `serve` runs
+  (a process that already wrote keeps its handle).
+  Neo4j is unchanged: an uninitialized Neo4j database still answers reads
+  with empty results.
+
 - `toolgraph check` and `doctor`'s Connectivity check now select
   `NEO4J_DATABASE`. With a database the Neo4j server does not have, `check`
   printed `OK` and the next graph command exited 1 with a

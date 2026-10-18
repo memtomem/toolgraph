@@ -1304,7 +1304,7 @@ def test_revalidation_chunks_candidates_without_mutating_features(tmp_path, monk
     monkeypatch.setattr(queries, "graph_state", lambda: queries.GraphState("instance", 1))
     from contextlib import nullcontext
 
-    monkeypatch.setattr(driver, "session", lambda: nullcontext(None))
+    monkeypatch.setattr(driver, "read_session", lambda: nullcontext(None))
     batches, originals = [], []
 
     def ranked(agent, candidates):

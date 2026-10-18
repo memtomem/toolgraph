@@ -151,7 +151,7 @@ def control_plan_bracket(monkeypatch, *, rejected: bool = False) -> None:
 
     monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
     monkeypatch.setattr("toolgraph.control_plan.queries.with_graph_state", bracket)
-    monkeypatch.setattr("toolgraph.control_plan.driver.session", lambda: MockSession())
+    monkeypatch.setattr("toolgraph.control_plan.driver.read_session", lambda: MockSession())
     monkeypatch.setattr("toolgraph.control_plan._test_calls", calls, raising=False)
 
 

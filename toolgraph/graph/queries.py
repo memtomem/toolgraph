@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from toolgraph.graph.driver import session
+from toolgraph.graph.driver import read_session
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 if TYPE_CHECKING:
@@ -143,7 +143,7 @@ def graph_generation() -> int:
     (one integer comparison instead of re-running audit queries) and for
     pinning selection-telemetry rows to a replayable graph state.
     """
-    with session() as s:
+    with read_session() as s:
         rec = s.run(
             "MATCH (m:GraphMeta {id:'singleton'}) RETURN coalesce(m.generation, 0) AS generation"
         ).single()
@@ -153,7 +153,7 @@ def graph_generation() -> int:
 def graph_state(s: Session | None = None) -> GraphState:
     """Return the current collision-safe graph state and governance digest."""
     if s is None:
-        with session() as current:
+        with read_session() as current:
             return _read_graph_state(current)
     return _read_graph_state(s)
 
@@ -176,7 +176,7 @@ def _read_graph_state(s: Session) -> GraphState:
 
 def exposed_tool_contracts() -> list[dict]:
     """Canonical crawl facts for every tool currently exposed by a server."""
-    with session() as s:
+    with read_session() as s:
         rows = s.run(
             """
             MATCH (server:MCPServer)-[:EXPOSES]->(tool:Tool)
@@ -209,12 +209,12 @@ def agent_exists(agent: str) -> bool:
     """Is there an Agent node with this id? Used by the CLI + MCP surfaces to
     return a discriminated AGENT_NOT_FOUND signal instead of silently
     returning ``[]`` (which is indistinguishable from 'no unsafe tools')."""
-    with session() as s:
+    with read_session() as s:
         return _agent_present(s, agent)
 
 
 def _agent_ids() -> list[str]:
-    with session() as s:
+    with read_session() as s:
         return [r["id"] for r in s.run("MATCH (a:Agent) RETURN a.id AS id ORDER BY id")]
 
 
@@ -420,7 +420,7 @@ def check_access(agent: str, tool: str) -> dict:
     reach intentional). Lets callers branch on "real violation" vs "expected
     DENY" without re-aggregating row classifications.
     """
-    with session() as s:
+    with read_session() as s:
         if not _agent_present(s, agent):
             # Three-state ``found``: True/False when tool resolution ran,
             # None when it didn't (AGENT_NOT_FOUND fires before tool lookup).
@@ -517,7 +517,7 @@ def unsafe_callable_tools(agent: str) -> list[dict]:
     an ``AGENT_NOT_FOUND`` verdict) if you need to distinguish "no unsafe
     tools" from "agent doesn't exist".
     """
-    with session() as s:
+    with read_session() as s:
         rows = _unsafe_callable_rows(s, [agent])
     for d in rows:
         d.pop("agent", None)
@@ -564,7 +564,7 @@ def audit_report(include_grants: bool = False) -> dict:
     # ``unsafe_callable_tools`` returns for that agent alone.
     by_agent: dict[str, list[dict]] = {agent: [] for agent in agents}
     if agents:
-        with session() as s:
+        with read_session() as s:
             for row in _unsafe_callable_rows(s, agents):
                 by_agent[row["agent"]].append(row)
     for agent in agents:
@@ -632,7 +632,7 @@ def unmapped_tools(only_granted: bool = True) -> list[dict]:
         ORDER BY tool_key
         """
     )
-    with session() as s:
+    with read_session() as s:
         return [dict(r) for r in s.run(cypher)]
 
 
@@ -659,7 +659,7 @@ def orphan_policies() -> list[dict]:
            collect(DISTINCT t.key) AS tools_governed_directly
     ORDER BY policy
     """
-    with session() as s:
+    with read_session() as s:
         return [dict(r) for r in s.run(cypher)]
 
 
@@ -696,7 +696,7 @@ def unbacked_edges(include_grants: bool = False) -> list[dict]:
            source, confidence
     ORDER BY edge_type, src_id, dst_id
     """
-    with session() as s:
+    with read_session() as s:
         return [dict(r) for r in s.run(cypher)]
 
 
@@ -718,7 +718,7 @@ def drifted_tools() -> list[dict]:
            collect(DISTINCT {mode:type(acc), resource:res.uri}) AS data_access
     ORDER BY tool_key
     """
-    with session() as s:
+    with read_session() as s:
         rows = []
         for row in s.run(cypher):
             item = dict(row)
@@ -767,7 +767,7 @@ def destructive_unsafeguarded() -> list[dict]:
     ORDER BY tool_key
     """
     rows: list[dict] = []
-    with session() as s:
+    with read_session() as s:
         for r in s.run(cypher):
             d = dict(r)
             d["granted_to"] = [value for value in (d["granted_to"] or []) if value]
@@ -801,7 +801,7 @@ def annotation_contradictions() -> list[dict]:
     ORDER BY tool_key, resource
     """
     rows: list[dict] = []
-    with session() as s:
+    with read_session() as s:
         for r in s.run(cypher):
             rows.append(
                 {
@@ -832,7 +832,7 @@ def blast_radius(node: str) -> dict:
     """
     if is_resource_ref(node):
         uri = normalize_resource_uri(node)
-        with session() as s:
+        with read_session() as s:
             found = s.run("RETURN EXISTS { MATCH (:Resource {uri:$uri}) } AS ok", uri=uri).single()[
                 "ok"
             ]
@@ -849,7 +849,7 @@ def blast_radius(node: str) -> dict:
                 return {"kind": "resource", "node": uri, "found": False, "impacted": []}
             return _blast_radius_resource(s, uri)
 
-    with session() as s:
+    with read_session() as s:
         return _blast_radius_policy(s, node)
 
 

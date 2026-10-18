@@ -614,7 +614,7 @@ def build_control_preflight(
                     "rejected": verdict["rejected"],
                 }
             )
-        session_ctx = session_factory if session_factory is not None else driver.session
+        session_ctx = session_factory if session_factory is not None else driver.read_session
         with session_ctx() as s:
             exposure_result = compute_control_plan_exposures(plan, evaluations, s)
         return {

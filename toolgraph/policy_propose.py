@@ -690,7 +690,7 @@ def run_propose(
     # Recompute every graph-dependent input together on each bracket retry.
     def fetch_bracketed():
         st = queries.graph_state()
-        with driver.session() as session:
+        with driver.read_session() as session:
             granted, ambiguous = resolve_grants_from_graph(session, gov.get("grants") or [])
         proposal = propose(
             gov,

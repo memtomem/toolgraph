@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from toolgraph.graph import queries
-from toolgraph.graph.driver import acquire_readonly_session, session
+from toolgraph.graph.driver import acquire_readonly_session, read_session, session
 from toolgraph.graph.queries import resolve_tool_refs
 from toolgraph.graph.schema import bump_generation, check_backend_schema_version, exception_key
 from toolgraph.manifest.parser import governance_digest
@@ -949,6 +949,6 @@ def governance_counts() -> dict[str, int]:
         "governed_by",
         "expected_exception",
     )
-    with session() as s:
+    with read_session() as s:
         counts = {r["name"]: r["count"] for r in s.run(query)}
     return {name: counts.get(name, 0) for name in names}
