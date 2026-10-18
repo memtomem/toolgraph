@@ -202,6 +202,17 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- Error text no longer shows part of a quoted credential (#201). A password
+  in quotes inside a URI (`neo4j://u:"p@ss"@host`) was printed whole, and a
+  quoted value with a space (`password="hunter 2"`, `NEO4J_PASSWORD="s3cr3t
+  pass"`) kept its tail. A quoted or bracketed credential value, and a URI
+  with a quote in its authority and an `@` anywhere after it, are now hidden
+  through the end of the message: the message loses what follows them, and
+  never shows part of the value. A URI that is only wrapped in quotes, such
+  as `'neo4j://host:7687'` in a driver error, is shown as before unless an
+  `@` follows later in the message. Scrubbing a long message is also linear
+  now; a 100,000-character line of letters took 25 s.
+
 - Values that Toolgraph refuses rather than scrubs go through one rule,
   `toolgraph.redaction.is_credential_shaped`, instead of five detectors that
   disagreed (#130). Review notes accepted `Bearer abc123`, `"token"=abc` and

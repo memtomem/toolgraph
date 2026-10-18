@@ -9,10 +9,25 @@ from urllib.parse import unquote, urlsplit
 
 from toolgraph.models import ServerSpec
 
-_URI = re.compile(r"[a-z][a-z0-9+.-]*://[^\s'\"<>]+", re.IGNORECASE)
+# A scheme is the whole run of scheme characters before '://'. Starting a
+# match only where such a run starts keeps the scan linear (a pattern that may
+# start at any letter re-scans a long word from each one), and a malformed
+# prefix such as `1https://` still counts as a URI and is scrubbed.
+_SCHEME = r"(?<![a-z0-9+.-])[a-z0-9+.-]+://"
+_URI = re.compile(_SCHEME + r"[^\s'\"<>]+", re.IGNORECASE)
+# A quote inside a URI's authority with an '@' anywhere after it is a quoted
+# userinfo password (`neo4j://u:"p w"@host`) whose end cannot be found
+# reliably, so everything from the start of that token on is hidden.
+_QUOTED_AUTHORITY = re.compile(_SCHEME + r"[^\s/?#'\"]*['\"]", re.IGNORECASE)
 _AUTHORIZATION = re.compile(
     r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
     r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
+)
+# The scrubbing form: a quoted or bracketed value is hidden through the end of
+# the text, as for _SCRUB_VALUE below.
+_AUTHORIZATION_SCRUB = re.compile(
+    r"(?i)\bauthorization['\"]?\s*[:=]\s*"
+    r"(?:['\"\[{][\s\S]*|(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+)"
 )
 # The names every credential detector treats as a secret when assigned. One
 # list, so a name refused in one place is refused in artifact identities,
@@ -31,12 +46,16 @@ CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGN
 # exempt, so `token::refresh` in a diagnostic reads `token=<redacted>`. A value
 # such as `password::hunter2` in free error text must not survive.
 #
+# A value that starts with a quote or a bracket has no end that can be found
+# reliably (escaped or doubled quotes, line breaks, nested structures), so it
+# is hidden through the end of the text: the diagnostic loses what follows,
+# and never shows part of the value.
+#
 # Two passes, not one alternation over CREDENTIAL_KEYWORDS. A single pass lets
 # a newly added name swallow the next one as its value: `credential=password
-# =hunter2` would leave `=hunter2` readable. The first pass is the original
-# rule unchanged; the second only replaces text that is still visible, so the
-# result never shows more than the original rule alone would.
-_SCRUB_VALUE = r"(['\"]?\s*[:=]\s*['\"]?)([^\s,}\]]+)"
+# =hunter2` would leave `=hunter2` readable. The second pass only replaces text
+# the first left visible, so the result never shows more than the first alone.
+_SCRUB_VALUE = r"(['\"]?\s*[:=]\s*)(['\"\[{][\s\S]*|[^\s,}\]]+)"
 _CREDENTIAL = re.compile(r"(?i)(api[-_]?key|access[-_]?token|token|password|secret)" + _SCRUB_VALUE)
 _CREDENTIAL_ADDED = re.compile(r"(?i)(credential)" + _SCRUB_VALUE)
 
@@ -161,10 +180,36 @@ def is_credential_shaped(text: str) -> bool:
     )
 
 
+def _uri_origin_keeping_prefix(value: str) -> str:
+    # A scheme starts at its first letter. Characters before it (`1https://`)
+    # stay as they are, so a credential name the URI's host position holds
+    # (`1https://password : x`) is still there for credential scrubbing. A
+    # scheme without a letter (`123://`) is not a URI and is left alone.
+    scheme = value[: value.index("://")]
+    first = next((i for i, char in enumerate(scheme) if char.isalpha()), None)
+    if first is None:
+        return value
+    return value[:first] + _diagnostic_uri_origin(value[first:])
+
+
+def _hide_quoted_userinfo(text: str) -> str:
+    # One search that must end before the last '@', so the scan stays linear
+    # however many quoted URIs the text holds. The hidden span starts at the
+    # beginning of the whitespace-delimited token: cutting at a nested scheme
+    # (`https://user:x://"pw"@host`) would leave a prefix that reads as a URI.
+    match = _QUOTED_AUTHORITY.search(text, 0, text.rfind("@"))
+    if match is None:
+        return text
+    start = match.start()
+    while start and not text[start - 1].isspace():
+        start -= 1
+    return text[:start] + "<redacted-uri>"
+
+
 def redact_text(value: object) -> str:
     """Scrub URLs and common credential-shaped values from an error message."""
-    text = str(value)
-    text = _URI.sub(lambda match: _diagnostic_uri_origin(match.group(0)), text)
+    text = _hide_quoted_userinfo(str(value))
+    text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
     return redact_credentials(text)
 
 
@@ -173,7 +218,7 @@ def redact_credentials(text: str) -> str:
 
     Artifact callers must first apply their URI evidence-redaction policy.
     """
-    text = _AUTHORIZATION.sub("Authorization=<redacted>", text)
+    text = _AUTHORIZATION_SCRUB.sub("Authorization=<redacted>", text)
     text = _BEARER.sub(lambda match: f"{match.group(1)} <redacted>", text)
     text = _CREDENTIAL.sub(lambda match: f"{match.group(1)}=<redacted>", text)
     return _CREDENTIAL_ADDED.sub(lambda match: f"{match.group(1)}=<redacted>", text)
