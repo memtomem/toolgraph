@@ -90,6 +90,19 @@ All notable changes to Toolgraph are documented here.
 
 ### Changed
 
+- MCP tools report a backend configuration problem as a typed result
+  instead of the SDK's generic `Error executing tool <name>`. Missing
+  `neo4j` extra, rejected Neo4j credentials, a missing `NEO4J_DATABASE`, a
+  Neo4j server older than 5.7, a missing Ladybug and a database file that is
+  not a Ladybug database now return `isError: true` with `structuredContent`
+  `{"error_kind": "backend_misconfigured", "retryable": false, "cause": ...,
+  "message": ...}`. The message is fixed per cause; the path or status code
+  goes to the server log as one WARNING record instead of a traceback. On
+  stdio, where the SDK's log handler wraps at 80 columns, a corrupt Ladybug
+  file went from 284 stderr lines to 9. A consumer that keys on
+  `error_kind == "backend_unavailable"` sees no change: these failures still
+  are not outages.
+
 - Toolgraph no longer chooses a backend when nothing names one (ADR-0017
   step 3). The backend comes from `TOOLGRAPH_BACKEND` or the runtime config
   file's `backend` field, or with `--config` from that file alone; otherwise
