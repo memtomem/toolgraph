@@ -413,7 +413,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
-| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
@@ -435,10 +435,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `example init` | 2 when the destination already exists |
 
 An error outside these classes exits 1 with a Python traceback instead of an
-`ERROR:` line. For example, `toolgraph drift` with a `NEO4J_DATABASE` the
-server does not have fails with `Neo.ClientError.Database.DatabaseNotFound`
-(`check` still passes, because connectivity is checked without selecting the
-database).
+`ERROR:` line.
 
 A typo'd name exits 2 under `--fail-on-deny` so it can't pass a CI gate as a
 clean run.
@@ -649,7 +646,9 @@ calling `driver.session()` or `verify_connectivity()` directly now sees
 `BackendLockedError` subclass) instead; the original driver exception is
 preserved as `__cause__`. Neo4j authentication failures (`AuthError` and its
 subclasses, plus the plain `ClientError` codes `Security.CredentialsExpired`
-and `Security.AuthenticationRateLimit`) and a server older than Neo4j 5.7
+and `Security.AuthenticationRateLimit`), a configured database the server does
+not have (the plain `ClientError` code `Database.DatabaseNotFound`) and a
+server older than Neo4j 5.7
 (the driver's notification-filtering `ConfigurationError`) raise
 `BackendConfigurationError` from `driver.session()`,
 `acquire_readonly_session()` and `verify_connectivity()`, again with the

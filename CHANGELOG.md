@@ -47,9 +47,10 @@ All notable changes to Toolgraph are documented here.
   `budget=CatalogBudget(...)` from a library call.
 - Code that calls `driver.session()`, `acquire_readonly_session()` or
   `verify_connectivity()` and catches `neo4j.exceptions.AuthError` (or a
-  `ClientError` for expired credentials or the authentication rate limit)
-  now gets `toolgraph.graph.driver.BackendConfigurationError`, with the
-  driver error as `__cause__`.
+  `ClientError` for expired credentials, the authentication rate limit or
+  `Database.DatabaseNotFound`) now gets
+  `toolgraph.graph.driver.BackendConfigurationError`, with the driver error
+  as `__cause__`.
 - Neo4j 5.7 is now the minimum server version. Toolgraph asks the server
   not to send `UNRECOGNIZED` notifications, which needs Bolt 5.2; against an
   older server every command that opens the graph exits 1 with `Neo4j
@@ -132,12 +133,23 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- `toolgraph check` and `doctor`'s Connectivity check now select
+  `NEO4J_DATABASE`. With a database the Neo4j server does not have, `check`
+  printed `OK` and the next graph command exited 1 with a
+  `DatabaseNotFound` traceback; now `check` and every graph command exit 1
+  with `ERROR: Neo4j database named by NEO4J_DATABASE does not exist on the
+  server`, and `doctor` reports that line as a Connectivity FAIL
+  instead of a Connectivity PASS followed by two raw driver errors.
+  Connectivity is checked with a read query in the configured database,
+  in READ access mode like the driver's own check (measured on Neo4j 5.7
+  and 5.26).
+
 - README's exit-code section no longer gives a rejected Neo4j password as an
   error that ends in a Python traceback; since the authentication change
-  above it prints one `ERROR:` line. The example is now `drift` against a
-  `NEO4J_DATABASE` the server does not have, and the exit-code table lists
-  rejected credentials and a server older than 5.7 among the one-line
-  errors, with the `init` and `serve` exceptions spelled out for every class.
+  above it prints one `ERROR:` line. The exit-code table lists rejected
+  credentials, a missing Neo4j database and a server older than 5.7 among
+  the one-line errors, with the `init` and `serve` exceptions spelled out
+  for every class.
 
 - Neo4j no longer floods stderr with driver notifications. Every query that
   named a label, property or relationship type the graph did not hold yet
