@@ -89,6 +89,21 @@ _NATIVE_AUTH_CLIENT_CODES = frozenset(
 _NO_NOTIFICATION_FILTERING = "Notification filtering is not supported for the Bolt "
 
 
+# A NEO4J_DATABASE the server does not have. Neo4j 5.7 and 5.26 send this
+# code over bolt:// and neo4j:// alike, and the driver hydrates it as a plain
+# ClientError.
+_DATABASE_NOT_FOUND = "Neo.ClientError.Database.DatabaseNotFound"
+
+
+def _database_not_found() -> BackendConfigurationError:
+    # Fixed text only: neither the driver's message nor the configured name,
+    # which redact_text cannot be trusted to scrub (a credential-shaped value
+    # with embedded quotes survives it).
+    return BackendConfigurationError(
+        "Neo4j database named by NEO4J_DATABASE does not exist on the server"
+    )
+
+
 def _server_too_old() -> BackendConfigurationError:
     return BackendConfigurationError(
         "Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server"
@@ -112,7 +127,8 @@ def _translating_backend_errors() -> Iterator[None]:
     """Type native Neo4j failures at the driver seam.
 
     The outage taxonomy becomes ``BackendUnavailableError`` (retryable).
-    Rejected credentials and a server older than the supported minimum become
+    Rejected credentials, a configured database the server does not have and
+    a server older than the supported minimum become
     ``BackendConfigurationError``: loud and not retryable, but one diagnostic
     line rather than a native traceback. Every other client error (Cypher,
     permissions) passes through untouched. Neo4j paths only: it imports the
@@ -134,6 +150,8 @@ def _translating_backend_errors() -> Iterator[None]:
     except errors.ClientError as exc:
         if exc.code in _NATIVE_AUTH_CLIENT_CODES:
             raise _credentials_rejected(exc.code) from exc
+        if exc.code == _DATABASE_NOT_FOUND:
+            raise _database_not_found() from exc
         raise
     except errors.ConfigurationError as exc:
         if str(exc).startswith(_NO_NOTIFICATION_FILTERING):
@@ -320,11 +338,13 @@ def _get_ladybug_database() -> Any:
 
 
 def verify_connectivity(*, read_only: bool = False) -> None:
-    if backend_name() == "neo4j":
-        with _translating_backend_errors():
-            get_driver().verify_connectivity()
-        return
-    session_factory = acquire_readonly_session if read_only else session
+    # A query rather than the driver's verify_connectivity(), which never
+    # selects NEO4J_DATABASE. Neo4j always reads, like the driver's check;
+    # read_only only stops Ladybug creating a missing file.
+    if backend_name() == "neo4j" or read_only:
+        session_factory = acquire_readonly_session
+    else:
+        session_factory = session
     with session_factory() as current:
         current.run("RETURN 1 AS ok").single()
 

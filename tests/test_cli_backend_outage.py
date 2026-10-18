@@ -9,9 +9,12 @@ traceback carrying the driver's connection URI.
 from __future__ import annotations
 
 import errno
+import json
 import os
 import stat
 import warnings
+from contextlib import contextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -242,6 +245,199 @@ def test_other_client_errors_pass_the_seam_untouched(neo4j_failing_with, code):
         current.run("RETURN 1")
 
     assert info.value is native
+
+
+_DATABASE_NOT_FOUND = "Neo.ClientError.Database.DatabaseNotFound"
+
+
+_MISSING_DATABASE_LINE = (
+    "ERROR: Neo4j database named by NEO4J_DATABASE does not exist on the server"
+)
+
+
+@pytest.fixture
+def neo4j_missing_database(neo4j_failing_with, monkeypatch):
+    def install(name: str) -> Exception:
+        native = _native(_DATABASE_NOT_FOUND)
+        neo4j_failing_with(native)
+        monkeypatch.setitem(
+            vars(config), "settings", config.Settings(backend="neo4j", neo4j_database=name)
+        )
+        return native
+
+    return install
+
+
+@pytest.mark.parametrize("argv", [["check"], ["drift"]], ids=["connectivity", "mid-query"])
+def test_missing_database_is_one_error_line(neo4j_missing_database, argv):
+    neo4j_missing_database("nosuchdb")
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [_MISSING_DATABASE_LINE]
+    assert "Traceback" not in _all_output(result)
+    assert FAKE_PASSWORD not in _all_output(result)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "two\nlines\x1b[31m",
+        "neo4j://admin:s3cr3t-name@graph.internal",
+        "neo4j://admin:'s3cr3t-name'@graph.internal",
+        'neo4j://admin:"s3cr3t-name"@graph.internal',
+    ],
+)
+def test_missing_database_never_echoes_the_configured_name(neo4j_missing_database, name):
+    neo4j_missing_database(name)
+
+    for argv in (["check"], ["doctor", "--json"]):
+        result = CliRunner().invoke(cli.app, argv)
+
+        assert result.exit_code == 1
+        assert "s3cr3t-name" not in _all_output(result)
+        assert "\x1b" not in _all_output(result)
+        assert FAKE_PASSWORD not in _all_output(result)
+
+
+def test_seam_types_a_missing_database_as_non_retryable_configuration(neo4j_missing_database):
+    native = neo4j_missing_database("nosuchdb")
+
+    with (
+        pytest.raises(BackendConfigurationError) as info,
+        driver_mod.acquire_readonly_session() as current,
+    ):
+        current.run("RETURN 1")
+
+    assert info.value.__cause__ is native
+    assert not is_backend_unavailable(info.value)
+
+
+class _RecordingResult:
+    def __init__(self, sessions: list, error: Exception | None) -> None:
+        self._sessions = sessions
+        self._error = error
+
+    def single(self):
+        self._sessions[-1]["consumed"] = True
+        if self._error is not None:
+            raise self._error
+        return {"ok": 1}
+
+
+class _RecordingDriver:
+    """Records how connectivity is checked; fails only when the result is read."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.sessions: list[dict] = []
+        self._error = error
+
+    def verify_connectivity(self):
+        raise AssertionError("the driver-level check never selects NEO4J_DATABASE")
+
+    @contextmanager
+    def session(self, **kwargs):
+        record = {"kwargs": kwargs, "queries": [], "consumed": False, "closed": False}
+        self.sessions.append(record)
+        outer = self
+
+        class _Session:
+            def run(self, query, *_a, **_k):
+                record["queries"].append(query)
+                return _RecordingResult(outer.sessions, outer._error)
+
+        try:
+            yield _Session()
+        finally:
+            record["closed"] = True
+
+
+@pytest.mark.parametrize("read_only", [True, False])
+def test_neo4j_connectivity_reads_the_configured_database(monkeypatch, read_only):
+    from neo4j import READ_ACCESS
+
+    recording = _RecordingDriver()
+    monkeypatch.setitem(
+        vars(config), "settings", config.Settings(backend="neo4j", neo4j_database="tenant")
+    )
+    monkeypatch.setattr(driver_mod, "backend_name", lambda: "neo4j")
+    monkeypatch.setattr(driver_mod, "get_driver", lambda: recording)
+
+    driver_mod.verify_connectivity(read_only=read_only)
+
+    assert recording.sessions == [
+        {
+            "kwargs": {"database": "tenant", "default_access_mode": READ_ACCESS},
+            "queries": ["RETURN 1 AS ok"],
+            "consumed": True,
+            "closed": True,
+        }
+    ]
+
+
+def test_missing_database_reported_when_the_result_is_read(monkeypatch):
+    native = _native(_DATABASE_NOT_FOUND)
+    monkeypatch.setitem(
+        vars(config), "settings", config.Settings(backend="neo4j", neo4j_database="nosuchdb")
+    )
+    monkeypatch.setattr(driver_mod, "backend_name", lambda: "neo4j")
+    monkeypatch.setattr(driver_mod, "get_driver", lambda: _RecordingDriver(native))
+
+    with pytest.raises(BackendConfigurationError) as info:
+        driver_mod.verify_connectivity(read_only=True)
+
+    assert info.value.__cause__ is native
+
+
+@pytest.mark.parametrize("as_json", [False, True], ids=["text", "json"])
+def test_doctor_fails_connectivity_for_a_missing_database(neo4j_missing_database, as_json):
+    neo4j_missing_database("nosuchdb")
+
+    result = CliRunner().invoke(cli.app, ["doctor"] + (["--json"] if as_json else []))
+
+    assert result.exit_code == 1
+    message = _MISSING_DATABASE_LINE.removeprefix("ERROR: ")
+    if as_json:
+        checks = {c["name"]: c for c in json.loads(result.stdout)["checks"]}
+        assert checks["Connectivity"]["status"] == "FAIL"
+        assert checks["Connectivity"]["details"]["error"] == message
+        assert "Schema Integrity" not in checks and "Graph State" not in checks
+    else:
+        assert f"[FAIL] Connectivity: Failed to connect to backend 'neo4j': {message}" in (
+            result.stdout
+        )
+        assert "Schema Integrity" not in result.stdout
+        assert "Graph State" not in result.stdout
+    assert FAKE_PASSWORD not in _all_output(result)
+
+
+@pytest.mark.parametrize(
+    ("argv", "missing_line"),
+    [(["check"], True), (["drift"], True), (["doctor"], False)],
+)
+def test_missing_database_on_a_real_server(graph, monkeypatch, argv, missing_line):
+    existing = CliRunner().invoke(cli.app, argv)
+    if missing_line:
+        assert existing.exit_code == 0, existing.output
+    else:
+        # The graph fixture empties the database, so only connectivity passes.
+        assert "[PASS] Connectivity" in existing.stdout
+    monkeypatch.setitem(
+        vars(config), "settings", replace(config.settings, neo4j_database="nosuchdb")
+    )
+    driver_mod.close_driver()
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 1
+    assert "Traceback" not in _all_output(result)
+    if missing_line:
+        assert result.stderr.splitlines() == [_MISSING_DATABASE_LINE]
+    else:
+        assert "[FAIL] Connectivity" in result.stdout
+        assert "Schema Integrity" not in result.stdout
 
 
 def _too_old_server() -> ConfigurationError:
