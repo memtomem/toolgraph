@@ -181,6 +181,8 @@ Measured on 2026-10-18 at main `2ccc6fa`, with the repository's
   the measure of that cost.
 - #172 is not Neo4j-only. Ladybug's `BACKEND_CORRUPT` is also a
   `BackendConfigurationError` that MCP masks, so this ADR does not resolve
-  it.
+  it. *Updated 2026-10-18:* #172 is resolved separately; MCP now reports
+  `BACKEND_CORRUPT` and the Neo4j configuration errors as a typed
+  `backend_misconfigured` result (README, MCP section).
 - There is no data migration, as in ADR-0011: crawled facts are rebuilt
   and authored facts re-ingested.

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import sys
 
 import pytest
 from mcp.types import CallToolRequestParams, CallToolResult
@@ -22,6 +25,7 @@ from toolgraph.graph.driver import (
     BackendConfigurationError,
     BackendLockedError,
     BackendUnavailableError,
+    ConfigurationCause,
     is_backend_unavailable,
 )
 from toolgraph.server import app
@@ -453,3 +457,325 @@ async def test_success_wire_shape_is_unchanged(monkeypatch):
     assert result.is_error is False
     assert result.structured_content is None
     assert json.loads(result.content[0].text) == {"ok": True}
+
+
+# A tagged configuration error's text can name a path or a configured value;
+# every misconfiguration test raises one carrying these and checks the wire.
+_OPERATOR_DETAIL = "BACKEND_CORRUPT: /srv/private/customer-x/SENTINEL_LEAK.lbug"
+
+
+def _assert_no_operator_detail(result: CallToolResult) -> None:
+    encoded = result.model_dump_json()
+    assert "SENTINEL_LEAK" not in encoded
+    assert "/srv/private" not in encoded
+
+
+def _misconfigured(cause: ConfigurationCause) -> dict:
+    return {
+        "error_kind": "backend_misconfigured",
+        "retryable": False,
+        "cause": cause.value,
+        "message": app._BACKEND_MISCONFIGURED_MESSAGES[cause],
+    }
+
+
+def _raising(exc_factory):
+    def fetch(_fetch):
+        raise exc_factory()
+
+    return fetch
+
+
+def test_every_cause_has_a_fixed_message():
+    assert set(app._BACKEND_MISCONFIGURED_MESSAGES) == set(ConfigurationCause)
+
+
+@pytest.mark.parametrize("name,arguments", _TOOLS)
+async def test_every_mcp_tool_returns_typed_backend_misconfigured(monkeypatch, name, arguments):
+    cause = ConfigurationCause.BACKEND_CORRUPT
+    monkeypatch.setattr(
+        app,
+        "_with_generation",
+        _raising(lambda: BackendConfigurationError(_OPERATOR_DETAIL, cause=cause)),
+    )
+    result = await _wire_call(name, arguments)
+
+    assert result.is_error is True
+    assert result.structured_content == _misconfigured(cause)
+    assert result.content[0].text == app._BACKEND_MISCONFIGURED_MESSAGES[cause]
+    _assert_no_operator_detail(result)
+
+
+@pytest.mark.parametrize("cause", list(ConfigurationCause))
+async def test_each_cause_reaches_the_caller_by_name(monkeypatch, cause):
+    monkeypatch.setattr(
+        app,
+        "_with_generation",
+        _raising(lambda: BackendConfigurationError(_OPERATOR_DETAIL, cause=cause)),
+    )
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.structured_content == _misconfigured(cause)
+    _assert_no_operator_detail(result)
+
+
+async def test_untagged_configuration_error_keeps_the_mask(monkeypatch):
+    monkeypatch.setattr(
+        app, "_with_generation", _raising(lambda: BackendConfigurationError(_OPERATOR_DETAIL))
+    )
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.is_error is True
+    assert result.structured_content is None
+    assert result.content[0].text == "Error executing tool check_access"
+    _assert_no_operator_detail(result)
+
+
+def _config_wrapping_outage():
+    try:
+        raise BackendUnavailableError("offline")
+    except BackendUnavailableError as exc:
+        return _chained(
+            BackendConfigurationError(_OPERATOR_DETAIL, cause=ConfigurationCause.BACKEND_CORRUPT),
+            exc,
+        )
+
+
+def _outage_wrapping_config():
+    return _chained(
+        BackendUnavailableError("offline"),
+        BackendConfigurationError(_OPERATOR_DETAIL, cause=ConfigurationCause.BACKEND_CORRUPT),
+    )
+
+
+def _outage_in_implicit_context_of_config():
+    try:
+        try:
+            raise BackendConfigurationError(
+                _OPERATOR_DETAIL, cause=ConfigurationCause.BACKEND_CORRUPT
+            )
+        except BackendConfigurationError:
+            raise BackendUnavailableError("offline")  # noqa: B904 - implicit __context__ under test
+    except BackendUnavailableError as exc:
+        return exc
+
+
+def _chained(outer: BaseException, cause: BaseException) -> BaseException:
+    outer.__cause__ = cause
+    return outer
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [_config_wrapping_outage, _outage_wrapping_config, _outage_in_implicit_context_of_config],
+    ids=["config-from-outage", "outage-from-config", "outage-during-config"],
+)
+async def test_misconfiguration_wins_over_an_outage_in_the_same_chain(monkeypatch, factory):
+    """A false "retryable" sends a consumer into a retry loop; a false
+    "not retryable" only fails loud. Configuration therefore wins."""
+    monkeypatch.setattr(app, "_with_generation", _raising(factory))
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.structured_content == _misconfigured(ConfigurationCause.BACKEND_CORRUPT)
+
+
+async def test_suppressed_configuration_context_is_not_reported(monkeypatch):
+    def suppressed():
+        try:
+            raise BackendConfigurationError(
+                _OPERATOR_DETAIL, cause=ConfigurationCause.BACKEND_CORRUPT
+            )
+        except BackendConfigurationError:
+            return _suppressing(RuntimeError("the real error"))
+
+    monkeypatch.setattr(app, "_with_generation", _raising(suppressed))
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.structured_content is None
+    _assert_no_operator_detail(result)
+
+
+def _suppressing(exc: BaseException) -> BaseException:
+    try:
+        raise exc from None
+    except BaseException as raised:
+        return raised
+
+
+async def test_cyclic_chain_still_classifies(monkeypatch):
+    def cyclic():
+        outer = RuntimeError("outer")
+        inner = BackendConfigurationError(
+            _OPERATOR_DETAIL, cause=ConfigurationCause.BACKEND_CORRUPT
+        )
+        outer.__cause__ = inner
+        inner.__cause__ = outer
+        return outer
+
+    monkeypatch.setattr(app, "_with_generation", _raising(cyclic))
+    result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.structured_content == _misconfigured(ConfigurationCause.BACKEND_CORRUPT)
+
+
+async def test_misconfiguration_logs_one_warning_without_a_traceback(monkeypatch, caplog):
+    monkeypatch.setattr(
+        app,
+        "_with_generation",
+        _raising(
+            lambda: BackendConfigurationError(
+                _OPERATOR_DETAIL + "\nsecond line password=hunter2",
+                cause=ConfigurationCause.BACKEND_CORRUPT,
+            )
+        ),
+    )
+    with caplog.at_level(logging.DEBUG):
+        await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(records) == 1
+    (record,) = records
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    text = record.getMessage()
+    assert "\n" not in text
+    assert "backend_corrupt" in text
+    assert "SENTINEL_LEAK" in text  # the operator's own log keeps the path
+    assert "hunter2" not in text
+
+
+# Producers: each tag is set where the condition is detected, and the
+# producers that are not operator configuration stay untagged.
+
+
+def _native_errors():
+    from neo4j.exceptions import AuthError, ConfigurationError
+
+    return [
+        (AuthError("rejected"), ConfigurationCause.NEO4J_CREDENTIALS_REJECTED),
+        (
+            ClientError._hydrate_neo4j(
+                code="Neo.ClientError.Database.DatabaseNotFound", message="no such db"
+            ),
+            ConfigurationCause.NEO4J_DATABASE_NOT_FOUND,
+        ),
+        (
+            ConfigurationError("Notification filtering is not supported for the Bolt Protocol"),
+            ConfigurationCause.NEO4J_SERVER_TOO_OLD,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("index", range(3), ids=["auth", "database-not-found", "too-old"])
+def test_neo4j_seam_tags_each_configuration_cause(index):
+    native, cause = _native_errors()[index]
+
+    with pytest.raises(BackendConfigurationError) as raised, driver._translating_backend_errors():
+        raise native
+
+    assert raised.value.cause is cause
+
+
+def test_missing_neo4j_extra_is_tagged(monkeypatch):
+    monkeypatch.setitem(sys.modules, "neo4j", None)
+
+    with pytest.raises(BackendConfigurationError) as raised:
+        driver._neo4j()
+
+    assert raised.value.cause is ConfigurationCause.NEO4J_EXTRA_MISSING
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_missing_ladybug_is_tagged(embedded_path, monkeypatch, read_only):
+    embedded_path.parent.mkdir(parents=True, exist_ok=True)
+    embedded_path.write_bytes(b"")
+    monkeypatch.setitem(sys.modules, "ladybug", None)
+    opener = driver.acquire_readonly_session if read_only else driver.session
+
+    with pytest.raises(BackendConfigurationError) as raised, opener():
+        pass
+
+    assert raised.value.cause is ConfigurationCause.LADYBUG_MISSING
+
+
+@pytest.mark.parametrize("read_only", [False, True])
+def test_corrupt_ladybug_file_is_tagged(embedded_path, read_only):
+    pytest.importorskip("ladybug")
+    embedded_path.parent.mkdir(parents=True, exist_ok=True)
+    embedded_path.write_bytes(b"not a database" * 100)
+    opener = driver.acquire_readonly_session if read_only else driver.session
+
+    with pytest.raises(BackendConfigurationError) as raised, opener() as s:
+        s.run("RETURN 1")
+
+    assert raised.value.cause is ConfigurationCause.BACKEND_CORRUPT
+
+
+def _untagged_producers():
+    from toolgraph.graph import schema
+
+    def unknown_backend():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setitem(vars(config), "settings", config.Settings(backend="sqlite"))
+            driver.backend_name()
+
+    def neo4j_driver_on_ladybug():
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setitem(vars(config), "settings", config.Settings(backend="ladybug"))
+            driver.get_driver()
+
+    return {
+        "unknown-backend": unknown_backend,
+        "get-driver-guard": neo4j_driver_on_ladybug,
+        "unsupported-expression": lambda: driver._ladybug_query(
+            "RETURN datetime('2020-01-01') AS x"
+        ),
+        "schema-version": lambda: schema._refuse_version_mismatch(
+            schema.BACKEND_SCHEMA_VERSION + 1
+        ),
+    }
+
+
+@pytest.mark.parametrize("name", list(_untagged_producers()))
+def test_producers_that_are_not_operator_configuration_stay_untagged(name):
+    with pytest.raises(BackendConfigurationError) as raised:
+        _untagged_producers()[name]()
+
+    assert raised.value.cause is None
+
+
+async def test_corrupt_ladybug_file_over_a_real_stdio_server(tmp_path):
+    """The envelope and the one-line log, from a real server process."""
+    pytest.importorskip("ladybug")
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    path = tmp_path / "private" / "SENTINEL_LEAK.lbug"
+    path.parent.mkdir()
+    path.write_bytes(b"not a database" * 100)
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "toolgraph.server.app"],
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "TOOLGRAPH_CONFIG": str(tmp_path / "no-config.json"),
+            "TOOLGRAPH_BACKEND": "ladybug",
+            "TOOLGRAPH_DB_PATH": str(path),
+        },
+    )
+    errlog = tmp_path / "server.err"
+    with errlog.open("w") as err:
+        async with (
+            stdio_client(params, errlog=err) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool("check_access", {"agent": "a", "tool": "s::t"})
+
+    assert result.is_error is True
+    assert result.structured_content == _misconfigured(ConfigurationCause.BACKEND_CORRUPT)
+    assert "SENTINEL_LEAK" not in result.model_dump_json()
+    log = errlog.read_text()
+    assert "backend_corrupt" in log
+    assert "Traceback" not in log
+    assert "unexpected exception" not in log

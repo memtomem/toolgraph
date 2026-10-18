@@ -12,6 +12,7 @@ import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,8 +31,26 @@ _ladybug_database: Any | None = None
 _backend_lock = threading.RLock()
 
 
+class ConfigurationCause(StrEnum):
+    """Operator-fixable backend conditions the MCP server reports by name.
+
+    Only producers an MCP tool call can reach carry one. The MCP server never
+    forwards the exception text, which may hold a path or a status detail; it
+    answers each cause with its own fixed message.
+    """
+
+    NEO4J_EXTRA_MISSING = "neo4j_extra_missing"
+    NEO4J_CREDENTIALS_REJECTED = "neo4j_credentials_rejected"
+    NEO4J_DATABASE_NOT_FOUND = "neo4j_database_not_found"
+    NEO4J_SERVER_TOO_OLD = "neo4j_server_too_old"
+    LADYBUG_MISSING = "ladybug_missing"
+    BACKEND_CORRUPT = "backend_corrupt"
+
+
 class BackendConfigurationError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, cause: ConfigurationCause | None = None) -> None:
+        super().__init__(message)
+        self.cause = cause
 
 
 class BackendUnavailableError(RuntimeError):
@@ -59,7 +78,8 @@ def _neo4j() -> Any:
     except ImportError as exc:
         raise BackendConfigurationError(
             "backend=neo4j requires the 'neo4j' extra: "
-            "install with `uv sync --extra neo4j` or `pip install toolgraph[neo4j]`"
+            "install with `uv sync --extra neo4j` or `pip install toolgraph[neo4j]`",
+            cause=ConfigurationCause.NEO4J_EXTRA_MISSING,
         ) from exc
     return neo4j
 
@@ -100,13 +120,15 @@ def _database_not_found() -> BackendConfigurationError:
     # which redact_text cannot be trusted to scrub (a credential-shaped value
     # with embedded quotes survives it).
     return BackendConfigurationError(
-        "Neo4j database named by NEO4J_DATABASE does not exist on the server"
+        "Neo4j database named by NEO4J_DATABASE does not exist on the server",
+        cause=ConfigurationCause.NEO4J_DATABASE_NOT_FOUND,
     )
 
 
 def _server_too_old() -> BackendConfigurationError:
     return BackendConfigurationError(
-        "Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server"
+        "Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server",
+        cause=ConfigurationCause.NEO4J_SERVER_TOO_OLD,
     )
 
 
@@ -118,7 +140,8 @@ def _credentials_rejected(code: str | None) -> BackendConfigurationError:
     # status code, not the sentence, says which case this is.
     return BackendConfigurationError(
         f"Neo4j refused authentication ({code}); check NEO4J_USER, NEO4J_PASSWORD "
-        "and the account's auth provider"
+        "and the account's auth provider",
+        cause=ConfigurationCause.NEO4J_CREDENTIALS_REJECTED,
     )
 
 
@@ -159,19 +182,18 @@ def _translating_backend_errors() -> Iterator[None]:
         raise
 
 
-def is_backend_unavailable(exc: BaseException) -> bool:
-    """Whether *exc* was caused by a backend outage typed at the driver seam.
+def _visible_chain(exc: BaseException) -> Iterator[BaseException]:
+    """*exc* and the exceptions it was raised from, outermost first.
 
-    MCPServer wraps tool exceptions, so walk the chain. ``__context__`` is
-    followed only when Python did not suppress it: a deliberate
-    ``raise ... from None`` while handling an outage is the author saying the
-    outer error is the real one, and must not be reclassified as retryable.
+    MCPServer wraps tool exceptions, so classifiers walk the chain.
+    ``__context__`` is followed only when Python did not suppress it: a
+    deliberate ``raise ... from None`` is the author saying the outer error is
+    the real one.
     """
     current: BaseException | None = exc
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
-        if isinstance(current, BackendUnavailableError):
-            return True
+        yield current
         seen.add(id(current))
         if current.__cause__ is not None:
             current = current.__cause__
@@ -179,7 +201,27 @@ def is_backend_unavailable(exc: BaseException) -> bool:
             current = current.__context__
         else:
             current = None
-    return False
+
+
+def is_backend_unavailable(exc: BaseException) -> bool:
+    """Whether *exc* was caused by a backend outage typed at the driver seam.
+
+    A suppressed context is not followed, so an outage the author replaced
+    with ``raise ... from None`` is not reclassified as retryable.
+    """
+    return any(isinstance(current, BackendUnavailableError) for current in _visible_chain(exc))
+
+
+def backend_misconfiguration(exc: BaseException) -> BackendConfigurationError | None:
+    """The first ``BackendConfigurationError`` with a cause in *exc*'s chain.
+
+    Untagged configuration errors answer None: they keep the generic
+    handling every unexpected error gets.
+    """
+    for current in _visible_chain(exc):
+        if isinstance(current, BackendConfigurationError) and current.cause is not None:
+            return current
+    return None
 
 
 class _LadybugResult:
@@ -306,7 +348,8 @@ def _not_a_database(path: Path) -> BackendConfigurationError:
     # database, so this must not read as an outage.
     return BackendConfigurationError(
         f"BACKEND_CORRUPT: {path} is not a valid Ladybug database file; "
-        "check file integrity and format"
+        "check file integrity and format",
+        cause=ConfigurationCause.BACKEND_CORRUPT,
     )
 
 
@@ -317,7 +360,9 @@ def _get_ladybug_database() -> Any:
     try:
         import ladybug as lb
     except ImportError as exc:  # environment dependent
-        raise BackendConfigurationError(_LADYBUG_MISSING) from exc
+        raise BackendConfigurationError(
+            _LADYBUG_MISSING, cause=ConfigurationCause.LADYBUG_MISSING
+        ) from exc
     with _backend_lock:
         if _ladybug_database is not None:
             return _ladybug_database
@@ -412,7 +457,9 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
             try:
                 import ladybug as lb
             except ImportError as exc:
-                raise BackendConfigurationError(_LADYBUG_MISSING) from exc
+                raise BackendConfigurationError(
+                    _LADYBUG_MISSING, cause=ConfigurationCause.LADYBUG_MISSING
+                ) from exc
             try:
                 owned = database = lb.Database(path, read_only=True)
             except RuntimeError as exc:

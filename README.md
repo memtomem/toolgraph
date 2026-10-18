@@ -413,7 +413,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
-| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a generic tool error |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a `backend_misconfigured` result |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
@@ -622,11 +622,33 @@ driver-specific text:
 }
 ```
 
-Only this exact discriminator is an availability signal. Validation,
-configuration, query-contract, and unexpected failures keep the normal MCP
-error behavior and should fail loud. Successful CLI output and Python result
-shapes are unchanged; only the exception type surfaced on an outage differs
-(see below).
+Only this exact discriminator is an availability signal.
+
+A backend configuration problem that an operator has to fix returns
+`isError: true` with a second envelope. `retryable` is always `false`:
+waiting does not fix configuration.
+
+```json
+{
+  "error_kind": "backend_misconfigured",
+  "retryable": false,
+  "cause": "neo4j_credentials_rejected",
+  "message": "Toolgraph backend is misconfigured: Neo4j refused authentication; see the server log."
+}
+```
+
+`cause` is one of `neo4j_extra_missing`, `neo4j_credentials_rejected`,
+`neo4j_database_not_found`, `neo4j_server_too_old`, `ladybug_missing` and
+`backend_corrupt`, and each has a fixed `message`. The details the CLI prints,
+such as the database file's path or the Neo4j status code, go to the server
+log as one WARNING record without a traceback, and never into the result. If a failure's cause chain
+holds both an outage and one of these causes, the result is
+`backend_misconfigured`.
+
+Validation, query-contract, and unexpected failures, and configuration
+problems outside that list, keep the normal MCP error behavior and should
+fail loud. Successful CLI output and Python result shapes are unchanged; only
+the exception type surfaced on an outage differs (see below).
 
 Outages are typed once at the backend seam — `driver.session()` and
 `verify_connectivity()` raise `BackendUnavailableError` — so the server layer

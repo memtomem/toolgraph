@@ -26,16 +26,50 @@ from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from toolgraph.config import RuntimeConfigurationError
 from toolgraph.errors import ContractError
 from toolgraph.graph import queries, selector
-from toolgraph.graph.driver import BackendConfigurationError, backend_name, is_backend_unavailable
+from toolgraph.graph.driver import (
+    BackendConfigurationError,
+    ConfigurationCause,
+    backend_misconfiguration,
+    backend_name,
+    is_backend_unavailable,
+)
 from toolgraph.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
 _BACKEND_UNAVAILABLE_MESSAGE = "Toolgraph backend is temporarily unavailable; retry later."
 
+# The only text a caller sees for a misconfigured backend. The exception's own
+# message can name a filesystem path or a status code meant for the operator;
+# that goes to the server log, never on the wire.
+_BACKEND_MISCONFIGURED_MESSAGES = {
+    ConfigurationCause.NEO4J_EXTRA_MISSING: (
+        "Toolgraph backend is misconfigured: backend=neo4j but the neo4j extra is not "
+        "installed; see the server log."
+    ),
+    ConfigurationCause.NEO4J_CREDENTIALS_REJECTED: (
+        "Toolgraph backend is misconfigured: Neo4j refused authentication; see the server log."
+    ),
+    ConfigurationCause.NEO4J_DATABASE_NOT_FOUND: (
+        "Toolgraph backend is misconfigured: the configured Neo4j database does not exist; "
+        "see the server log."
+    ),
+    ConfigurationCause.NEO4J_SERVER_TOO_OLD: (
+        "Toolgraph backend is misconfigured: the Neo4j server is older than 5.7, the minimum "
+        "Toolgraph supports; see the server log."
+    ),
+    ConfigurationCause.LADYBUG_MISSING: (
+        "Toolgraph backend is misconfigured: Ladybug is not importable; see the server log."
+    ),
+    ConfigurationCause.BACKEND_CORRUPT: (
+        "Toolgraph backend is misconfigured: the configured database file is not a valid "
+        "Ladybug database; see the server log."
+    ),
+}
+
 
 class _ToolgraphMCP(MCPServer):
-    """MCPServer with a typed envelope for backend availability only."""
+    """MCPServer with typed envelopes for backend outages and misconfiguration."""
 
     def read_only_tool(self, name: str | None = None, **kwargs: Any):
         """Register a pure-read graph tool: safe to retry, no added side effect.
@@ -93,6 +127,10 @@ class _ToolgraphMCP(MCPServer):
         try:
             return await super().call_tool(name, arguments, context)
         except ToolError as exc:
+            # Checked before outages: waiting does not fix a configuration
+            # problem, so a chain holding both must not read as retryable.
+            if misconfigured := backend_misconfiguration(exc):
+                return self._misconfigured(name, misconfigured)
             if not is_backend_unavailable(exc):
                 # The seam types every outage it covers, so reaching here means
                 # either a contract error or an exception that never passed the
@@ -120,6 +158,26 @@ class _ToolgraphMCP(MCPServer):
                 structured_content=payload,
                 is_error=True,
             )
+
+    @staticmethod
+    def _misconfigured(name: str, exc: BackendConfigurationError) -> CallToolResult:
+        """The ``backend_misconfigured`` envelope for a tagged configuration error.
+
+        An expected operator error, so the log gets one record rather than the
+        SDK's crash-path traceback. ``%r`` keeps embedded newlines out of it.
+        """
+        logger.warning("tool %r: backend misconfigured (%s): %r", name, exc.cause, redact_text(exc))
+        message = _BACKEND_MISCONFIGURED_MESSAGES[exc.cause]
+        return CallToolResult(
+            content=[TextContent(type="text", text=message)],
+            structured_content={
+                "error_kind": "backend_misconfigured",
+                "retryable": False,
+                "cause": str(exc.cause),
+                "message": message,
+            },
+            is_error=True,
+        )
 
 
 mcp = _ToolgraphMCP("toolgraph")
