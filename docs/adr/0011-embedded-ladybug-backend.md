@@ -28,6 +28,13 @@ Ladybug is an optional install extra until the supported platform matrix and
 full conformance suite pass. A second process trying to own the same database
 must fail visibly rather than opening a hidden mixed-reader/writer mode.
 
+*Amended 2026-10-18 by [ADR-0017](0017-ladybug-default-neo4j-optional.md):*
+Ladybug becomes a core dependency and Neo4j a `[neo4j]` extra. When nothing
+names a backend, a command that opens the graph is refused instead of
+falling back to Neo4j, so uninitialized installations no longer "keep their
+Neo4j behavior". The change ships with ADR-0017's steps 2–4; until that
+release, the behavior above still holds.
+
 ## Consequences
 
 - Local users can crawl, ingest, query, and compile without Docker.
