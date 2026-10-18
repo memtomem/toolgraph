@@ -7,10 +7,13 @@ import os
 import pytest
 from testcontainers.neo4j import Neo4jContainer
 
+from tests._helpers import NEO4J_EXPECT_VERSION_ENV, expected_neo4j_version, neo4j_server_version
 from toolgraph import config
 from toolgraph.graph import driver, schema
 
-NEO4J_IMAGE = "neo4j:5.26-community"
+# CI runs the suite at the supported floor by overriding the image; the
+# version check in ``neo4j_container`` proves the override reached Docker.
+NEO4J_IMAGE = os.environ.get("TOOLGRAPH_TEST_NEO4J_IMAGE", "neo4j:5.26-community")
 TEST_PASSWORD = "testpass"
 NO_DOCKER_ENV = "TOOLGRAPH_TEST_NO_DOCKER"
 
@@ -36,7 +39,16 @@ def neo4j_container():
             f"{NO_DOCKER_ENV} is set but this test starts the Neo4j container; "
             "mark it with pytest.mark.neo4j"
         )
+    expected = expected_neo4j_version(os.environ.get(NEO4J_EXPECT_VERSION_ENV))
     with Neo4jContainer(NEO4J_IMAGE, username="neo4j", password=TEST_PASSWORD) as container:
+        if expected is not None:
+            with container.get_driver() as probe:
+                served = neo4j_server_version(probe)
+            if served != expected:
+                pytest.fail(
+                    f"{NEO4J_IMAGE} serves Neo4j {served[0]}.{served[1]}, but "
+                    f"{NEO4J_EXPECT_VERSION_ENV} expects {expected[0]}.{expected[1]}"
+                )
         yield container
 
 
