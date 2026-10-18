@@ -92,7 +92,7 @@ def test_custom_non_url_identifier_falls_through_silently():
         assert normalize_resource_uri("§custom-id§") == "§custom-id§"
 
 
-def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
+def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(backend_graph):
     """IPv6 URL authorities contain ``::``. The resource/tool discriminator
     must only reserve the leading ``server::tool`` shape for tool refs."""
     uri = "http://[::1]/secret"
@@ -119,7 +119,7 @@ def test_ipv6_resource_uri_governed_by_is_not_treated_as_tool_ref(graph):
     assert queries.check_access("planner", "sample::read_url")["verdict"] == "DENY"
 
 
-def test_resource_uri_normalized_across_crawl_and_manifest(graph):
+def test_resource_uri_normalized_across_crawl_and_manifest(backend_graph):
     # Crawl stores the normalized URI ('https://svc.example.com/'); the manifest
     # is authored without the trailing slash. They must resolve to one node.
     loader.load_crawl_result(
@@ -144,7 +144,7 @@ def test_resource_uri_normalized_across_crawl_and_manifest(graph):
     assert queries.check_access("bot", "call")["verdict"] == "DENY"
 
 
-def test_non_hierarchical_uri_treated_as_resource(graph):
+def test_non_hierarchical_uri_treated_as_resource(backend_graph):
     assert is_resource_ref("memory:secret")
     assert is_resource_ref("urn:x")
     assert is_resource_ref("file:/tmp/a")

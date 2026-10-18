@@ -36,8 +36,8 @@ def _seed(graph) -> None:
     )
 
 
-def test_crawled_edges_carry_source_crawled(graph):
-    _seed(graph)
+def test_crawled_edges_carry_source_crawled(backend_graph):
+    _seed(backend_graph)
     with driver.session() as s:
         rec = s.run(
             "MATCH ()-[e:EXPOSES]->(:Tool {name:'read_file'}) "
@@ -48,8 +48,8 @@ def test_crawled_edges_carry_source_crawled(graph):
     assert rec["ev"] == "crawled from stdio:python"
 
 
-def test_authored_grant_defaults_to_operator_asserted(graph):
-    _seed(graph)
+def test_authored_grant_defaults_to_operator_asserted(backend_graph):
+    _seed(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -65,8 +65,8 @@ def test_authored_grant_defaults_to_operator_asserted(graph):
     assert rec["conf"] == "high"
 
 
-def test_explicit_provenance_roundtrips_to_graph(graph):
-    _seed(graph)
+def test_explicit_provenance_roundtrips_to_graph(backend_graph):
+    _seed(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -122,12 +122,12 @@ def test_explicit_provenance_roundtrips_to_graph(graph):
     assert gov_edge["ev"] == "ops/policy/pii-2026Q2.md"
 
 
-def test_bare_string_governed_by_still_works(graph):
+def test_bare_string_governed_by_still_works(backend_graph):
     """Backward compat: ``governed_by: {uri: [policy_id_str]}`` still parses,
     lifts to GovernedByBinding(policy=str, provenance=None), and writes a
     GOVERNED_BY edge with default source/confidence and null evidence.
     """
-    _seed(graph)
+    _seed(backend_graph)
     assert (
         ingest_governance(
             Governance(
@@ -149,11 +149,11 @@ def test_bare_string_governed_by_still_works(graph):
     assert gov_edge["ev"] is None
 
 
-def test_policy_provenance_surfaces_on_deny_evidence_when_authored(graph):
+def test_policy_provenance_surfaces_on_deny_evidence_when_authored(backend_graph):
     """When a GOVERNED_BY binding carries evidence, deny_evidence rows include
     a ``policy_provenance`` sub-dict. Default operator_asserted/no-evidence
     bindings DO NOT add the key (kept clean to avoid noise)."""
-    _seed(graph)
+    _seed(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -204,8 +204,8 @@ def test_policy_provenance_surfaces_on_deny_evidence_when_authored(graph):
     assert "policy_provenance" not in ev
 
 
-def test_query_results_include_provenance(graph):
-    _seed(graph)
+def test_query_results_include_provenance(backend_graph):
+    _seed(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],

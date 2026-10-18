@@ -52,7 +52,7 @@ async def test_crawl_stdio_matches_advertised_capabilities(stdio_spec):
     assert "path" in read_tool.input_schema["properties"]
 
 
-async def test_crawl_then_load_creates_edges(graph, stdio_spec):
+async def test_crawl_then_load_creates_edges(backend_graph, stdio_spec):
     result = await crawl_server(stdio_spec)
     loader.load_crawl_result(result)
 
