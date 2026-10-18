@@ -90,6 +90,13 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- README's exit-code section no longer gives a rejected Neo4j password as an
+  error that ends in a Python traceback; since the authentication change
+  above it prints one `ERROR:` line. The example is now `drift` against a
+  `NEO4J_DATABASE` the server does not have, and the exit-code table lists
+  rejected credentials and a server older than 5.7 among the one-line
+  errors, with the `init` and `serve` exceptions spelled out for every class.
+
 - Neo4j no longer floods stderr with driver notifications. Every query that
   named a label, property or relationship type the graph did not hold yet
   logged a `Received notification from DBMS server` line, so a fresh
