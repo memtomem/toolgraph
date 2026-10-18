@@ -12,9 +12,11 @@ import errno
 import os
 import stat
 import warnings
+from types import SimpleNamespace
 
 import pytest
-from neo4j.exceptions import AuthError, ClientError, Neo4jError
+from neo4j._sync.io._bolt import Bolt
+from neo4j.exceptions import AuthError, ClientError, ConfigurationError, Neo4jError
 from typer.testing import CliRunner
 
 from toolgraph import cli
@@ -236,6 +238,63 @@ def test_other_client_errors_pass_the_seam_untouched(neo4j_failing_with, code):
     neo4j_failing_with(native)
 
     with pytest.raises(ClientError) as info, driver_mod.session() as current:
+        current.run("RETURN 1")
+
+    assert info.value is native
+
+
+def _too_old_server() -> ConfigurationError:
+    """The error neo4j 6.x raises on a Bolt 4.4 connection asked to filter
+    notifications, produced by the driver's own check so its text stays real."""
+    connection = SimpleNamespace(
+        supports_notification_filtering=False,
+        PROTOCOL_VERSION=(4, 4),
+        server_info=SimpleNamespace(agent="Neo4j/4.4.48"),
+    )
+    try:
+        Bolt.assert_notification_filtering_support(connection)
+    except ConfigurationError as exc:
+        return exc
+    raise AssertionError("the driver accepted notification filtering on Bolt 4.4")
+
+
+@pytest.mark.parametrize("argv", [["check"], ["drift"]], ids=["connectivity", "mid-query"])
+def test_server_older_than_the_minimum_is_one_error_line(neo4j_failing_with, argv):
+    neo4j_failing_with(_too_old_server())
+
+    result = CliRunner().invoke(cli.app, argv)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [
+        "ERROR: Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server"
+    ]
+
+
+def test_seam_types_a_server_older_than_the_minimum_as_configuration(neo4j_failing_with):
+    native = _too_old_server()
+    neo4j_failing_with(native)
+
+    with pytest.raises(BackendConfigurationError) as info, driver_mod.session() as current:
+        current.run("RETURN 1")
+
+    assert info.value.__cause__ is native
+    assert not is_backend_unavailable(info.value)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "User switching is not supported for Bolt Protocol 4.4.",
+        # neo4j 6.4's refusal over the Query API, whatever the server version.
+        "Notification filtering is not supported via the Query API/HTTP.",
+    ],
+)
+def test_other_driver_configuration_errors_pass_the_seam_untouched(neo4j_failing_with, message):
+    native = ConfigurationError(message)
+    neo4j_failing_with(native)
+
+    with pytest.raises(ConfigurationError) as info, driver_mod.session() as current:
         current.run("RETURN 1")
 
     assert info.value is native

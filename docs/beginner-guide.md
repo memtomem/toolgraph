@@ -173,8 +173,8 @@ graph state; failed compilation leaves the previous bundle intact.
 
 ## Shared or fleet operation
 
-Ladybug is the default single-process local backend. Use Neo4j when multiple
-processes or operators need a shared graph. This part needs the repository:
+Ladybug is the default single-process local backend. Use Neo4j 5.7 or later
+when multiple processes or operators need a shared graph. This part needs the repository:
 `docker-compose.yml` and `.env.example` ship with the clone, not with the
 package or the generated quickstart.
 

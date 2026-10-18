@@ -167,7 +167,7 @@ toolgraph blast-radius draft-publish-deny
 ## 팀·공유 환경
 
 Ladybug는 로컬 단일 프로세스 기본값입니다. 여러 프로세스나 운영자가
-그래프를 공유해야 할 때 Neo4j를 사용합니다. 이 부분은 저장소가 필요합니다.
+그래프를 공유해야 할 때 Neo4j 5.7 이상을 사용합니다. 이 부분은 저장소가 필요합니다.
 `docker-compose.yml`과 `.env.example`은 패키지나 생성된 quickstart가 아니라
 clone에만 들어 있습니다.
 
