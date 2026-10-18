@@ -26,7 +26,7 @@ from toolgraph.models import (
 
 
 @pytest.fixture
-def scenario(graph):
+def scenario(backend_graph):
     loader.load_crawl_result(
         CrawlResult(
             server_name="sample",
@@ -101,7 +101,7 @@ def test_blast_radius_policy(scenario):
     assert agents == {"planner", "support-bot"}
 
 
-def test_blast_radius_policy_omits_governed_resource_with_no_tool(graph):
+def test_blast_radius_policy_omits_governed_resource_with_no_tool(backend_graph):
     """A policy can govern a resource before any tool READS/WRITES it. That
     should keep found=True for the policy, but it is not an impacted tool row."""
     ingest_governance(
@@ -120,11 +120,11 @@ def test_blast_radius_policy_omits_governed_resource_with_no_tool(graph):
     }
 
 
-def test_check_access_returns_agent_not_found_for_unknown_agent(graph):
+def test_check_access_returns_agent_not_found_for_unknown_agent(backend_graph):
     """Typo'd agent must NOT collapse into NOT_GRANTED — that hides bugs.
     An operator iterating on names needs the distinct verdict to tell
     'this agent has no grant on this tool' from 'this agent doesn't exist'."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     res = queries.check_access("planer", "read_file")  # typo
     assert res["verdict"] == "AGENT_NOT_FOUND"
     assert res["agent_found"] is False
@@ -134,8 +134,8 @@ def test_check_access_returns_agent_not_found_for_unknown_agent(graph):
     assert res["verdict"] == "DENY"
 
 
-def test_blast_radius_resource_marks_found_false_for_typo(graph):
-    seed_basic(graph)
+def test_blast_radius_resource_marks_found_false_for_typo(backend_graph):
+    seed_basic(backend_graph)
     res = queries.blast_radius("file:///does/not/exist")
     assert res["kind"] == "resource"
     assert res["found"] is False
@@ -147,8 +147,8 @@ def test_blast_radius_resource_marks_found_false_for_typo(graph):
     assert res["impacted"], "should report planner's reach to CSV"
 
 
-def test_blast_radius_policy_marks_found_false_for_typo(graph):
-    seed_basic(graph)
+def test_blast_radius_policy_marks_found_false_for_typo(backend_graph):
+    seed_basic(backend_graph)
     res = queries.blast_radius("no-such-policy")
     assert res["kind"] == "policy"
     assert res["found"] is False
@@ -158,11 +158,11 @@ def test_blast_radius_policy_marks_found_false_for_typo(graph):
     assert res["found"] is True
 
 
-def test_check_access_agent_found_is_set_on_every_branch(graph):
+def test_check_access_agent_found_is_set_on_every_branch(backend_graph):
     """Callers using ``result['agent_found']`` shouldn't KeyError on the
     success branches just because the field was originally added only for
     the failure case."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     # DENY branch
     res = queries.check_access("planner", "read_file")
     assert res["verdict"] == "DENY"
@@ -193,7 +193,7 @@ def test_check_access_agent_found_is_set_on_every_branch(graph):
     assert res["agent_found"] is False
 
 
-def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(graph):
+def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(backend_graph):
     """is_resource_ref is purely lexical: a policy id like 'urn:secret' looks
     URI-shaped. If no Resource matches the URI, blast_radius now retries the
     same string as a Policy id before declaring not-found."""
@@ -221,19 +221,19 @@ def test_blast_radius_falls_back_to_policy_for_uri_shaped_policy_id(graph):
     assert any(r["via"] == "tool" for r in res["impacted"])
 
 
-def test_check_access_agent_not_found_carries_found_none(graph):
+def test_check_access_agent_not_found_carries_found_none(backend_graph):
     """README promises every response carries agent_found AND found. For
     AGENT_NOT_FOUND the tool lookup didn't run, so `found` is None (not
     False — hard-coding False would lie about a tool that actually exists).
     Three-state contract; callers should use result.get('found')."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     res = queries.check_access("planer", "read_file")
     assert res["verdict"] == "AGENT_NOT_FOUND"
     assert res["agent_found"] is False
     assert res["found"] is None
 
 
-def test_ambiguous_bare_name_in_query(graph):
+def test_ambiguous_bare_name_in_query(backend_graph):
     load_crawl("alpha", ["read_file"])
     load_crawl("beta", ["read_file"])
     # AGENT_NOT_FOUND is checked before tool resolution (outer concern), so we
@@ -244,7 +244,7 @@ def test_ambiguous_bare_name_in_query(graph):
     assert sorted(res["candidates"]) == ["alpha::read_file", "beta::read_file"]
 
 
-def test_tool_level_deny_is_honored(graph):
+def test_tool_level_deny_is_honored(backend_graph):
     load_crawl("sample", ["dangerous_tool"])
     ingest_governance(
         Governance(
@@ -263,7 +263,7 @@ def test_tool_level_deny_is_honored(graph):
     assert unsafe[0]["via"] == "tool"
 
 
-def test_blast_radius_includes_tool_without_caller(graph):
+def test_blast_radius_includes_tool_without_caller(backend_graph):
     load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
@@ -274,7 +274,7 @@ def test_blast_radius_includes_tool_without_caller(graph):
     assert any(r["tool"] == "leak" and r["agent"] is None for r in rows)
 
 
-def test_blast_radius_policy_rows_have_path_key(graph):
+def test_blast_radius_policy_rows_have_path_key(backend_graph):
     load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
@@ -287,7 +287,7 @@ def test_blast_radius_policy_rows_have_path_key(graph):
     assert impacted and all("path" in r for r in impacted)
 
 
-def test_policy_blast_includes_ungranted_tool(graph):
+def test_policy_blast_includes_ungranted_tool(backend_graph):
     load_crawl("sample", ["leak"])
     ingest_governance(
         Governance(
