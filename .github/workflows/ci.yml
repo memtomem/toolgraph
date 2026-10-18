@@ -51,6 +51,28 @@ jobs:
         run: uv run python -c "import ladybug"
       - name: Run the tests against real Neo4j
         run: uv run pytest -q -m neo4j
+        env:
+          TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION: "5.26"
+
+  # Neo4j 5.7 is the minimum server (Bolt 5.2 notification filtering), while
+  # test-neo4j runs 5.26. This job runs the same suite on 5.7, and the script
+  # checks that 5.6 is refused with the one documented line. The expected
+  # version is declared apart from the image so an ignored override fails.
+  minimum-neo4j:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - name: Run the tests against the minimum Neo4j server
+        run: uv run pytest -q -m neo4j
+        env:
+          TOOLGRAPH_TEST_NEO4J_IMAGE: neo4j:5.7-community
+          TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION: "5.7"
+      - name: Refuse a server below the minimum
+        run: uv run python scripts/verify_neo4j_floor.py
 
   artifact-smoke:
     strategy:
@@ -271,6 +293,7 @@ jobs:
       - test-neo4j
       - artifact-smoke
       - minimum-mcp
+      - minimum-neo4j
       - no-extras
       - notebooks
       - audit-runtime

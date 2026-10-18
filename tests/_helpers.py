@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from importlib.metadata import version
 from pathlib import Path
 
@@ -31,6 +32,43 @@ CONTROL_PLAN_FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
 # older click mixes stderr into stdout by default, so purity can't be
 # asserted there.
 CLICK_SPLITS_STREAMS = tuple(int(p) for p in version("click").split(".")[:2]) >= (8, 2)
+
+
+NEO4J_EXPECT_VERSION_ENV = "TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION"
+
+
+def expected_neo4j_version(raw: str | None) -> tuple[int, int] | None:
+    """The server version CI declares for the Neo4j container, as (major, minor).
+
+    It is read apart from the image tag on purpose: an expectation derived from
+    the tag agrees with whatever image actually started, so an ignored override
+    would pass. Only an absent variable disables the check; any value that is
+    not ``MAJOR.MINOR`` fails, so a typo cannot switch the guard off.
+    """
+    if raw is None:
+        return None
+    match = re.fullmatch(r"(\d+)\.(\d+)", raw)
+    if match is None:
+        raise ValueError(f"{NEO4J_EXPECT_VERSION_ENV} must be MAJOR.MINOR, got {raw!r}")
+    return int(match[1]), int(match[2])
+
+
+def neo4j_server_version(neo4j_driver) -> tuple[int, int]:
+    """(major, minor) of the Neo4j Kernel behind a raw driver.
+
+    Pass the testcontainers driver, not Toolgraph's: Toolgraph asks for
+    notification filtering, which a server below the floor refuses.
+    """
+    records, _, _ = neo4j_driver.execute_query(
+        "CALL dbms.components() YIELD name, versions WHERE name = 'Neo4j Kernel' RETURN versions"
+    )
+    if len(records) != 1:
+        raise AssertionError(f"expected one Neo4j Kernel component, got {len(records)}")
+    served = records[0]["versions"][0]
+    match = re.match(r"(\d+)\.(\d+)(?:\.|$)", served)
+    if match is None:
+        raise AssertionError(f"unrecognised Neo4j version {served!r}")
+    return int(match[1]), int(match[2])
 
 
 def seed_basic(graph) -> None:
