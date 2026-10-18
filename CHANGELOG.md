@@ -24,6 +24,14 @@ All notable changes to Toolgraph are documented here.
   `ClientError` for expired credentials or the authentication rate limit)
   now gets `toolgraph.graph.driver.BackendConfigurationError`, with the
   driver error as `__cause__`.
+- Neo4j 5.7 is now the minimum server version. Toolgraph asks the server
+  not to send `UNRECOGNIZED` notifications, which needs Bolt 5.2; against an
+  older server every command that opens the graph exits 1 with `Neo4j
+  server is older than 5.7, the minimum Toolgraph supports; upgrade the
+  server` (measured on 5.6 and 4.4). Before this change the README
+  walkthrough ran on 5.6, with notification noise, and on 4.4 seven of its
+  eighteen commands already failed with Cypher syntax errors. Library
+  callers get `BackendConfigurationError` from the same seams as above.
 
 ### Added
 
@@ -81,6 +89,15 @@ All notable changes to Toolgraph are documented here.
   line the policy was written for.
 
 ### Fixed
+
+- Neo4j no longer floods stderr with driver notifications. Every query that
+  named a label, property or relationship type the graph did not hold yet
+  logged a `Received notification from DBMS server` line, so a fresh
+  database printed eight before `doctor`'s diagnosis and a README walkthrough
+  printed 92. The driver now disables the `UNRECOGNIZED` classification.
+  Warning-level notifications, such as deprecations, still reach stderr;
+  performance notifications are still logged at INFO. Requires Neo4j 5.7
+  (see Upgrading).
 
 - `.env.example` no longer presents `TOOLGRAPH_SERVERS=servers.yaml` and
   `TOOLGRAPH_GOVERNANCE=governance.yaml` as configured paths. Those values

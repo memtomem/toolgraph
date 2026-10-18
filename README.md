@@ -145,9 +145,11 @@ For `ingest-manifest --dry-run --json` and `doctor`, see the
 including Neo4j catalog permissions and Ladybug session serialization.
 
 Ladybug is the local single-process backend. Toolgraph commands own the DB
-sequentially; gateways read only the generated JSON bundle. Use Neo4j for a
-shared service or multiple concurrent processes. The beginner guides explain
-the decision output and the memtomem-stm handoff.
+sequentially; gateways read only the generated JSON bundle. Use Neo4j 5.7 or
+later for a shared service or multiple concurrent processes; against an older
+server every command that opens the graph stops with `Neo4j server is older
+than 5.7, the minimum Toolgraph supports; upgrade the server`. The beginner guides explain the
+decision output and the memtomem-stm handoff.
 
 For contributors and larger shared/fleet demos, clone the repository and run:
 
@@ -637,10 +639,11 @@ calling `driver.session()` or `verify_connectivity()` directly now sees
 `BackendLockedError` subclass) instead; the original driver exception is
 preserved as `__cause__`. Neo4j authentication failures (`AuthError` and its
 subclasses, plus the plain `ClientError` codes `Security.CredentialsExpired`
-and `Security.AuthenticationRateLimit`) raise `BackendConfigurationError`
-from `driver.session()`, `acquire_readonly_session()` and
-`verify_connectivity()`, again with the driver error as `__cause__`; it is
-not an outage and not retryable. Other configuration and Cypher/client
+and `Security.AuthenticationRateLimit`) and a server older than Neo4j 5.7
+(the driver's notification-filtering `ConfigurationError`) raise
+`BackendConfigurationError` from `driver.session()`,
+`acquire_readonly_session()` and `verify_connectivity()`, again with the
+driver error as `__cause__`; it is not an outage and not retryable. Other configuration and Cypher/client
 errors are untouched, as is the still-raw `get_driver()` escape hatch. Note
 that `is_backend_unavailable()` narrowed with it: it classifies only
 `BackendUnavailableError`, so exceptions raised straight out of `get_driver()`

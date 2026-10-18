@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from neo4j import NotificationClassification
 from typer.testing import CliRunner
 
 from toolgraph import cli, config
@@ -237,6 +239,27 @@ def test_neo4j_read_only_session_rejects_writes(graph):
     with driver.session() as s:
         count = s.run("MATCH (a:Agent {id: 'should-not-exist'}) RETURN count(a) AS n").single()["n"]
     assert count == 0
+
+
+def test_neo4j_does_not_report_names_the_graph_does_not_hold(graph, caplog):
+    caplog.set_level(logging.INFO, logger="neo4j.notifications")
+
+    def classifications(query: str) -> list[NotificationClassification]:
+        with driver.session() as s:
+            summary = s.run(query).consume()
+        return [g.classification for g in summary.gql_status_objects if g.is_notification]
+
+    # The server itself leaves these out, not only the log.
+    assert classifications("MATCH (n:NoSuchLabel) RETURN n.no_such_property AS x") == []
+    assert caplog.records == []
+
+    # Other classifications still arrive: id() is deprecated on Neo4j 5.
+    assert classifications("MATCH (n) WHERE id(n) = -1 RETURN n") == [
+        NotificationClassification.DEPRECATION
+    ]
+    assert [(r.levelname, r.args[0].notification.classification) for r in caplog.records] == [
+        ("WARNING", NotificationClassification.DEPRECATION)
+    ]
 
 
 @pytest.mark.parametrize("env_value", ["LADYBUG", " ladybug ", "Ladybug"])

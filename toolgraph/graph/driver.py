@@ -14,10 +14,17 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from neo4j import READ_ACCESS, Driver, GraphDatabase, Session
+from neo4j import (
+    READ_ACCESS,
+    Driver,
+    GraphDatabase,
+    NotificationDisabledClassification,
+    Session,
+)
 from neo4j.exceptions import (
     AuthError,
     ClientError,
+    ConfigurationError,
     ConnectionAcquisitionTimeoutError,
     DatabaseUnavailable,
     ServiceUnavailable,
@@ -71,6 +78,26 @@ _NATIVE_AUTH_CLIENT_CODES = frozenset(
 )
 
 
+# Toolgraph's queries name labels, properties and relationship types that a
+# graph holds only once something was crawled or authored (an empty database,
+# no expected exceptions). The server reports each as an UNRECOGNIZED
+# notification and the driver logs it at WARNING, which the CLI would print
+# to stderr: 92 lines across a README walkthrough on Neo4j 5.26. Other
+# classifications (deprecation, performance) still arrive.
+_DISABLED_NOTIFICATIONS = [NotificationDisabledClassification.UNRECOGNIZED]
+
+# Notification filtering needs Bolt 5.2 (Neo4j 5.7). Older servers fail every
+# query with this driver message, so it is the minimum server version. The
+# Query API/HTTP refusal reads differently and is not a server-version problem.
+_NO_NOTIFICATION_FILTERING = "Notification filtering is not supported for the Bolt "
+
+
+def _server_too_old() -> BackendConfigurationError:
+    return BackendConfigurationError(
+        "Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server"
+    )
+
+
 def _credentials_rejected(code: str | None) -> BackendConfigurationError:
     # Built from the server's status code and fixed text only. The driver's
     # message is never echoed, so no credential or URI can reach the output.
@@ -88,9 +115,10 @@ def _translating_backend_errors() -> Iterator[None]:
     """Type native backend failures at the driver seam.
 
     The outage taxonomy becomes ``BackendUnavailableError`` (retryable).
-    Rejected credentials become ``BackendConfigurationError``: loud and not
-    retryable, but one diagnostic line rather than a native traceback. Every
-    other client error (Cypher, permissions) passes through untouched.
+    Rejected credentials and a server older than the supported minimum become
+    ``BackendConfigurationError``: loud and not retryable, but one diagnostic
+    line rather than a native traceback. Every other client error (Cypher,
+    permissions) passes through untouched.
     """
     try:
         yield
@@ -101,6 +129,10 @@ def _translating_backend_errors() -> Iterator[None]:
     except ClientError as exc:
         if exc.code in _NATIVE_AUTH_CLIENT_CODES:
             raise _credentials_rejected(exc.code) from exc
+        raise
+    except ConfigurationError as exc:
+        if str(exc).startswith(_NO_NOTIFICATION_FILTERING):
+            raise _server_too_old() from exc
         raise
 
 
@@ -226,6 +258,7 @@ def get_driver() -> Driver:
                 _driver = GraphDatabase.driver(
                     config.settings.neo4j_uri,
                     auth=(config.settings.neo4j_user, config.settings.neo4j_password),
+                    notifications_disabled_classifications=_DISABLED_NOTIFICATIONS,
                 )
     return _driver
 
