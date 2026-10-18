@@ -54,8 +54,8 @@ def _gov(*exceptions: ExpectedException) -> Governance:
     )
 
 
-def test_no_exceptions_means_every_reach_is_violation(graph):
-    _seed(graph)
+def test_no_exceptions_means_every_reach_is_violation(backend_graph):
+    _seed(backend_graph)
     assert ingest_governance(_gov()).warnings == []
     rows = queries.unsafe_callable_tools("planner")
     assert {(r["tool"], r["classification"]) for r in rows} == {
@@ -64,8 +64,8 @@ def test_no_exceptions_means_every_reach_is_violation(graph):
     }
 
 
-def test_matching_exception_marks_row_authorized_but_governed(graph):
-    _seed(graph)
+def test_matching_exception_marks_row_authorized_but_governed(backend_graph):
+    _seed(backend_graph)
     assert (
         ingest_governance(
             _gov(
@@ -88,8 +88,8 @@ def test_matching_exception_marks_row_authorized_but_governed(graph):
     assert "exception_reason" not in by_tool["write_file"]
 
 
-def test_exception_with_no_resource_covers_every_resource(graph):
-    _seed(graph)
+def test_exception_with_no_resource_covers_every_resource(backend_graph):
+    _seed(backend_graph)
     assert (
         ingest_governance(
             _gov(
@@ -108,8 +108,8 @@ def test_exception_with_no_resource_covers_every_resource(graph):
     assert by_tool["write_file"]["classification"] == "authorized_but_governed"
 
 
-def test_check_access_evidence_carries_classification_when_agent_known(graph):
-    _seed(graph)
+def test_check_access_evidence_carries_classification_when_agent_known(backend_graph):
+    _seed(backend_graph)
     assert (
         ingest_governance(
             _gov(
@@ -136,8 +136,8 @@ def test_check_access_evidence_carries_classification_when_agent_known(graph):
     assert ev["classification"] == "violation"
 
 
-def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
-    _seed(graph)
+def test_unknown_policy_or_tool_in_exception_rejects_manifest(backend_graph):
+    _seed(backend_graph)
     warnings = ingest_governance(
         _gov(ExpectedException(agent="planner", tool="sample::nope", policy="pii-deny", reason="x"))
     ).warnings
@@ -152,12 +152,12 @@ def test_unknown_policy_or_tool_in_exception_rejects_manifest(graph):
     assert any("no-such-policy" in w for w in warnings)
 
 
-def test_exception_with_no_reason_still_classifies_authorized(graph):
+def test_exception_with_no_reason_still_classifies_authorized(backend_graph):
     """Codex PR #1 review: classification was checking exc.reason for non-null
     as the match signal. ExpectedException.reason is OPTIONAL — a no-reason
     exception is valid and must still classify the row as
     authorized_but_governed. The match signal is now `exc IS NOT NULL`."""
-    _seed(graph)
+    _seed(backend_graph)
     assert (
         ingest_governance(
             _gov(
@@ -188,10 +188,10 @@ def test_exception_with_no_reason_still_classifies_authorized(graph):
     assert res["verdict"] == "DENY"
 
 
-def test_check_access_carries_all_authorized_signal(graph):
+def test_check_access_carries_all_authorized_signal(backend_graph):
     """When verdict=DENY, callers need a single signal for 'all paths are
     by-design'. Without it they'd have to aggregate per-row classification."""
-    _seed(graph)
+    _seed(backend_graph)
     # Every reach for planner is covered by an exception -> all_authorized=True
     assert (
         ingest_governance(
@@ -310,10 +310,10 @@ def _governance_with_both_exceptions() -> Governance:
     )
 
 
-def test_exception_with_unknown_agent_warns(graph):
+def test_exception_with_unknown_agent_warns(backend_graph):
     """A typo'd agent in expected_exceptions can't classify any row —
     surface it at ingest, not at audit time."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -336,10 +336,10 @@ def test_exception_with_unknown_agent_warns(graph):
     assert any("planer" in w and "not declared" in w for w in warnings)
 
 
-def test_exception_narrowed_to_missing_resource_warns(graph):
+def test_exception_narrowed_to_missing_resource_warns(backend_graph):
     """If the (tool, resource) combination isn't authored in this manifest's
     data_access, the exception can't match any deny_evidence row — warn."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -362,11 +362,11 @@ def test_exception_narrowed_to_missing_resource_warns(graph):
     assert any("file:///wrong" in w and "no READS/WRITES" in w for w in warnings)
 
 
-def test_exception_with_no_grant_for_tool_warns(graph):
+def test_exception_with_no_grant_for_tool_warns(backend_graph):
     """Codex R3 critique: an exception that names an agent without a CAN_CALL
     grant on the tool is dead-on-arrival — no unsafe-tools row can ever
     match it. Warn at ingest, not at audit."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner", "loner"],  # loner declared, but no grants
@@ -389,12 +389,12 @@ def test_exception_with_no_grant_for_tool_warns(graph):
     assert any("loner" in w and "no CAN_CALL grant" in w for w in warnings)
 
 
-def test_exception_with_wrong_policy_warns(graph):
+def test_exception_with_wrong_policy_warns(backend_graph):
     """Codex R3 critique: when exc.resource is set but the resource is NOT
     governed_by exc.policy, the exception can never match. Previous round
     only checked (tool, resource) ∈ data_access — missing the (resource,
     policy) binding check."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -420,11 +420,11 @@ def test_exception_with_wrong_policy_warns(graph):
     assert any("other-deny" in w and "not governed_by" in w for w in warnings)
 
 
-def test_wildcard_exception_with_no_reachable_path_warns(graph):
+def test_wildcard_exception_with_no_reachable_path_warns(backend_graph):
     """Wildcard exception (resource=None) must still verify the tool reaches
     the policy via SOME path — either a touched resource governed by the
     policy, or tool-level GOVERNED_BY."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -450,10 +450,10 @@ def test_wildcard_exception_with_no_reachable_path_warns(graph):
     assert any("dead-on-arrival" in w and "unrelated-deny" in w for w in warnings)
 
 
-def test_exception_against_allow_policy_warns(graph):
+def test_exception_against_allow_policy_warns(backend_graph):
     """Codex R3 final critique: classification only joins to DENY policies,
     so an exception against an ALLOW policy can never fire. Reject at ingest."""
-    seed_basic(graph)
+    seed_basic(backend_graph)
     warnings = ingest_governance(
         Governance(
             agents=["planner"],
@@ -479,8 +479,8 @@ def test_exception_against_allow_policy_warns(graph):
     assert any("legacy-allow" in w and "ALLOW" in w for w in warnings)
 
 
-def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
-    crawl_sample(graph)
+def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(backend_graph):
+    crawl_sample(backend_graph)
     assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     rows = queries.unsafe_callable_tools("planner")
@@ -491,8 +491,8 @@ def test_unsafe_tools_one_row_when_wildcard_and_specific_both_match(graph):
     assert row["exception_reason"] == "specific: DPA ticket COMP-42"
 
 
-def test_check_access_one_deny_row_when_wildcard_and_specific_both_match(graph):
-    crawl_sample(graph)
+def test_check_access_one_deny_row_when_wildcard_and_specific_both_match(backend_graph):
+    crawl_sample(backend_graph)
     assert ingest_governance(_governance_with_both_exceptions()).warnings == []
 
     res = queries.check_access("planner", "read_file")

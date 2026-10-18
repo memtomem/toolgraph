@@ -174,7 +174,7 @@ CANDIDATES = [
 ]
 
 
-def test_reject_reason_vocabulary_is_frozen(graph):
+def test_reject_reason_vocabulary_is_frozen(backend_graph):
     """Both the published strict reject set and the reasons actually emitted
     are exactly the seven literals the consumer maps on."""
     _seed()
@@ -183,23 +183,25 @@ def test_reject_reason_vocabulary_is_frozen(graph):
     assert {row["reason"] for row in got["rejected"]} == REASONS
 
 
-def test_responses_carry_the_keys_the_consumer_parses(graph):
+def test_responses_carry_the_keys_the_consumer_parses(backend_graph):
     """Required keys only — additive fields are allowed, absence is breaking."""
     _seed()
     filtered = selector.eligible_tools("stm-proxy", CANDIDATES, profile="strict")
     assert {"agent", "agent_found", "profile", "eligible", "rejected"} <= set(filtered)
     assert filtered["agent"] == "stm-proxy"
     assert filtered["profile"] == "strict"
+    assert filtered["agent_found"] is True and filtered["rejected"]
     for row in filtered["rejected"]:
         assert {"candidate", "reason"} <= set(row)
 
     ranked = selector.rank_features("stm-proxy", CANDIDATES)
     assert {"agent", "agent_found", "features"} <= set(ranked)
+    assert ranked["agent_found"] is True and len(ranked["features"]) == len(CANDIDATES)
     for row in ranked["features"]:
         assert {"candidate", "risk_score"} <= set(row)
 
 
-def test_eligible_preserves_candidate_input_order(graph):
+def test_eligible_preserves_candidate_input_order(backend_graph):
     """The consumer relies on input order — the eligible list is positional
     output, never re-sorted. Under review, governed + unmapped pass too, so
     three tools prove the ordering."""
@@ -209,7 +211,7 @@ def test_eligible_preserves_candidate_input_order(graph):
     assert got["eligible"] == candidates
 
 
-def test_agent_not_found_is_a_structured_abort(graph):
+def test_agent_not_found_is_a_structured_abort(backend_graph):
     """agent_found=false with empty collections is the consumer's abort
     signal (on_agent_not_found knob) — not an empty catalog, never an error."""
     _seed()
@@ -223,7 +225,7 @@ def test_agent_not_found_is_a_structured_abort(graph):
     assert ranked["features"] == []
 
 
-def test_deny_rows_carry_paths_and_ambiguous_rows_carry_candidates(graph):
+def test_deny_rows_carry_paths_and_ambiguous_rows_carry_candidates(backend_graph):
     _seed()
     got = selector.eligible_tools("stm-proxy", CANDIDATES, profile="strict")
     by_reason = {row["reason"]: row for row in got["rejected"]}
@@ -236,7 +238,7 @@ def test_deny_rows_carry_paths_and_ambiguous_rows_carry_candidates(graph):
     assert ambiguous == ["alpha::read_file", "beta::read_file"]
 
 
-def test_mcp_surface_stamps_graph_generation(graph):
+def test_mcp_surface_stamps_graph_generation(backend_graph):
     """The consumer keys its consult cache on the integer graph_generation
     stamped by the MCP wrappers (ADR-0004). The full protocol round-trip is
     covered by test_server.py::test_mcp_selector_surface_mirrors_direct_query;

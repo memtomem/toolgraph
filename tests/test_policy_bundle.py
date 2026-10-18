@@ -322,7 +322,7 @@ def test_compile_failure_preserves_existing_output(monkeypatch, tmp_path):
     assert output.read_text() == "old\n"
 
 
-def test_real_graph_bundle_carries_ingested_governance_digest(graph):
+def test_real_graph_bundle_carries_ingested_governance_digest(backend_graph):
     loader.load_crawl_result(
         CrawlResult(
             server_name="alpha",

@@ -29,7 +29,7 @@ def _seed() -> None:
     assert report.applied
 
 
-def test_real_graph_allow_warn_and_unknown_identity(graph):
+def test_real_graph_allow_warn_and_unknown_identity(backend_graph):
     _seed()
     allow = build_preflight(
         agent="codex",
@@ -65,7 +65,7 @@ def test_real_graph_allow_warn_and_unknown_identity(graph):
     assert unknown["eligible"] == unknown["rejected"] == []
 
 
-def test_real_graph_same_generation_is_deterministic_except_created_at(graph):
+def test_real_graph_same_generation_is_deterministic_except_created_at(backend_graph):
     _seed()
     kwargs = dict(
         agent="codex",

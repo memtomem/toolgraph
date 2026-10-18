@@ -528,7 +528,7 @@ def test_source_and_sidecar_must_be_distinct(tmp_path):
         )
 
 
-def test_review_workflow_does_not_mutate_governance_graph_or_manifest(graph, tmp_path):
+def test_review_workflow_does_not_mutate_governance_graph_or_manifest(backend_graph, tmp_path):
     loader.load_crawl_result(
         CrawlResult(
             server_name="sample",

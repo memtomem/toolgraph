@@ -168,14 +168,14 @@ CANDIDATES = [
 # --- rank_features ---------------------------------------------------------
 
 
-def test_rank_features_preserves_input_order_and_stable_ids(graph):
+def test_rank_features_preserves_input_order_and_stable_ids(backend_graph):
     _seed()
     got = selector.rank_features("planner", CANDIDATES)
     assert got["agent_found"] is True
     assert [f["candidate"] for f in got["features"]] == CANDIDATES
 
 
-def test_rank_features_risk_scores_follow_the_published_table(graph):
+def test_rank_features_risk_scores_follow_the_published_table(backend_graph):
     _seed()
     got = selector.rank_features("planner", CANDIDATES)
     by_ref = {f["candidate"]: f for f in got["features"]}
@@ -190,7 +190,7 @@ def test_rank_features_risk_scores_follow_the_published_table(graph):
     assert by_ref["alpha::no_such_tool"]["risk_score"] is None
 
 
-def test_rank_features_carries_facts_and_annotation_self_claims(graph):
+def test_rank_features_carries_facts_and_annotation_self_claims(backend_graph):
     _seed()
     got = selector.rank_features("planner", ["alpha::read_file", "alpha::export_data"])
     violation, governed = got["features"]
@@ -209,7 +209,7 @@ def test_rank_features_unknown_agent_aborts_selection(backend_graph):
     assert got == {"agent": "nobody", "agent_found": False, "features": []}
 
 
-def test_rank_features_tool_vanishing_mid_batch_reports_not_found(graph, monkeypatch):
+def test_rank_features_tool_vanishing_mid_batch_reports_not_found(backend_graph, monkeypatch):
     """Neo4j is read-committed: a concurrent crawl/ingest can delete a tool
     between the resolve query and the facts query. The row must come back as
     a structured TOOL_NOT_FOUND, not crash the batch (Codex review)."""
@@ -301,14 +301,14 @@ def test_drifted_tools_are_rejected_in_every_profile(backend_graph, profile):
     assert got["rejected"][0]["reason"] == "DRIFTED"
 
 
-def test_deny_rejections_carry_policy_evidence_paths(graph):
+def test_deny_rejections_carry_policy_evidence_paths(backend_graph):
     _seed()
     got = selector.eligible_tools("planner", ["alpha::read_file"], profile="strict")
     [row] = got["rejected"]
     assert row["paths"] == [f"(read_file) -READS-> ({SECRETS}) -GOVERNED_BY-> (pii-deny:DENY)"]
 
 
-def test_unknown_profile_raises(graph):
+def test_unknown_profile_raises(backend_graph):
     _seed()
     with pytest.raises(ValueError, match="unknown profile"):
         selector.eligible_tools("planner", CANDIDATES, profile="production")
@@ -354,7 +354,7 @@ def test_schema_profile_enums_match_the_selector():
 # --- selection_explain ------------------------------------------------------
 
 
-def test_selection_explain_eligible_tool(graph):
+def test_selection_explain_eligible_tool(backend_graph):
     _seed()
     got = selector.selection_explain("planner", "alpha::git_status")
     assert got["decision"] == "eligible"
@@ -364,14 +364,14 @@ def test_selection_explain_eligible_tool(graph):
     assert "server self-claim (crawled/medium): read_only_hint=True" in got["reasons"]
 
 
-def test_selection_explain_rejected_tool_names_the_deny_path(graph):
+def test_selection_explain_rejected_tool_names_the_deny_path(backend_graph):
     _seed()
     got = selector.selection_explain("planner", "alpha::read_file")
     assert got["decision"] == "rejected"
     assert any("pii-deny" in r and "[violation]" in r for r in got["reasons"])
 
 
-def test_selection_explain_surfaces_operator_exception_reason(graph):
+def test_selection_explain_surfaces_operator_exception_reason(backend_graph):
     _seed()
     got = selector.selection_explain("planner", "alpha::export_data", profile="review")
     assert got["decision"] == "eligible"
@@ -384,7 +384,7 @@ def test_selection_explain_surfaces_operator_exception_reason(graph):
 runner = CliRunner()
 
 
-def test_cli_eligible_tools_stdout_is_pure_json(graph):
+def test_cli_eligible_tools_stdout_is_pure_json(backend_graph):
     _seed()
     result = runner.invoke(
         cli.app, ["eligible-tools", "planner", *CANDIDATES, "--profile", "review"]
@@ -394,7 +394,7 @@ def test_cli_eligible_tools_stdout_is_pure_json(graph):
     assert got == selector.eligible_tools("planner", CANDIDATES, profile="review")
 
 
-def test_cli_selector_commands_fail_loud_on_unknown_agent(graph):
+def test_cli_selector_commands_fail_loud_on_unknown_agent(backend_graph):
     _seed()
     for cmd in (
         ["rank-features", "nobody", "alpha::git_status"],
@@ -408,7 +408,7 @@ def test_cli_selector_commands_fail_loud_on_unknown_agent(graph):
             assert result.stdout == ""
 
 
-def test_cli_rejects_unknown_profile(graph):
+def test_cli_rejects_unknown_profile(backend_graph):
     _seed()
     result = runner.invoke(
         cli.app, ["eligible-tools", "planner", "alpha::git_status", "--profile", "prod"]

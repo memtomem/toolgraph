@@ -42,8 +42,8 @@ def _seed_three_tools(graph) -> None:
 # --- unmapped_tools -------------------------------------------------------
 
 
-def test_unmapped_tools_reports_granted_tools_with_no_data_access(graph):
-    _seed_three_tools(graph)
+def test_unmapped_tools_reports_granted_tools_with_no_data_access(backend_graph):
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -66,8 +66,8 @@ def test_unmapped_tools_reports_granted_tools_with_no_data_access(graph):
     assert rows[0]["granted_to"] == ["planner"]
 
 
-def test_unmapped_tools_all_includes_crawled_but_ungranted_tools(graph):
-    _seed_three_tools(graph)
+def test_unmapped_tools_all_includes_crawled_but_ungranted_tools(backend_graph):
+    _seed_three_tools(backend_graph)
     # no governance at all
     all_unmapped = {r["tool_key"] for r in queries.unmapped_tools(only_granted=False)}
     assert all_unmapped == {"sample::read_file", "sample::write_file", "sample::ping"}
@@ -78,8 +78,8 @@ def test_unmapped_tools_all_includes_crawled_but_ungranted_tools(graph):
 # --- orphan_policies ------------------------------------------------------
 
 
-def test_orphan_policy_flagged_when_no_reachable_agent(graph):
-    _seed_three_tools(graph)
+def test_orphan_policy_flagged_when_no_reachable_agent(backend_graph):
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             policies=[
@@ -105,10 +105,10 @@ def test_orphan_policy_flagged_when_no_reachable_agent(graph):
 # --- unbacked_edges -------------------------------------------------------
 
 
-def test_unbacked_edges_default_excludes_can_call_grants(graph):
+def test_unbacked_edges_default_excludes_can_call_grants(backend_graph):
     """CAN_CALL is intent, not a factual claim — evidence shouldn't be required
     by default. Otherwise every grant pollutes the audit output."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -141,10 +141,10 @@ def test_unbacked_edges_default_excludes_can_call_grants(graph):
     assert ("GOVERNED_BY", "file:///data/customers.csv", "pii") in edge_signatures
 
 
-def test_unbacked_edges_include_grants_surfaces_can_call(graph):
+def test_unbacked_edges_include_grants_surfaces_can_call(backend_graph):
     """With ``include_grants=True``, the unbacked CAN_CALL grant appears and
     the one with evidence does not."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -164,10 +164,10 @@ def test_unbacked_edges_include_grants_surfaces_can_call(graph):
     assert ("CAN_CALL", "planner", "sample::write_file") not in edge_signatures
 
 
-def test_unbacked_edges_governed_by_binding_evidence_suppresses_row(graph):
+def test_unbacked_edges_governed_by_binding_evidence_suppresses_row(backend_graph):
     """A GOVERNED_BY edge written via the binding-object form with evidence
     must not appear in unbacked_edges; the bare-string form still does."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -204,10 +204,10 @@ def test_unbacked_edges_governed_by_binding_evidence_suppresses_row(graph):
     }
 
 
-def test_unbacked_edges_treats_blank_evidence_as_missing(graph):
+def test_unbacked_edges_treats_blank_evidence_as_missing(backend_graph):
     """Empty or whitespace evidence is not a usable source pointer. It should
     be audited the same way as omitted evidence."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -238,11 +238,11 @@ def test_unbacked_edges_treats_blank_evidence_as_missing(graph):
     assert ("GOVERNED_BY", "file:///data/customers.csv", "pii") in edge_signatures
 
 
-def test_unbacked_edges_includes_inferred_claims_without_evidence(graph):
+def test_unbacked_edges_includes_inferred_claims_without_evidence(backend_graph):
     """An inferred data-flow edge is still unsupported without a citation to
     the inference source. It should not be hidden just because source is not
     operator_asserted."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -291,8 +291,8 @@ def test_unbacked_edges_includes_inferred_claims_without_evidence(graph):
 # --- drifted_tools --------------------------------------------------------
 
 
-def test_drift_surfaces_tools_with_governance_but_no_exposes(graph):
-    _seed_three_tools(graph)
+def test_drift_surfaces_tools_with_governance_but_no_exposes(backend_graph):
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -326,11 +326,11 @@ def test_drift_surfaces_tools_with_governance_but_no_exposes(graph):
         assert s.run("MATCH (t:Tool {key:'sample::read_file'}) RETURN t").single() is not None
 
 
-def test_drift_data_access_is_empty_when_only_grant_exists(graph):
+def test_drift_data_access_is_empty_when_only_grant_exists(backend_graph):
     """A drifted tool can be governance-relevant because an agent can call it,
     even before data_access is authored. The audit row should report an empty
     list, not a placeholder map full of null values."""
-    _seed_three_tools(graph)
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
@@ -361,7 +361,7 @@ def test_drift_data_access_is_empty_when_only_grant_exists(graph):
 # --- audit_report ---------------------------------------------------------
 
 
-def test_audit_report_aggregates_whole_graph_findings(graph):
+def test_audit_report_aggregates_whole_graph_findings(backend_graph):
     csv = "file:///data/customers.csv"
     loader.load_crawl_result(
         CrawlResult(
@@ -449,15 +449,15 @@ def test_audit_report_aggregates_whole_graph_findings(graph):
     assert with_grants["summary"]["counts"]["unbacked_edges"] > 2
 
 
-def test_audit_report_passes_empty_graph(graph):
+def test_audit_report_passes_empty_graph(backend_graph):
     report = queries.audit_report()
     assert report["status"] == "pass"
     assert report["summary"]["blocking_findings"] == []
     assert all(count == 0 for count in report["summary"]["counts"].values())
 
 
-def test_audit_report_warns_on_advisory_findings_only(graph):
-    _seed_three_tools(graph)
+def test_audit_report_warns_on_advisory_findings_only(backend_graph):
+    _seed_three_tools(backend_graph)
     ingest_governance(
         Governance(
             agents=["planner"],
