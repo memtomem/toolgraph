@@ -210,3 +210,73 @@ def test_doctor_missing_ladybug_does_not_create_files(embedded_path, json_output
         assert "does not exist" in connectivity["message"]
     else:
         assert "does not exist" in result.stdout
+
+
+def _write_ladybug_runtime(directory: Path) -> Path:
+    state = directory / ".toolgraph"
+    state.mkdir(parents=True, exist_ok=True)
+    path = state / "config.json"
+    path.write_text(
+        json.dumps(
+            {"schema_version": 1, "backend": "ladybug", "db_path": str(directory / "g.lbug")}
+        )
+    )
+    path.chmod(0o600)
+    return path
+
+
+@pytest.fixture
+def ambient(tmp_path, monkeypatch):
+    """A working directory with no ambient settings resolved yet."""
+    for name in ("TOOLGRAPH_BACKEND", "TOOLGRAPH_DB_PATH", "TOOLGRAPH_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config, "_explicit_config_path", None)
+    monkeypatch.delitem(vars(config), "settings", raising=False)
+    monkeypatch.chdir(tmp_path)
+    driver.close_driver()
+    yield tmp_path
+    driver.close_driver()
+    vars(config).pop("settings", None)
+
+
+def test_doctor_backend_conflict_is_one_failing_configuration_check(ambient, monkeypatch):
+    """#146: the conflict used to append a second ``Configuration`` check
+    after one that already said PASS."""
+    _write_ladybug_runtime(ambient)
+    monkeypatch.setenv("TOOLGRAPH_BACKEND", "neo4j")
+
+    report = run_doctor()
+
+    assert not report.healthy
+    assert [(c.name, c.status) for c in report.checks] == [("Configuration", "FAIL")]
+    check = report.checks[0]
+    assert "conflicting backend configuration" in check.message
+    assert check.details["backend_source"] == "env"
+    assert "conflicting backend configuration" in check.details["error"]
+
+
+def test_doctor_json_names_are_unique_under_a_backend_conflict(tmp_path):
+    _write_ladybug_runtime(tmp_path)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("TOOLGRAPH_")}
+    env["TOOLGRAPH_BACKEND"] = "neo4j"
+    result = subprocess.run(
+        [sys.executable, "-c", "from toolgraph.cli import app; app()", "doctor", "--json"],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 1, result.stderr
+    names = [c["name"] for c in json.loads(result.stdout)["checks"]]
+    assert names == ["Configuration"]
+    assert len(names) == len(set(names))
+
+
+def test_doctor_healthy_config_file_is_one_passing_configuration_check(ambient, monkeypatch):
+    _write_ladybug_runtime(ambient)
+    monkeypatch.setattr(driver, "verify_connectivity", lambda **_: None)
+
+    report = run_doctor()
+
+    configuration = [c for c in report.checks if c.name == "Configuration"]
+    assert [c.status for c in configuration] == ["PASS"]

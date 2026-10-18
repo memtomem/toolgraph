@@ -197,7 +197,7 @@ fleet 설정에서는 모든 서버에 고유한 `name`을 지정하세요. 이�
   `Configuration` 항목에 `exists: False`도 보이면 quickstart 디렉터리 밖에
   있거나 `toolgraph init`을 건너뛴 것입니다. 디렉터리로 `cd`하거나 `init`을
   실행하세요.
-- 두 번째 `Configuration` 항목이 `conflicting backend configuration`으로
+- `Configuration` 항목이 `conflicting backend configuration`으로
   FAIL: 셸이나 이 디렉터리의 `.env`에 설정된 `TOOLGRAPH_BACKEND` 또는
   `TOOLGRAPH_DB_PATH`가 `.toolgraph/config.json`과 다릅니다. 메시지에 변수
   이름이 나옵니다. (`backend_source`는 `TOOLGRAPH_BACKEND`가 설정된 경우에만
