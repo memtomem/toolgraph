@@ -34,6 +34,7 @@ def _mock_graph(
     agent_found: bool = True,
     instance_id: str | None = "graph-instance-1",
     generation: object = 7,
+    write_resource: str = "https://user:secret@example.test/data?q=token",
 ) -> None:
     state = queries.GraphState(instance_id, generation, "a" * 64)
     contracts = [
@@ -99,7 +100,7 @@ def _mock_graph(
                     deny_paths=[
                         {
                             "classification": "violation",
-                            "path": "(alpha::write) -> (https://user:secret@example.test/data?q=token)",
+                            "path": f"(alpha::write) -> ({write_resource})",
                         }
                     ],
                     risk=1.0,
@@ -127,6 +128,14 @@ def test_bundle_is_portable_deterministic_and_redacted(monkeypatch):
     assert "secret" not in raw and "q=token" not in raw
     assert "https://example.test/data" in raw
     assert len(first["catalog_digest"]) == 64
+
+
+def test_bundle_hides_quoted_userinfo_in_tool_paths(monkeypatch):
+    _mock_graph(monkeypatch, write_resource='neo4j://u:"hunter 2"@Host/DB?token=planted')
+    bundle = build_policy_bundle(agent="codex", profile="strict", created_at=NOW)
+    assert bundle["tools"][1]["paths"] == ["(alpha::write) -> (neo4j://<redacted-uri>"]
+    raw = canonical_json_bytes(bundle).decode()
+    assert "hunter" not in raw and "planted" not in raw
 
 
 def test_bundle_schema_accepts_producer(monkeypatch):

@@ -138,6 +138,33 @@ def test_warn_and_recursive_redaction(monkeypatch):
     assert "q=token" not in json.dumps(doc)
 
 
+def test_preflight_hides_quoted_userinfo_in_paths(monkeypatch):
+    _bracket(
+        monkeypatch,
+        {
+            "agent": "codex",
+            "agent_found": True,
+            "profile": "review",
+            "eligible": [],
+            "rejected": [
+                {
+                    "candidate": "alpha::write",
+                    "tool_key": "alpha::write",
+                    "reason": "DENY_VIOLATION",
+                    "paths": [
+                        "(write) -WRITES-> (neo4j://u:'hunter 2'@Host/DB) -GOVERNED_BY-> (p:DENY)"
+                    ],
+                }
+            ],
+        },
+    )
+    doc = build_preflight(
+        agent="codex", candidates=["alpha::write"], profile="review", run_id="r", created_at=NOW
+    )
+    assert doc["rejected"][0]["paths"] == ["(write) -WRITES-> (neo4j://<redacted-uri>"]
+    assert "hunter" not in json.dumps(doc)
+
+
 def test_redaction_removes_fragment_and_preserves_surrounding_text():
     assert redact("x (mcp://user:pw@CaseHost:8080/r?a=b#frag) y") == ("x (mcp://CaseHost:8080/r) y")
 
