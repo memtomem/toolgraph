@@ -8,7 +8,7 @@ import pytest
 
 from toolgraph.crawler.crawl import spec_label
 from toolgraph.models import ServerSpec
-from toolgraph.redaction import endpoint_label, persisted_endpoint, redact_text
+from toolgraph.redaction import WITHHELD, endpoint_label, persisted_endpoint, redact_text
 
 
 def test_endpoint_labels_never_include_args_or_url_secrets():
@@ -155,3 +155,68 @@ def test_redaction_stays_linear_on_adversarial_text(text):
     started = time.perf_counter()
     redact_text(text)
     assert time.perf_counter() - started < 0.5
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "o.jsonl:1: calls must be an integer, got '?%74oken=SECRET'",
+        # A scrubbed neighbour must not hide the encoded one from inspection.
+        "?%74oken=SECRET&password=x",
+        # Nor may a placeholder the input itself carries.
+        "?%74oken=SECRET=<redacted>",
+        "agent '%70assword=SECRET' not found",
+        # One scrub pass must not swallow what the next would have shown.
+        "credential=password=x ?%74oken=SECRET",
+        "password=Bearer abc ?%74oken=SECRET",
+        # An input placeholder in another case must not pass for an inserted one.
+        "https%3A//user:SECRET<REDACTED-URI>@host",
+        # Scrubbing `token=x@host` must not hide the '@' of an encoded credential URI.
+        "https%3A//user:SECRET&token=x@host",
+    ],
+)
+def test_text_the_scrubber_cannot_clean_is_withheld(text):
+    assert redact_text(text) == WITHHELD
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Bearer abc expired", "Bearer <redacted> expired"),
+        (
+            "Bearer authentication failed; retry with a new token",
+            "Bearer <redacted> failed; retry with a new token",
+        ),
+        ("NEO4J_PASSWORD is not set",) * 2,
+        ("password=hunter2 and more", "password=<redacted> and more"),
+        ("token::refresh failed", "token=<redacted> failed"),
+        ("credential=password =hunter2", "credential=<redacted>"),
+        # A placeholder the input carries is shown changed, so it can never
+        # pass for one the scrubber inserted.
+        ("a literal <redacted> marker", "a literal \u2039redacted> marker"),
+        ("a literal <REDACTED> marker", "a literal \u2039REDACTED> marker"),
+        # Percent-encoding without a credential behind it is left alone.
+        ("file /data/%20report.csv not found",) * 2,
+        ("url https://h/p%20q?page=2", "url https://h"),
+    ],
+)
+def test_scrubbed_messages_are_not_withheld(text, expected):
+    assert redact_text(text) == expected
+
+
+def test_credential_uri_check_stays_linear():
+    # `[^/\s]+:` before the password re-split one authority at every ':'.
+    started = time.perf_counter()
+    redact_text("123://" + "a:" * 32_000)
+    assert time.perf_counter() - started < 0.5
+
+
+def test_only_the_exact_inserted_placeholders_count_as_inserted():
+    # Neutralising input placeholders already covers other spellings; this
+    # keeps the second layer honest on its own.
+    from toolgraph.redaction import _INSERTED
+
+    assert _INSERTED.fullmatch("PASSWORD=<redacted>")
+    assert _INSERTED.fullmatch("bearer <redacted>")
+    assert not _INSERTED.search("<REDACTED-URI>")
+    assert not _INSERTED.search("token=<Redacted>")

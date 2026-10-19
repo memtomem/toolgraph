@@ -1414,3 +1414,35 @@ def test_proposal_file_write_failure_has_redacted_error(monkeypatch, tmp_path):
     assert "ERROR:" in result.stderr
     assert not isinstance(result.exception, OSError)
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("calls", "?%74oken=SECRET"),
+        ("tool_key", ["?%74oken=SECRET"]),
+        ("profile", "?%74oken=SECRET"),
+    ],
+)
+def test_cli_propose_withholds_an_error_that_would_quote_a_credential(
+    backend_graph, sample_gov_path, sample_observed_jsonl, field, value
+):
+    # These fields are not identities, so nothing refuses them first; the
+    # error that rejects them quotes the value, and redact_text cannot see a
+    # percent-encoded credential name.
+    _seed_matching_graph(sample_gov_path)
+    lines = sample_observed_jsonl.read_text().splitlines()
+    index = 0 if field == "profile" else 1
+    row = json.loads(lines[index])
+    target = row["envelope"] if field == "profile" else row
+    target[field] = value
+    lines[index] = json.dumps(row)
+    sample_observed_jsonl.write_text("\n".join(lines) + "\n")
+
+    result = CliRunner().invoke(
+        cli.app, ["policy", "propose", str(sample_gov_path), str(sample_observed_jsonl)]
+    )
+
+    assert result.exit_code == 1
+    assert "SECRET" not in result.stderr
+    assert "details withheld (they contain credential-shaped data)" in result.stderr
