@@ -50,9 +50,10 @@ All notable changes to Toolgraph are documented here.
   resource whose query holds `)` (`https://h/r?k=a)b` kept `)b`) could reach
   preflight, policy bundle, control-plan and review artifacts, `policy
   impact` and `policy check` output and `ingest-manifest --dry-run --json`,
-  including its warnings. Two shapes inside free text are still not bounded:
-  a password holding whitespace without quotes, and a query holding `)`
-  (`see https://h/r?k=a)b` still shows `)b`).
+  including its warnings. Inside free text some shapes are still not
+  bounded, as in 0.3.0: a password holding whitespace without quotes, a
+  query or fragment holding `)` (`see https://h/r?k=a)b` still shows `)b`),
+  and text after a `)` that no longer reads as a URI.
 
 ## 0.3.0 - 2026-10-19
 
