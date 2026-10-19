@@ -205,17 +205,38 @@ All notable changes to Toolgraph are documented here.
 - Evidence in artifacts no longer shows a quoted URI password (#204). Policy
   bundles, preflight and control-plan artifacts, policy review plans, policy
   impact and `policy check` output, and `ingest-manifest --dry-run --json`
-  remove URI userinfo from evidence and keep the path of an ordinary URI. A
-  password in quotes (`neo4j://u:"p w"@host/db`) was kept whole when it held
-  a space or `)`, and partly when it held `@` and `/`. Resource URIs read
-  from the graph carry the quotes percent-encoded, and some of those leaked
-  too: `u:%22p@x/y%22@host` kept `x/y%22`. When a quote, `%22` or `%27`
+  remove the userinfo the URI parser finds and keep the path of an ordinary
+  URI. A password in quotes (`neo4j://u:"p w"@host/db`) was kept whole when
+  it held a space or `)`, and partly when it held `@` and `/`. Resource URIs
+  read from the graph carry the quotes percent-encoded, and some of those
+  leaked too: `u:%22p@x/y%22@host` kept `x/y%22`. When a quote, `%22` or `%27`
   follows a URI's scheme and an `@` follows it, everything after the scheme
   is now hidden as `<redacted-uri>`, path and the rest of the evidence line
   included, since where such a password ends cannot be found reliably. This
   also hides values that hold no password, such as `https://host/a%22b@c`.
-  Other values are redacted as before. Scanning a long line of letters is
-  also linear now: a 100,000-character line took 4.9 s.
+  Other values are redacted as before; a password the parser cannot bound,
+  such as one holding an unquoted `/`, can still show (#212). Scanning a
+  long line of letters is also linear now: a 100,000-character line took
+  4.9 s.
+
+- Evidence in artifacts no longer shows a URI password holding an unquoted
+  `)` (#208). Evidence wraps a resource in graph notation,
+  `(tool) -READS-> (uri)`, so the scan stopped at the first `)` and kept
+  `neo4j://u:p)ss@host/r` whole. When a `)` follows a URI's scheme and an
+  `@` follows it with no whitespace between, the rest of that run is now
+  hidden as `<redacted-uri>`, the resource's closing `)` included. This also
+  hides values that hold no password, such as `file:///a(b)@c`.
+
+- Commands that write artifacts refuse evidence holding a URI that cannot be
+  parsed (#209), such as one with an unclosed `[` (`https://u:p@[::1/r`), an
+  invalid bracketed host or a character invalid under NFKC normalization.
+  `ingest-manifest --dry-run --json` failed with a traceback, and
+  `preflight` and `policy compile` printed the parser's message, which can
+  quote the host with its password (`netloc 'u:pw@h＃x' contains invalid
+  characters ...`). They now print `ERROR: artifact evidence holds a URI that
+  cannot be parsed; it is not shown`, exit 1 and write nothing. The rest of
+  the artifact is withheld as before: printing it around a hidden URI could
+  show other values the scan cannot bound.
 
 - An error message that would still show a credential after scrubbing is
   withheld (#202). Scrubbing cannot recognise every credential, for example

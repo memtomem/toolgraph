@@ -4,13 +4,21 @@ ones are refused before any graph read, evidence is redacted.
 
 from __future__ import annotations
 
+import itertools
+import json
 import time
+import warnings
 
 import pytest
+import yaml
+from typer.testing import CliRunner
 
 from tests._helpers import FakeBundleReader
-from toolgraph.artifact_safety import redact, safe_artifact
-from toolgraph.graph import queries
+from toolgraph import cli
+from toolgraph.artifact_safety import EvidenceUriError, redact, safe_artifact
+from toolgraph.graph import loader, queries
+from toolgraph.manifest.ingest import ingest_governance
+from toolgraph.models import CrawlResult, Governance, ToolRecord
 from toolgraph.policy_bundle import build_policy_bundle
 from toolgraph.preflight import build_preflight
 
@@ -155,10 +163,213 @@ def test_nested_evidence_hides_quoted_userinfo_and_keeps_identities():
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("neo4j://u:p)ss@host/r", "neo4j://<redacted-uri>"),
+        ("neo4j://u:p(ss)@h/r", "neo4j://<redacted-uri>"),
+        (
+            "(t) -READS-> (neo4j://u:p)ss@host/r) -GOVERNED_BY-> (p:DENY)",
+            "(t) -READS-> (neo4j://<redacted-uri> -GOVERNED_BY-> (p:DENY)",
+        ),
+        (
+            "(t) -READS-> (https://host/a) -GOVERNED_BY-> (neo4j://u:p)ss@h/r:DENY)",
+            "(t) -READS-> (https://host/a) -GOVERNED_BY-> (neo4j://<redacted-uri>",
+        ),
+        # The run ends at whitespace, not at a ')': adjacent values go too.
+        ("(https://a)(https://u:p@b)", "(https://<redacted-uri>"),
+        # No password, but a ')' before an '@' cannot be told from one.
+        ("file:///a(b)@c", "file://<redacted-uri>"),
+        ("https://h/x)?e=a@b", "https://<redacted-uri>"),
+        # The quoted rule runs first and still hides to the end.
+        ('neo4j://u:"p)ss"@host/r', "neo4j://<redacted-uri>"),
+    ],
+)
+def test_parenthesized_userinfo_hides_the_rest_of_the_run(value, expected):
+    assert redact(value) == expected
+
+
+def test_parenthesized_rule_keeps_ordinary_userinfo_redaction():
+    assert redact("(t) -READS-> (neo4j://u:pw@host/r)") == "(t) -READS-> (neo4j://host/r)"
+
+
+@pytest.mark.parametrize(
     "value",
-    ["a" * 100_000, "a://" * 25_000, 'n://"@' * 20_000, '"' * 100_000 + "://", "1" * 100_000],
+    [
+        "(https://host/a(b)) -R-> (x@y)",
+        "(t) -READS-> (file:///data/a(1).csv) -GOVERNED_BY-> (p:DENY)",
+        "(a) -CAN_CALL-> (t) -READS-> (https://registry/@scope/pkg)",
+        "(a) -CAN_CALL-> (t) [GOVERNED_BY p]",
+        "(t) -READS-> (http://[::1]:7687/db) -GOVERNED_BY-> (p:DENY)",
+        "https://host/a%40b",
+    ],
+)
+def test_parentheses_and_brackets_without_userinfo_are_kept(value):
+    assert redact(value) == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://[x/r",
+        "https://u:SECRETPW@[::1/r",
+        "https://[notip]/r",
+        "https://h]/r",
+        "https://u:SECRETPW@h\uff03x/r",
+        "(t) -READS-> (https://u:SECRETPW@[::1/r) -GOVERNED_BY-> (p:DENY)",
+        # Nothing after the unparseable URI may be printed in its place...
+        "https://u:SECRETPW[ ZQ@[::1/r",
+        "https://[x/r?token=SECRETPW)ZQ",
+        # ...nor anything before it or beside it.
+        "https://u:SECRETPW/ZQ@h/r)https://[x/r",
+        "(a) -R-> (https://u:SECRETPW@h/x) -R-> (https://[x/r) tail",
+        "1https://u:SECRETPW@[::1/r",
+        # The ')' rule would hide this one, so the check has to run first.
+        "https://u:p[)ss@h/r",
+    ],
+)
+def test_unparseable_uri_refuses_without_quoting_it(value):
+    with pytest.raises(EvidenceUriError) as raised:
+        redact(value)
+    assert f"ERROR: {raised.value}\n" == _REFUSAL
+    assert raised.value.__cause__ is None and raised.value.__suppress_context__
+
+
+@pytest.mark.parametrize("unparseable", ["https://[x/r", "https://u:p[)ss@h/r"])
+def test_unparseable_uri_refuses_the_whole_artifact(unparseable):
+    # The sibling holds a password the scan cannot bound; only refusing the
+    # artifact keeps it out.
+    with pytest.raises(EvidenceUriError):
+        safe_artifact({"paths": ["neo4j://u:SECRETPW/ZQ@host/r", unparseable]})
+
+
+def test_nesting_limit_is_checked_before_uri_refusal():
+    def nested(depth):
+        value = "https://[x/r"
+        for _ in range(depth):
+            value = [value]
+        return value
+
+    with pytest.raises(EvidenceUriError):
+        redact(nested(100))
+    with pytest.raises(ValueError, match="nesting exceeds") as raised:
+        redact(nested(101))
+    assert not isinstance(raised.value, EvidenceUriError)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "neo4j://u:{}@host/r",
+        "(t) -READS-> (neo4j://u:{}@host/r) -GOVERNED_BY-> (x:DENY)",
+        "(a) -CAN_CALL-> (t) -WRITES-> (https://u:{}@h)",
+    ],
+)
+def test_planted_parenthesized_passwords_never_survive(template):
+    for size in range(1, 4):
+        for chars in itertools.product("a)(@/:?#%][", repeat=size):
+            if ")" not in chars:
+                continue
+            value = template.format("QX" + "".join(chars) + "ZQ")
+            try:
+                out = redact(value)
+            except EvidenceUriError:
+                continue
+            assert "QX" not in out and "ZQ" not in out, (value, out)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a" * 100_000,
+        "a://" * 25_000,
+        'n://"@' * 20_000,
+        '"' * 100_000 + "://",
+        "1" * 100_000,
+        "a://)" * 20_000,
+        "x://" + ")" * 100_000,
+        "https://h/ " * 9_000,
+    ],
 )
 def test_redaction_is_linear(value):
     started = time.perf_counter()
     redact(value)
     assert time.perf_counter() - started < 0.5
+
+
+_UNPARSEABLE = ["https://u:SECRETPW@[::1/r", "https://u:SECRETPW@h\uff03x/r"]
+_REFUSAL = "ERROR: artifact evidence holds a URI that cannot be parsed; it is not shown\n"
+
+
+def _seed_tool():
+    loader.load_crawl_result(
+        CrawlResult(server_name="s", transport="stdio", tools=[ToolRecord(name="t")])
+    )
+
+
+def _governance(resource: str, *, governed: bool = True) -> dict:
+    return {
+        "agents": ["bot"],
+        "policies": [{"id": "deny1", "effect": "DENY", "scope": "secrets"}],
+        "grants": [{"agent": "bot", "tool": "s::t", "granted_by": "ops"}],
+        "data_access": [{"tool": "s::t", "resource": resource, "mode": "READS"}],
+        "governed_by": {resource: ["deny1"]} if governed else {},
+    }
+
+
+def _ingest(resource: str):
+    _seed_tool()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the URI is stored verbatim, by design
+        report = ingest_governance(Governance.model_validate(_governance(resource)))
+    assert report.applied, report.warnings
+
+
+@pytest.mark.parametrize("resource", _UNPARSEABLE)
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["preflight", "bot", "s::t", "--run-id", "r1"],
+        ["preflight", "bot", "s::t", "--run-id", "r1", "--out", "{out}"],
+        ["policy", "compile", "--agent", "bot", "--output", "{out}"],
+    ],
+)
+def test_artifact_commands_refuse_an_unparseable_resource(
+    backend_graph, tmp_path, resource, command
+):
+    _ingest(resource)
+    out = tmp_path / "artifact.json"
+    args = [arg.replace("{out}", str(out)) for arg in command]
+    result = CliRunner().invoke(cli.app, args)
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert result.stderr == _REFUSAL
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("resource", _UNPARSEABLE)
+def test_dry_run_json_refuses_an_unparseable_resource(backend_graph, tmp_path, resource):
+    _seed_tool()  # the resource is new, so the delta carries it
+    path = tmp_path / "governance.yaml"
+    path.write_text(yaml.safe_dump(_governance(resource), allow_unicode=True))
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+    )
+    assert result.exit_code == 1, result.output
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.stdout == ""
+    # The normalization warning for the stored URI may precede it; it does
+    # not quote the URI.
+    assert result.stderr.endswith(_REFUSAL)
+    assert "SECRETPW" not in result.stderr and "Traceback" not in result.stderr
+
+
+def test_dry_run_json_hides_a_parenthesized_password(backend_graph, tmp_path):
+    _seed_tool()
+    path = tmp_path / "governance.yaml"
+    path.write_text(yaml.safe_dump(_governance("neo4j://u:p)ss@host/r", governed=False)))
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["resources_created"] == ["neo4j://<redacted-uri>"]
+    assert "p)ss" not in result.output
