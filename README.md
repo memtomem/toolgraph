@@ -51,10 +51,10 @@ Every edge here is either a crawled fact or an operator-authored assertion;
 nothing is LLM-guessed.
 
 For before/after policy decisions and local regression checks, see the
-[policy impact guide](docs/policy-impact.md).
+[policy impact guide](https://github.com/memtomem/toolgraph/blob/main/docs/policy-impact.md).
 
 For observed-usage grant proposals and provenance checks, see the
-[policy proposal guide](docs/policy-propose.md).
+[policy proposal guide](https://github.com/memtomem/toolgraph/blob/main/docs/policy-propose.md).
 
 ## Graph model
 
@@ -144,7 +144,7 @@ the SDK buffers: with mcp 2.3.0, SSE events are limited to 1 MiB each, while
 stdio lines and streamable-HTTP JSON bodies are not limited.
 
 For `ingest-manifest --dry-run --json` and `doctor`, see the
-[preview and diagnostic requirements](docs/policy-propose.md#preview-and-diagnostic-requirements),
+[preview and diagnostic requirements](https://github.com/memtomem/toolgraph/blob/main/docs/policy-propose.md#preview-and-diagnostic-requirements),
 including Neo4j catalog permissions and Ladybug session serialization.
 
 Ladybug is the local single-process backend. Toolgraph commands own the DB
@@ -867,14 +867,14 @@ runtime-enforcement wedge belongs to gateways like Kong.
 
 ## Contributing, security, and license
 
-- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) — development setup,
+- **Contributing:** [CONTRIBUTING.md](https://github.com/memtomem/toolgraph/blob/main/CONTRIBUTING.md) — development setup,
   pull-request conventions, and the Contributor License Agreement.
-- **CLA:** [CLA.md](CLA.md). Signing is one-time per GitHub account per
+- **CLA:** [CLA.md](https://github.com/memtomem/toolgraph/blob/main/CLA.md). Signing is one-time per GitHub account per
   repository; the workflow comments on your first pull request with
   instructions.
-- **Code of conduct:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — applies to
+- **Code of conduct:** [CODE_OF_CONDUCT.md](https://github.com/memtomem/toolgraph/blob/main/CODE_OF_CONDUCT.md) — applies to
   issues, pull requests and discussions.
-- **Security:** [SECURITY.md](SECURITY.md) — please use private vulnerability
+- **Security:** [SECURITY.md](https://github.com/memtomem/toolgraph/blob/main/SECURITY.md) — please use private vulnerability
   reporting rather than a public issue.
-- **License:** Apache License 2.0 — see [LICENSE](LICENSE).
+- **License:** Apache License 2.0 — see [LICENSE](https://github.com/memtomem/toolgraph/blob/main/LICENSE).
   Copyright 2025-2026 DAPADA Inc. and memtomem contributors.

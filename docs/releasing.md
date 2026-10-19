@@ -66,7 +66,9 @@ executing inside the privileged job. Pass values through `env:`.
    anything else the patch version. `0.1.0` followed `0.0.1` for the MCP SDK
    2.x floor; `0.2.0` follows `0.1.0` because commands now refuse a backend
    setting that disagrees with the config file instead of letting the
-   environment win. Callers pinned to an earlier version keep working; they are
+   environment win; `0.3.0` follows `0.2.0` because Toolgraph no longer picks
+   Neo4j when nothing names a backend, and the Neo4j driver is now an extra
+   (ADR-0017). Callers pinned to an earlier version keep working; they are
    not silently upgraded.
 2. Run the full local release gate:
 
