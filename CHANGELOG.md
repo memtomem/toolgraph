@@ -2,7 +2,13 @@
 
 All notable changes to Toolgraph are documented here.
 
-## Unreleased
+## 0.3.0 - 2026-10-19
+
+Fourth alpha. Read **Upgrading from 0.2.0** below before installing: it lists
+twelve changes an existing setup, checkout or embedding program can notice.
+The one most installations meet first is that there is no implicit backend
+any more: a setup that relied on Neo4j being chosen when nothing named a
+backend now sets `TOOLGRAPH_BACKEND=neo4j` and installs `toolgraph[neo4j]`.
 
 ### Upgrading from 0.2.0
 
@@ -52,6 +58,9 @@ All notable changes to Toolgraph are documented here.
   walkthrough ran on 5.6, with notification noise, and on 4.4 seven of its
   eighteen commands already failed with Cypher syntax errors. Library
   callers get `BackendConfigurationError` from the same seams as below.
+  Tooling that reads stderr no longer sees `Received notification from DBMS
+  server` lines for `UNRECOGNIZED` notifications; warning-level ones, such
+  as deprecations, still appear.
 - `toolgraph crawl` now requires the `servers` key in `servers.yaml`. A
   blank file, a comment-only file or `{}` exits 1 with `Invalid servers
   config` before any server is contacted; 0.2.0 treated those three as an
@@ -114,7 +123,36 @@ All notable changes to Toolgraph are documented here.
   data`) instead of its position in the proposal, and refuses it before any
   other error could quote it. In the other direction, `policy impact` now
   accepts single-colon names such as `srv::get_token:v2` and
-  `agent-token:blue`, which it refused before.
+  `agent-token:blue`, which it refused before, and so does `policy propose`
+  where such a name reaches its output (an observed agent, an export
+  `candidate`, an ambiguous grant or a graph match in a note): 0.2.0 refused
+  the proposal with `additions[0].agent contains credential-shaped data`. An
+  export row's `tool_key` must still be `<server>::<tool>` with no other
+  colon.
+- Artifact evidence hides more around URI credentials (#204, #208, #209).
+  Policy bundles, preflight and control-plan artifacts, policy review plans,
+  `policy impact` and `policy check` output, and `ingest-manifest --dry-run
+  --json` scrub it in three steps. A quote, `%22` or `%27` after a URI's
+  scheme with an `@` anywhere after it hides everything after the scheme,
+  the rest of the evidence line included. Then a URI that cannot be parsed
+  (an unclosed `[`, an invalid bracketed host) stops the command as in
+  0.2.0, now with `artifact evidence holds a URI that cannot be parsed; it
+  is not shown` instead of the parser's message, which could quote the host
+  with its password. Then a `)` with an `@` after it in the same unbroken run
+  hides the rest of that run. So `https://u:"pw"@[::1/r` is shown as
+  `https://<redacted-uri>`, while `https://u:p[)ss@h/r` stops the command.
+  The hiding rules also hide values that hold no password. A consumer that
+  matches evidence paths should expect `<scheme>://<redacted-uri>`.
+- Error messages that go through Toolgraph's shared scrubber hide more (#201,
+  #202): CLI errors, crawl failures and the server's
+  backend-misconfiguration log record. A message drops what follows a quoted
+  or bracketed credential value; one whose scrubbed or percent-decoded form
+  is still credential-shaped reads `details withheld (they contain
+  credential-shaped data)` after the command's own context; and a
+  `<redacted` that the input itself contains is shown as `‹redacted`
+  (U+2039). CLI usage errors, `--dry-run` JSON warnings, MCP SDK errors
+  outside Toolgraph's own envelopes and logged tracebacks do not go through
+  the scrubber (#206).
 
 ### Added
 
@@ -149,8 +187,10 @@ All notable changes to Toolgraph are documented here.
 - MCP tools report a backend configuration problem as a typed result
   instead of the SDK's generic `Error executing tool <name>`. Missing
   `neo4j` extra, rejected Neo4j credentials, a missing `NEO4J_DATABASE`, a
-  Neo4j server older than 5.7, a missing Ladybug and a database file that is
-  not a Ladybug database now return `isError: true` with `structuredContent`
+  Neo4j server older than 5.7, a missing Ladybug, a database file that is
+  not a Ladybug database and, on Ladybug, a graph without Toolgraph's schema
+  or with another schema version now return `isError: true` with
+  `structuredContent`
   `{"error_kind": "backend_misconfigured", "retryable": false, "cause": ...,
   "message": ...}`. The message is fixed per cause; the path or status code
   goes to the server log as one WARNING record instead of a traceback. On
@@ -216,8 +256,8 @@ All notable changes to Toolgraph are documented here.
   also hides values that hold no password, such as `https://host/a%22b@c`.
   Other values are redacted as before; a password the parser cannot bound,
   such as one holding an unquoted `/`, can still show (#212). Scanning a
-  long line of letters is also linear now: a 100,000-character line took
-  4.9 s.
+  long line of letters is also linear now: before this fix a
+  100,000-character line took 4.9 s.
 
 - Evidence in artifacts no longer shows a URI password holding an unquoted
   `)` (#208). Evidence wraps a resource in graph notation,
@@ -248,7 +288,7 @@ All notable changes to Toolgraph are documented here.
   withheld before scrubbing, since the scrubber does not decode: this also
   withholds some messages it could have cleaned, such as an encoded URL with
   a `?token=` query. A placeholder that the input itself contains is shown
-  as `\u2039redacted`, so it cannot pass for one the scrubber inserted.
+  as `‹redacted` (U+2039), so it cannot pass for one the scrubber inserted.
   This covers every message that goes through the shared scrubber:
   CLI errors, crawl failures and the server's backend-misconfiguration log
   record. CLI usage errors, `--dry-run` JSON warnings, MCP SDK errors
@@ -265,7 +305,7 @@ All notable changes to Toolgraph are documented here.
   never shows part of the value. A URI that is only wrapped in quotes, such
   as `'neo4j://host:7687'` in a driver error, is shown as before unless an
   `@` follows later in the message. Scrubbing a long message is also linear
-  now; a 100,000-character line of letters took 25 s.
+  now; before this fix a 100,000-character line of letters took 25 s.
 
 - Values that Toolgraph refuses rather than scrubs go through one rule,
   `toolgraph.redaction.is_credential_shaped`, instead of five detectors that
