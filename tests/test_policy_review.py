@@ -129,3 +129,32 @@ def test_policy_review_cli_scrubs_evidence(monkeypatch, tmp_path):
     assert result.exit_code == 0, result.output
     assert "secret" not in output.read_text()
     assert json.loads(output.read_text())["candidates"][0]["tool_key"] == "github::merge"
+
+
+def test_policy_review_hides_quoted_userinfo_in_current_paths(monkeypatch):
+    mock_policy_review_inputs(monkeypatch)
+    monkeypatch.setattr(
+        "toolgraph.policy_review.selector.eligible_tools",
+        lambda *a, **k: {
+            "agent_found": True,
+            "eligible": [],
+            "rejected": [
+                {
+                    "tool_key": "github::merge",
+                    "reason": "DENY_VIOLATION",
+                    "paths": [
+                        '(github::merge) -WRITES-> (https://u:"hunter 2"@Host/r)',
+                        "(github::merge) -READS-> (neo4j://u:%27p%20w%27@Host/DB?token=planted)",
+                    ],
+                }
+            ],
+        },
+    )
+    plan = build_policy_review_plan(report=Path("trace.json"), agent="planner")
+    assert plan["candidates"][0]["current_paths"] == [
+        "(github::merge) -WRITES-> (https://<redacted-uri>",
+        "(github::merge) -READS-> (neo4j://<redacted-uri>",
+    ]
+    schema = json.loads((ROOT / "contracts" / "policy-review-plan.schema.json").read_text())
+    Draft202012Validator(schema).validate(plan)
+    assert "hunter" not in json.dumps(plan) and "planted" not in json.dumps(plan)

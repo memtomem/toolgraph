@@ -45,13 +45,13 @@ OTHER = "file:///other.txt"
 CANDIDATES = ["one::read", "two::read", "one::write"]
 
 
-def seed():
+def seed(shared=SHARED):
     for server, tools in [("one", ["read", "write"]), ("two", ["read"])]:
         loader.load_crawl_result(
             CrawlResult(
                 server_name=server,
                 tools=[ToolRecord(name=t) for t in tools],
-                resources=[ResourceRecord(uri=SHARED)],
+                resources=[ResourceRecord(uri=shared)],
             )
         )
     gov = Governance(
@@ -62,12 +62,12 @@ def seed():
         data_access=[
             DataAccess(
                 tool=t,
-                resource=SHARED if t.endswith("read") else OTHER,
+                resource=shared if t.endswith("read") else OTHER,
                 mode="READS" if t.endswith("read") else "WRITES",
             )
             for t in CANDIDATES
         ],
-        governed_by={SHARED: ["p"]},
+        governed_by={shared: ["p"]},
     )
     assert ingest_governance(gov).applied
     return gov
@@ -457,6 +457,33 @@ def test_expected_artifact_evidence_is_scrubbed_on_check(backend_graph, tmp_path
     result = check_policy_impact(ImpactReport.model_validate(report))
     assert result["passed"]
     assert "planted-secret" not in json.dumps(result)
+
+
+def test_quoted_userinfo_is_hidden_in_evidence_json_and_markdown(backend_graph):
+    # The graph stores this as `u:%22hunter@x/y%22@Host` (normalize_resource_uri);
+    # without the encoded-quote rule the evidence showed `neo4j://x/y%22@Host/DB`.
+    gov = seed('neo4j://u:"hunter@x/y"@Host/DB?token=planted')
+    gov.policies[0].effect = "DENY"
+    report = impact(gov)
+    evidence = [path for row in report["rows"] for path in row["after"]["evidence"]]
+    assert evidence
+    assert {path["resource"] for path in evidence} == {"neo4j://<redacted-uri>"}
+    assert {path["path"] for path in evidence} == {"(read) -READS-> (neo4j://<redacted-uri>"}
+    for rendered in (canonical_json_bytes(report).decode(), impact_markdown(report)):
+        assert "hunter" not in rendered and "x/y" not in rendered and "planted" not in rendered
+
+
+def test_check_hides_quoted_userinfo_in_expected_evidence(backend_graph):
+    gov = seed()
+    report = impact(gov)
+    report["rows"][0]["after"]["evidence"] = [
+        {"path": '(one::read) -READS-> (neo4j://u:"hunter 2"@Host/DB) -GOVERNED_BY-> (p:DENY)'}
+    ]
+    report["rows"][0]["details_changed"] = True
+    result = check_policy_impact(ImpactReport.model_validate(report))
+    [row] = [row for row in result["rows"] if row["candidate"] == report["rows"][0]["candidate"]]
+    assert row["expected"]["evidence"] == [{"path": "(one::read) -READS-> (neo4j://<redacted-uri>"}]
+    assert "hunter" not in json.dumps(result)
 
 
 def test_schema_stays_in_sync_with_runtime_model():

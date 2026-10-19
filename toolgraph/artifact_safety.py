@@ -5,7 +5,37 @@ from urllib.parse import urlsplit, urlunsplit
 
 from toolgraph.redaction import is_credential_shaped
 
-_URI = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s)]+")
+# A scheme starts only where a run of scheme characters starts, so a long word
+# is scanned once rather than again from each letter, and it must hold a
+# letter: `123://` is not a URI, but a URI after it (`123://https://...`) is.
+_SCHEME = re.compile(r"(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*://")
+_URI = re.compile(_SCHEME.pattern + r"[^\s)]+")
+# Encoded quotes count: graph resource URIs pass through
+# normalize_resource_uri, which writes `u:"p w"@host` as `u:%22p%20w%22@host`.
+_QUOTE = re.compile(r"['\"]|%2[27]")
+
+
+def _hide_quoted_userinfo(text: str) -> str:
+    # A quote after a scheme with an '@' after it may be a quoted userinfo
+    # password (`neo4j://u:"p w"@host/r`). Its end cannot be found reliably:
+    # the quoted value may hold '@', '/', ')', '?', '#', whitespace or the
+    # other quote, and the same '@' may belong to a query instead. So
+    # everything after the first scheme is hidden, path included; no
+    # credential URI can start before it.
+    scheme = _SCHEME.search(text)
+    if scheme is None:
+        return text
+    quote = _QUOTE.search(text, scheme.end())
+    if quote is None or text.rfind("@") < quote.start():
+        return text
+    return text[: scheme.end()] + "<redacted-uri>"
+
+
+def _redact_uri_keeping_prefix(value: str) -> str:
+    # Characters before the scheme's first letter (`1https://`) are not part
+    # of the URI and stay as they are.
+    first = next(i for i, char in enumerate(value) if char.isalpha())
+    return value[:first] + _redact_uri(value[first:])
 
 
 def _redact_uri(value: str) -> str:
@@ -33,7 +63,10 @@ def redact(value, *, _depth: int = 0):
         return [redact(item, _depth=_depth + 1) for item in value]
     if isinstance(value, str):
         # Evidence paths contain a URI inside surrounding graph notation.
-        return _URI.sub(lambda match: _redact_uri(match.group(0)), value)
+        return _URI.sub(
+            lambda match: _redact_uri_keeping_prefix(match.group(0)),
+            _hide_quoted_userinfo(value),
+        )
     return value
 
 

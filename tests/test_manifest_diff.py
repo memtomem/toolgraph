@@ -422,3 +422,27 @@ def test_dry_run_json_scrubs_uri_lists_nested_evidence_and_warnings(monkeypatch,
     assert rendered["expected_exceptions_removed"] == [{"reason": "see https://host/path"}]
     assert "password" not in result.stdout and "secret" not in result.stdout
     assert report.resources_pruned == [uri]  # rendering does not change the delta
+
+
+def test_dry_run_json_hides_quoted_userinfo(monkeypatch, tmp_path):
+    from toolgraph.manifest.ingest import GovernanceDiffReport
+
+    uri = 'neo4j://u:"hunter 2"@Host/DB?token=planted'
+    report = GovernanceDiffReport(
+        applied=False,
+        resources_pruned=[uri],
+        data_access_removed=[{"resource": uri}],
+        expected_exceptions_removed=[{"reason": f"see {uri}"}],
+    )
+    monkeypatch.setattr(cli, "dry_run_ingest", lambda *a, **k: report)
+    path = tmp_path / "governance.yaml"
+    path.write_text("agents: [bot]\n")
+    result = CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+    )
+    assert result.exit_code == 0, result.output
+    rendered = json.loads(result.stdout)
+    assert rendered["resources_pruned"] == ["neo4j://<redacted-uri>"]
+    assert rendered["data_access_removed"] == [{"resource": "neo4j://<redacted-uri>"}]
+    assert rendered["expected_exceptions_removed"] == [{"reason": "see neo4j://<redacted-uri>"}]
+    assert "hunter" not in result.stdout and "planted" not in result.stdout

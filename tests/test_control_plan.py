@@ -135,6 +135,24 @@ def test_build_preflight_warns_without_becoming_an_enforcer(monkeypatch):
     assert artifact["evaluations"][1]["rejected"]
 
 
+def test_evaluation_paths_hide_quoted_userinfo(monkeypatch):
+    control_plan_bracket(monkeypatch, rejected=True)
+    bracketed = control_plan.selector.eligible_tools
+
+    def eligible(principal, candidates, *, profile):
+        result = bracketed(principal, candidates, profile=profile)
+        for row in result["rejected"]:
+            row["paths"] = ['(t) -WRITES-> (neo4j://u:"hunter 2"@Host/DB) -GOVERNED_BY-> (p:DENY)']
+        return result
+
+    monkeypatch.setattr("toolgraph.control_plan.selector.eligible_tools", eligible)
+    artifact = build_control_preflight(control_plan_raw(), profile="strict", created_at=NOW)
+    assert artifact["evaluations"][1]["rejected"][0]["paths"] == [
+        "(t) -WRITES-> (neo4j://<redacted-uri>"
+    ]
+    assert "hunter" not in json.dumps(artifact)
+
+
 def test_missing_graph_instance_fails_closed(monkeypatch):
     monkeypatch.setattr(
         "toolgraph.control_plan.queries.with_graph_state",
@@ -722,6 +740,19 @@ def test_sanitized_array_byte_budget_and_lower_bound(monkeypatch):
     assert bounded["truncated"]
     assert len(json.dumps(bounded["exposures"]).encode()) <= exact_size
     assert bounded["total_candidate_pairs_found"] > len(bounded["exposures"])
+
+
+def test_exposure_resources_hide_quoted_userinfo():
+    _, plan = _chain(5)
+    session = ExposureSession(
+        reads=('neo4j://u:"read secret"@Host/In?token=r',),
+        writes=("https://u:'write secret'@Host/Out#w",),
+    )
+    result = control_plan.compute_control_plan_exposures(plan, EVALUATIONS, session)
+    [exposure] = result["exposures"]
+    assert exposure["read_resource"] == "neo4j://<redacted-uri>"
+    assert exposure["write_resource"] == "https://<redacted-uri>"
+    assert "secret" not in json.dumps(result)
 
 
 def test_record_limit_counts_discovered_not_all_pairs(monkeypatch):
