@@ -180,6 +180,28 @@ def test_ambiguous_bare_grant_protection_regression(backend_graph, tmp_path):
         assert res["insufficient_evidence"][0]["reason"] == "AMBIGUOUS_GRANT"
 
 
+def test_ambiguous_grant_refuses_a_credential_shaped_match(backend_graph):
+    # The matches are joined into the row's note, which the output check reads
+    # as prose; a server name holding userinfo must not reach it.
+    schema.init_schema()
+    with driver.session() as s:
+        for server in ["alpha", "neo4j://u:QX/ZQ@host/r"]:
+            s.run(
+                "CREATE (m:MCPServer {name: $server}) CREATE (t:Tool "
+                "{key: $key, name: 'read_file'}) CREATE (m)-[:EXPOSES]->(t)",
+                server=server,
+                key=f"{server}::read_file",
+            )
+        grants = [{"agent": "bot", "tool": "srv::other"}, {"agent": "bot", "tool": "read_file"}]
+        with pytest.raises(ProvenanceError) as raised:
+            resolve_grants_from_graph(s, grants)
+
+    assert str(raised.value) == (
+        "refusing to emit a proposal: a live-graph match for grants[1] "
+        "contains credential-shaped data"
+    )
+
+
 def test_bare_grant_adopts_a_single_live_resolution(backend_graph):
     schema.init_schema()
     with driver.session() as s:

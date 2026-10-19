@@ -59,6 +59,18 @@ QUOTED_OR_UNBOUNDED_SECRETS = [
     ('neo4j://u:p"ss@host', ['"ss']),
     ('neo4j://me@corp.example:p"ss@host', ['"ss']),
     ('neo4j://u:"hunter 2"@host', ["hunter"]),
+    # A quoted password after a '?' or '#', or after an email username.
+    ('neo4j://u:p?"QX ZQ"@h/a', ["QX", "ZQ"]),
+    ('neo4j://u:p#"QX ZQ"@h/a', ["QX", "ZQ"]),
+    ('see neo4j://u@example.com:"QX ZQ"@h/a', ["QX", "ZQ"]),
+    # A user part quoted from the start, raw or encoded.
+    ('neo4j://"u":"QX ZQ"@h/a', ["QX", "ZQ"]),
+    ("neo4j://%22u%22:%22QX ZQ%22@h/a", ["QX", "ZQ"]),
+    ('neo4j://"u v":"QX ZQ"@h/a', ["QX", "ZQ"]),
+    ("neo4j://%22u%20v%22:%22QX ZQ%22@h/a", ["QX", "ZQ"]),
+    ("neo4j://%27u%E2%80%83v%27:%27QX ZQ%27@h", ["QX", "ZQ"]),
+    ("neo4j://u?x:%22QX ZQ%22@h/a", ["QX", "ZQ"]),
+    ('neo4j://u#x:"QX ZQ"@h/a', ["QX", "ZQ"]),
     ("1https://alice:hunter2@host/x", ["hunter2"]),
     ("+https://alice:hunter2@host/x", ["hunter2"]),
     ("http://host:8080?token=abc@SENTINEL", ["SENTINEL"]),
@@ -138,6 +150,10 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         'password="' + "a" * 100_000,
         "password=" * 20_000,
         'Authorization: "' + "a" * 100_000,
+        'a://u:"' * 30_000 + "@",
+        "a://" + ":" * 150_000 + "@",
+        'a://"' + ":" * 150_000 + "@",
+        "a://u?" * 40_000 + "@",
     ],
     ids=[
         "letters",
@@ -148,6 +164,10 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "quote",
         "keywords",
         "auth-quote",
+        "quoted-passwords",
+        "password-colons",
+        "quoted-user-colons",
+        "query-users",
     ],
 )
 def test_redaction_stays_linear_on_adversarial_text(text):
