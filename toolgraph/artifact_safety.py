@@ -3,7 +3,7 @@
 import re
 from urllib.parse import unquote, urlsplit
 
-from toolgraph.redaction import is_credential_shaped
+from toolgraph.redaction import is_credential_shaped_identity
 
 # A scheme starts only where a run of scheme characters starts, so a long word
 # is scanned once rather than again from each letter, and it must hold a
@@ -201,7 +201,7 @@ def _holds_resource(key, parent: dict) -> bool:
 
 
 def validate_identity(value: str) -> None:
-    if is_credential_shaped(value):
+    if is_credential_shaped_identity(value):
         raise ValueError("artifact identity contains credential-shaped data")
 
 

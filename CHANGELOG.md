@@ -40,6 +40,16 @@ All notable changes to Toolgraph are documented here.
   same way. The rows still carry the raw `resource` and `policy` values
   beside the path.
 - `ingest-manifest` warnings that name a resource show it redacted.
+- Identities are refused when they hold a URI with an `@` anywhere after its
+  `://`, raw or percent-encoded (#210): agent ids, tool keys, run ids,
+  candidates and graph instance ids in preflight, policy bundle, review plan,
+  policy impact and `policy propose` input and output, and the run ids and
+  tool keys of a Tracegraph review report. Before, only a `user:password@`
+  that the refusal rule could bound was refused, so `neo4j://u:p/w@host/r`
+  passed. An identity has no reason to hold userinfo, and an unquoted
+  password may hold `/`, `)` or whitespace. Review notes, reviewer names,
+  the notes of `policy propose` rows and control plans keep the rule for
+  prose.
 
 ### Fixed
 
@@ -54,6 +64,23 @@ All notable changes to Toolgraph are documented here.
   bounded, as in 0.3.0: a password holding whitespace without quotes, a
   query or fragment holding `)` (`see https://h/r?k=a)b` still shows `)b`),
   and text after a `)` that no longer reads as a URI.
+- A URI with a quote in its userinfo and an `@` after it is refused like any
+  other credential URI, raw or percent-encoded (#210): in identities, review
+  notes, reviewer names and control plans. Before, a quoted password holding
+  whitespace (`neo4j://u:"p w"@host`), a quoted part after a `?` or `#`
+  (`neo4j://u:p?"w s"@host`, `neo4j://u?x:"p w"@host`) and a quoted user
+  part (`neo4j://"u v":"p w"@host`) were accepted. The refusal now matches
+  what error-message scrubbing already hides, so a quoted URL followed by an
+  address in the same text (`"https://h" mail a@b`, `"https://h:443" mail
+  a@b`) is refused too; `see "https://x/y" and @alice`, whose quote follows
+  a path, is not. Error messages hide the new shapes as well: before,
+  `neo4j://u:p?"w s"@h/a` kept `"w s"@h/a`. A message whose decoded or
+  scrubbed text still holds such a URI is withheld, as one holding
+  `u:%22pw%22@` already was; `see "https://x/y" and @alice` as an error
+  message is now withheld for that reason. Userinfo whose unquoted part
+  holds whitespace (`neo4j://u v:"p w"@host`) still passes in prose and in
+  error messages, where it reads as a URL followed by text; identities
+  refuse it.
 
 ## 0.3.0 - 2026-10-19
 

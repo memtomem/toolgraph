@@ -20,7 +20,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
-from toolgraph.redaction import is_credential_shaped
+from toolgraph.redaction import is_credential_shaped, is_credential_shaped_identity
 
 if os.name == "nt":  # exercised on Windows CI/users
     import msvcrt
@@ -94,7 +94,7 @@ class ReviewCandidate(BaseModel):
     @field_validator("run_id", "tool_key")
     @classmethod
     def _identity_is_credential_free(cls, value: str) -> str:
-        if is_credential_shaped(value):
+        if is_credential_shaped_identity(value):
             raise ValueError("must not contain credentials")
         return value
 

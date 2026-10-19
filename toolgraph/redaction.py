@@ -19,6 +19,15 @@ _URI = re.compile(_SCHEME + r"[^\s'\"<>]+", re.IGNORECASE)
 # userinfo password (`neo4j://u:"p w"@host`) whose end cannot be found
 # reliably, so everything from the start of that token on is hidden.
 _QUOTED_AUTHORITY = re.compile(_SCHEME + r"[^\s/?#'\"]*['\"]", re.IGNORECASE)
+# A quote in userinfo after a '?' or '#' (`neo4j://u:p?"w s"@host`,
+# `neo4j://u?x:"p w"@host`), which _QUOTED_AUTHORITY stops before. The ':'
+# before the quote keeps a URL with a quoted query in prose
+# (`"https://h?q=1" a@b`) out. The user part stops at the first ':', which
+# keeps one attempt from re-splitting the same authority.
+_QUOTED_PASSWORD = re.compile(_SCHEME + r"[^\s/'\":]*:[^\s/'\"]*['\"]", re.IGNORECASE)
+# Quoted userinfo, refused and hidden by the same two patterns, each searched
+# only before the last '@'.
+_QUOTED_USERINFO = (_QUOTED_AUTHORITY, _QUOTED_PASSWORD)
 _AUTHORIZATION = re.compile(
     r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
     r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
@@ -165,19 +174,41 @@ def is_credential_shaped(text: str) -> bool:
     """True when a value that is stored or emitted as given holds a credential.
 
     The one refusal rule for every value Toolgraph refuses rather than
-    scrubs: artifact identities, graph instance ids, review notes and review
-    metadata, and every control-plan key and string. Covers credential URIs
+    scrubs: review notes and reviewer names, every control-plan key and
+    string, and, through ``is_credential_shaped_identity``, which adds to it,
+    artifact identities and graph instance ids. Covers credential URIs
     and queries, ``name=value`` and ``name: value`` assignments,
     ``Authorization`` and ``Bearer`` values, in the raw text and after one
-    percent-decoding pass. ``server::tool`` and single-colon names such as
-    ``get_token:v2`` pass.
+    percent-decoding pass. A quote in a URI's userinfo with an ``@`` after it
+    (``neo4j://u:"p w"@host``) is refused as a credential URI, since where the
+    quoted value ends cannot be found; this also refuses a quoted URL followed
+    by an address (``"https://h" mail a@b``). ``server::tool`` and
+    single-colon names such as ``get_token:v2`` pass. Prose cannot bound
+    userinfo whose unquoted part holds whitespace (``neo4j://u v:"p w"@h``
+    reads as a URL followed by text), so only identities refuse that.
     """
     return any(
         CREDENTIAL_URI.search(form)
+        or any(pattern.search(form, 0, form.rfind("@")) for pattern in _QUOTED_USERINFO)
         or CREDENTIAL_QUERY.search(form)
         or _REFUSED_ASSIGNMENT.search(form)
         or _REFUSED_AUTHORIZATION.search(form)
         or _BEARER.search(form)
+        for form in _inspected(text)
+    )
+
+
+def is_credential_shaped_identity(text: str) -> bool:
+    """True when an identity value holds a credential.
+
+    For values that name something (agents, tool keys, run and instance
+    ids), never prose. On top of ``is_credential_shaped``, any ``://`` with an
+    ``@`` after it is refused: an unquoted password may hold whitespace, ``/``
+    or ``)`` (``neo4j://u:p w@host``), so its end cannot be found, and an
+    identity has no reason to hold a URI with userinfo at all.
+    """
+    return is_credential_shaped(text) or any(
+        (scheme := form.find("://")) != -1 and form.find("@", scheme) != -1
         for form in _inspected(text)
     )
 
@@ -195,14 +226,16 @@ def _uri_origin_keeping_prefix(value: str) -> str:
 
 
 def _hide_quoted_userinfo(text: str) -> str:
-    # One search that must end before the last '@', so the scan stays linear
-    # however many quoted URIs the text holds. The hidden span starts at the
+    # Each search must end before the last '@', so the scan stays linear
+    # however many quoted URIs the text holds. A quoted password is hidden
+    # wherever the refusal rule refuses one. The hidden span starts at the
     # beginning of the whitespace-delimited token: cutting at a nested scheme
     # (`https://user:x://"pw"@host`) would leave a prefix that reads as a URI.
-    match = _QUOTED_AUTHORITY.search(text, 0, text.rfind("@"))
-    if match is None:
+    end = text.rfind("@")
+    matches = [match for pattern in _QUOTED_USERINFO if (match := pattern.search(text, 0, end))]
+    if not matches:
         return text
-    start = match.start()
+    start = min(match.start() for match in matches)
     while start and not text[start - 1].isspace():
         start -= 1
     return text[:start] + "<redacted-uri>"
