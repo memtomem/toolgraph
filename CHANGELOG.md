@@ -202,6 +202,24 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- An error message that would still show a credential after scrubbing is
+  withheld (#202). Scrubbing cannot recognise every credential, for example
+  a percent-encoded name such as `?%74oken=x` quoted in a validation error
+  about an observed export, a selector profile or a governance key. Such a
+  message now reads `details withheld (they contain credential-shaped
+  data)` after the command's own context, where it used to print the
+  value. A message whose percent-decoded form is credential-shaped is
+  withheld before scrubbing, since the scrubber does not decode: this also
+  withholds some messages it could have cleaned, such as an encoded URL with
+  a `?token=` query. A placeholder that the input itself contains is shown
+  as `\u2039redacted`, so it cannot pass for one the scrubber inserted.
+  This covers every message that goes through the shared scrubber:
+  CLI errors, crawl failures and the server's backend-misconfiguration log
+  record. CLI usage errors, `--dry-run` JSON warnings, MCP SDK errors
+  outside Toolgraph's own envelopes and logged tracebacks do not go through
+  it yet (#206). Checking for credential URIs is also linear now: a long run of
+  `a:` with no `@` took seconds.
+
 - Error text no longer shows part of a quoted credential (#201). A password
   in quotes inside a URI (`neo4j://u:"p@ss"@host`) was printed whole, and a
   quoted value with a space (`password="hunter 2"`, `NEO4J_PASSWORD="s3cr3t

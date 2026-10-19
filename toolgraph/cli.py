@@ -346,7 +346,8 @@ def crawl(
         # last-load-wins reconcile each other's tools away — reject before
         # connecting to anything.
         typer.echo(
-            f"  [error] duplicate name override(s) in {path}: {', '.join(sorted(dupes))}",
+            f"  [error] duplicate name override(s) in {path}: "
+            f"{redact_text(', '.join(sorted(dupes)))}",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -723,7 +724,9 @@ def _require_agent(agent: str) -> None:
     """Selection with an unknown agent is a context-construction error, not an
     empty result — mirror unsafe-tools: diagnostic to stderr, exit 1."""
     if not queries.agent_exists(agent):
-        typer.echo(f"AGENT_NOT_FOUND: no agent named {agent!r} in the graph", err=True)
+        typer.echo(
+            f"AGENT_NOT_FOUND: no agent named {redact_text(repr(agent))} in the graph", err=True
+        )
         raise typer.Exit(code=1)
 
 

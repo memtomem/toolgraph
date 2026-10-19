@@ -502,3 +502,23 @@ def test_manifest_text_warnings_are_redacted(monkeypatch, tmp_path, dry_run):
     assert result.exit_code == 1
     assert "password" not in result.output and "secret" not in result.output
     assert "https://host" in result.output
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        "agents: [existing]\n'?%74oken=SECRET': 1\n'?%74oken=SECRET': 2\n",
+        "agents: [existing]\n'?%74oken=SECRET': 1\n",
+    ],
+    ids=["duplicate-key", "unknown-key"],
+)
+def test_invalid_governance_error_never_quotes_a_credential_key(tmp_path, document):
+    path = tmp_path / "governance.yaml"
+    path.write_text(document)
+
+    result = CliRunner().invoke(app, ["ingest-manifest", "--governance", str(path)])
+
+    assert result.exit_code == 1
+    assert "Invalid governance config" in result.output
+    assert "SECRET" not in result.output
+    assert "details withheld (they contain credential-shaped data)" in result.output

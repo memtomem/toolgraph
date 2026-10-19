@@ -38,8 +38,10 @@ CREDENTIAL_KEYWORDS = r"api[-_]?key|access[-_]?token|token|password|secret|crede
 # than RFC 3986: the user part may contain '@' (an email as the username) and
 # the password may contain an unencoded '?' or '#', both of which still leak a
 # password. The cost is refusing the rare URL whose query holds an '@' after a
-# port (https://user@host:443?x=a@b), which errs toward refusing.
-CREDENTIAL_URI = re.compile(r"://[^/\s]+:[^/\s]+@")
+# port (https://user@host:443?x=a@b), which errs toward refusing. The user part
+# stops at the first ':', so one attempt never re-splits the same authority
+# (`[^/\s]+:` before it took seconds on a long run of `a:` with no '@').
+CREDENTIAL_URI = re.compile(r"://[^/\s:]*:[^/\s]+@")
 CREDENTIAL_QUERY = re.compile(rf"[?&](?:{CREDENTIAL_KEYWORDS})=[^&#\s]+", re.IGNORECASE)
 
 # Scrubbing errs toward hiding: unlike the refusal check below, a '::' is not
@@ -206,11 +208,37 @@ def _hide_quoted_userinfo(text: str) -> str:
     return text[:start] + "<redacted-uri>"
 
 
+WITHHELD = "details withheld (they contain credential-shaped data)"
+# A placeholder written in the input is shown as `\u2039redacted...`, so it can
+# never pass for one a scrubber inserted.
+_INPUT_PLACEHOLDER = re.compile(r"(?i)<(?=redacted)")
+# Exactly the placeholders the scrubbers insert: the credential name in any
+# case, the placeholder itself verbatim.
+_INSERTED = re.compile(
+    rf"(?i:{CREDENTIAL_KEYWORDS}|authorization)=<redacted>|(?i:bearer) <redacted>|<redacted-uri>"
+)
+
+
 def redact_text(value: object) -> str:
-    """Scrub URLs and common credential-shaped values from an error message."""
-    text = _hide_quoted_userinfo(str(value))
+    """Scrub URLs and common credential-shaped values from an error message.
+
+    The scrubbers do not decode percent-encoding, so a message whose decoded
+    form is credential-shaped (`?%74oken=x`, `https%3A//user:pw@host`) is
+    replaced by ``WITHHELD`` before scrubbing. After scrubbing, the text
+    without the placeholders the scrubbers inserted is checked with the
+    refusal rule, and withheld if it is still credential-shaped. A
+    placeholder the input itself carries is shown as `\u2039redacted`.
+    """
+    raw = str(value)
+    decoded = unquote(raw)
+    if decoded != raw and is_credential_shaped(decoded):
+        return WITHHELD
+    text = _hide_quoted_userinfo(_INPUT_PLACEHOLDER.sub("\u2039", raw))
     text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
-    return redact_credentials(text)
+    text = redact_credentials(text)
+    if is_credential_shaped(_INSERTED.sub(" ", text)):
+        return WITHHELD
+    return text
 
 
 def redact_credentials(text: str) -> str:
