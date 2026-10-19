@@ -303,8 +303,13 @@ come from the orchestrator and Tracegraph runs against your own fleet.
 `preflight` wraps the same deterministic selector rules and stamps the result
 with a bracketed `graph_generation`. It remains advisory: rejected candidates
 produce `decision: advisory_warn` and exit 0. Unknown agents produce
-`unresolved_identity`, never a false allow. Resource URIs in evidence are
-scrubbed of userinfo and query strings before the artifact is written. Pass
+`unresolved_identity`, never a false allow. Resource URIs in evidence paths
+and resource fields are scrubbed of userinfo, query strings and fragments
+before the artifact is written; one with an `@` after its authority, or one
+that cannot be parsed, is shown as `<scheme>://<redacted-uri>`. Inside free
+text, such as an exception reason, a URI ends at whitespace or `)`, so a
+query or fragment holding `)` (`https://h/r?k=a)b`) still shows what follows
+the `)`. Pass
 `--features` only when the consumer needs the full selector feature rows.
 With `--out` the artifact is written privately and atomically, and the command
 prints a result envelope carrying `artifact_digest` — the SHA-256 of the exact

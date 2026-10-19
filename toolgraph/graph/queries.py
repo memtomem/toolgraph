@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from toolgraph.artifact_safety import display_resource
 from toolgraph.graph.driver import read_session
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
@@ -218,17 +219,22 @@ def _agent_ids() -> list[str]:
         return [r["id"] for r in s.run("MATCH (a:Agent) RETURN a.id AS id ORDER BY id")]
 
 
+# Paths show a resource or policy through display_resource while the value is
+# still whole: once interpolated, where an unquoted password ends cannot be
+# told. Rows keep the raw value beside the path.
 def _resource_path(tool: str, mode: str, resource: str, policy: str) -> str:
+    resource, policy = display_resource(resource), display_resource(policy)
     return f"({tool}) -{mode}-> ({resource}) -GOVERNED_BY-> ({policy}:DENY)"
 
 
 def _tool_path(tool: str, policy: str) -> str:
-    return f"({tool}) -GOVERNED_BY-> ({policy}:DENY)"
+    return f"({tool}) -GOVERNED_BY-> ({display_resource(policy)}:DENY)"
 
 
 def _radius_path(
     agent: str | None, tool: str | None, mode: str | None, resource: str
 ) -> str | None:
+    resource = display_resource(resource)
     if agent and tool:
         return f"({agent}) -CAN_CALL-> ({tool}) -{mode}-> ({resource})"
     if tool:
@@ -919,7 +925,9 @@ def _blast_radius_policy(s: Session, node: str) -> dict:
     ):
         d = dict(r)
         d["path"] = (
-            f"({d['agent']}) -CAN_CALL-> ({d['tool']}) [GOVERNED_BY {node}]" if d["agent"] else None
+            f"({d['agent']}) -CAN_CALL-> ({d['tool']}) [GOVERNED_BY {display_resource(node)}]"
+            if d["agent"]
+            else None
         )
         d["provenance"] = row_provenance(r)
         for k in ("source", "confidence", "evidence"):
