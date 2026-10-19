@@ -397,7 +397,7 @@ def resolve_grants_from_graph(
     resolved: dict[tuple[str, str], str] = {}
     ambiguous: list[dict] = []
 
-    for g in grants:
+    for index, g in enumerate(grants):
         agent, tool = g["agent"], g["tool"]
         if "::" in tool:
             resolved[(agent, tool)] = tool
@@ -406,6 +406,13 @@ def resolve_grants_from_graph(
         if len(matches) == 1:
             resolved[(agent, matches[0])] = tool
         elif len(matches) > 1:
+            # The matches are identities, but the note they are joined into
+            # gets only the prose rule, so each is checked here first.
+            if any(is_credential_shaped_identity(match) for match in matches):
+                raise ProvenanceError(
+                    f"refusing to emit a proposal: a live-graph match for grants[{index}] "
+                    "contains credential-shaped data"
+                )
             ambiguous.append(
                 {
                     "agent": agent,

@@ -49,7 +49,10 @@ All notable changes to Toolgraph are documented here.
   passed. An identity has no reason to hold userinfo, and an unquoted
   password may hold `/`, `)` or whitespace. Review notes, reviewer names,
   the notes of `policy propose` rows and control plans keep the rule for
-  prose.
+  prose. The live-graph tool keys an ambiguous grant's note lists are
+  checked as identities before they are joined into it, so `policy propose`
+  refuses to emit a proposal whose note would show one holding userinfo
+  (#216).
 
 ### Fixed
 
