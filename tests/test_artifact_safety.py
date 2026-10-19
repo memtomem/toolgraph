@@ -15,12 +15,13 @@ from typer.testing import CliRunner
 
 from tests._helpers import FakeBundleReader
 from toolgraph import cli
-from toolgraph.artifact_safety import EvidenceUriError, redact, safe_artifact
+from toolgraph.artifact_safety import EvidenceUriError, display_resource, redact, safe_artifact
 from toolgraph.graph import loader, queries
 from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import CrawlResult, Governance, ToolRecord
 from toolgraph.policy_bundle import build_policy_bundle
 from toolgraph.preflight import build_preflight
+from toolgraph.uris import normalize_resource_uri
 
 
 def test_identity_preservation_and_evidence_redaction():
@@ -165,30 +166,84 @@ def test_nested_evidence_hides_quoted_userinfo_and_keeps_identities():
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("neo4j://u:p)ss@host/r", "neo4j://<redacted-uri>"),
-        ("neo4j://u:p(ss)@h/r", "neo4j://<redacted-uri>"),
+        # A ')' in userinfo of a whole value is stripped with it: the value is
+        # bounded, so nothing guesses where the password ends.
+        ("neo4j://u:p)ss@host/r", "neo4j://host/r"),
+        ("neo4j://u:p(ss)@h/r", "neo4j://h/r"),
+        ("file:///a(b)@c", "file://<redacted-uri>"),
+        ("https://h/x)?e=a@b", "https://<redacted-uri>"),
+        ('neo4j://u:"p)ss"@host/r', "neo4j://<redacted-uri>"),
+        # #212: a whole value loses its query whole, ')' and all.
+        ("https://h/r?k=QX)ZQ", "https://h/r"),
+    ],
+)
+def test_parenthesized_userinfo_is_stripped_with_the_value(value, expected):
+    assert redact(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # In free text a ')' then an '@' hides everything after the scheme: the
+        # password may go on past the whitespace, so the parser's host may be
+        # part of it.
+        ("see https://u:)@QXZQ tail@h/r", "see https://<redacted-uri>"),
+        ("see https://u:QX)ZQ@h tail", "see https://<redacted-uri>"),
+        ("see https://u:)@QXZQ\u3000tail@h/r", "see https://<redacted-uri>"),
         (
             "(t) -READS-> (neo4j://u:p)ss@host/r) -GOVERNED_BY-> (p:DENY)",
-            "(t) -READS-> (neo4j://<redacted-uri> -GOVERNED_BY-> (p:DENY)",
+            "(t) -READS-> (neo4j://<redacted-uri>",
         ),
         (
             "(t) -READS-> (https://host/a) -GOVERNED_BY-> (neo4j://u:p)ss@h/r:DENY)",
             "(t) -READS-> (https://host/a) -GOVERNED_BY-> (neo4j://<redacted-uri>",
         ),
-        # The run ends at whitespace, not at a ')': adjacent values go too.
         ("(https://a)(https://u:p@b)", "(https://<redacted-uri>"),
-        # No password, but a ')' before an '@' cannot be told from one.
-        ("file:///a(b)@c", "file://<redacted-uri>"),
-        ("https://h/x)?e=a@b", "https://<redacted-uri>"),
-        # The quoted rule runs first and still hides to the end.
-        ('neo4j://u:"p)ss"@host/r', "neo4j://<redacted-uri>"),
     ],
 )
-def test_parenthesized_userinfo_hides_the_rest_of_the_run(value, expected):
+def test_parenthesized_userinfo_in_free_text_hides_the_rest_of_the_text(value, expected):
+    assert redact(value) == expected
+    assert safe_artifact({"exception_reason": value}) == {"exception_reason": expected}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # Every URI in a run is redacted, the text after a ')' read on.
+        ("see https://a)(https://h/r?x=QXZQ)", "see https://a)(https://h/r)"),
+        ("see https://a)(https://h/r#QXZQ)", "see https://a)(https://h/r)"),
+        (
+            "(t) -R-> (https://h/r) -X-> (https://u:p@h2/r?q=1) end",
+            "(t) -R-> (https://h/r) -X-> (https://h2/r) end",
+        ),
+        # Only a value already in its displayed form is exempt from hiding the
+        # rest; a placeholder written into a value is not.
+        ('see https://h/@scope/password="a<redacted-uri> HUNTER2"', "see https://<redacted-uri>"),
+        ("see https://h/@s/token=[a<redacted-uri> HUNTER2]", "see https://<redacted-uri>"),
+        ("see https://<redacted-uri> tail", "see https://<redacted-uri> tail"),
+    ],
+)
+def test_free_text_redacts_each_uri_in_a_run(value, expected):
     assert redact(value) == expected
 
 
-def test_parenthesized_rule_keeps_ordinary_userinfo_redaction():
+@pytest.mark.parametrize(
+    ("resource", "shown"),
+    [
+        ("neo4j://u:p)ss@host/r", "neo4j://host/r"),
+        ("https://h/r?k=QX)ZQ", "https://h/r"),
+        ("neo4j://u:QX/ZQ@host/r", "neo4j://<redacted-uri>"),
+        ("https://registry/@scope/pkg", "https://<redacted-uri>"),
+    ],
+)
+def test_a_path_built_from_a_resource_keeps_its_line(resource, shown):
+    # The formatter displays the resource whole; free-text redaction of the
+    # path then keeps the rest of the line, placeholder included.
+    path = queries._resource_path("t", "READS", resource, "p")
+    assert redact(path) == f"(t) -READS-> ({shown}) -GOVERNED_BY-> (p:DENY)"
+
+
+def test_ordinary_userinfo_redaction_in_graph_notation():
     assert redact("(t) -READS-> (neo4j://u:pw@host/r)") == "(t) -READS-> (neo4j://host/r)"
 
 
@@ -197,10 +252,9 @@ def test_parenthesized_rule_keeps_ordinary_userinfo_redaction():
     [
         "(https://host/a(b)) -R-> (x@y)",
         "(t) -READS-> (file:///data/a(1).csv) -GOVERNED_BY-> (p:DENY)",
-        "(a) -CAN_CALL-> (t) -READS-> (https://registry/@scope/pkg)",
         "(a) -CAN_CALL-> (t) [GOVERNED_BY p]",
         "(t) -READS-> (http://[::1]:7687/db) -GOVERNED_BY-> (p:DENY)",
-        "https://host/a%40b",
+        "export:///sink",
     ],
 )
 def test_parentheses_and_brackets_without_userinfo_are_kept(value):
@@ -208,43 +262,87 @@ def test_parentheses_and_brackets_without_userinfo_are_kept(value):
 
 
 @pytest.mark.parametrize(
-    "value",
+    ("value", "expected"),
     [
-        "https://[x/r",
-        "https://u:SECRETPW@[::1/r",
-        "https://[notip]/r",
-        "https://h]/r",
-        "https://u:SECRETPW@h\uff03x/r",
-        "(t) -READS-> (https://u:SECRETPW@[::1/r) -GOVERNED_BY-> (p:DENY)",
-        # Nothing after the unparseable URI may be printed in its place...
-        "https://u:SECRETPW[ ZQ@[::1/r",
-        "https://[x/r?token=SECRETPW)ZQ",
-        # ...nor anything before it or beside it.
-        "https://u:SECRETPW/ZQ@h/r)https://[x/r",
-        "(a) -R-> (https://u:SECRETPW@h/x) -R-> (https://[x/r) tail",
-        "1https://u:SECRETPW@[::1/r",
-        # The ')' rule would hide this one, so the check has to run first.
-        "https://u:p[)ss@h/r",
+        # #212: where an unquoted password ends cannot be told, so an '@'
+        # after the authority hides everything after the scheme.
+        ("neo4j://u:QX/ZQ@host/r", "neo4j://<redacted-uri>"),
+        ("neo4j://u:12/34@host/r", "neo4j://<redacted-uri>"),
+        ("https://host/neo4j://u:QXZQ@h/r", "https://<redacted-uri>"),
+        ("neo4j://u:p#w@host/r", "neo4j://<redacted-uri>"),
+        ("https://u:p?x@host/a", "https://<redacted-uri>"),
+        ("https://me@corp.example:p#x@host", "https://<redacted-uri>"),
+        ("neo4j://u:QXZQ%40host/r", "neo4j://<redacted-uri>"),
+        ("neo4j%3A%2F%2Fu:QX/ZQ@host/r", "<redacted-uri>"),
+        ("urn:neo4j://u:QX/ZQ@host/r", "urn:neo4j://<redacted-uri>"),
+        (" neo4j://u:QX/ZQ@host/r", " neo4j://<redacted-uri>"),
+        # In free text the rest of the text goes too: it may hold the rest of
+        # the password, or a value whose name went with the URI.
+        ("see neo4j://u:QX/ZQ@host/r and more", "see neo4j://<redacted-uri>"),
+        ("see neo4j://u:QXZQ%40host/r", "see neo4j://<redacted-uri>"),
+        ("see neo4j%3A%2F%2Fu:QXZQ@h/r)(https://a", "see <redacted-uri>"),
+        (
+            "(t) -READS-> (neo4j://u:QX/ZQ@host/r) -GOVERNED_BY-> (p:DENY)",
+            "(t) -READS-> (neo4j://<redacted-uri>",
+        ),
+        # The cost: a legitimate '@' after the authority is hidden too.
+        ("https://registry/@scope/pkg", "https://<redacted-uri>"),
+        ("https://user@host:443/p@q", "https://<redacted-uri>"),
+        ("https://host/a%40b", "https://<redacted-uri>"),
+        (
+            "(a) -CAN_CALL-> (t) -READS-> (https://registry/@scope/pkg)",
+            "(a) -CAN_CALL-> (t) -READS-> (https://<redacted-uri>",
+        ),
     ],
 )
-def test_unparseable_uri_refuses_without_quoting_it(value):
+def test_an_at_after_the_authority_hides_the_rest_of_the_value(value, expected):
+    assert redact(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("https://[x/r", "https://<redacted-uri>"),
+        ("https://u:SECRETPW@[::1/r", "https://<redacted-uri>"),
+        ("https://[notip]/r", "https://<redacted-uri>"),
+        ("https://h]/r", "https://<redacted-uri>"),
+        ("https://u:SECRETPW@h\uff03x/r", "https://<redacted-uri>"),
+        ("https://[x/r?token=SECRETPW)ZQ", "https://<redacted-uri>"),
+        ("https://u:SECRETPW/ZQ@h/r)https://[x/r", "https://<redacted-uri>"),
+        ("1https://u:SECRETPW@[::1/r", "1https://<redacted-uri>"),
+        ("https://u:p[)ss@h/r", "https://<redacted-uri>"),
+    ],
+)
+def test_an_unparseable_whole_value_is_hidden(value, expected):
+    # A whole value has no siblings to bound, so it is hidden, not refused.
+    assert redact(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "(t) -READS-> (https://u:SECRETPW@[::1/r) -GOVERNED_BY-> (p:DENY)",
+        "https://u:SECRETPW[ ZQ@[::1/r",
+        "(a) -R-> (https://u:SECRETPW@h/x) -R-> (https://[x/r) tail",
+        "see https://u:p[)ss@h/r",
+    ],
+)
+def test_unparseable_uri_in_free_text_refuses_without_quoting_it(value):
     with pytest.raises(EvidenceUriError) as raised:
         redact(value)
     assert f"ERROR: {raised.value}\n" == _REFUSAL
     assert raised.value.__cause__ is None and raised.value.__suppress_context__
 
 
-@pytest.mark.parametrize("unparseable", ["https://[x/r", "https://u:p[)ss@h/r"])
-def test_unparseable_uri_refuses_the_whole_artifact(unparseable):
-    # The sibling holds a password the scan cannot bound; only refusing the
-    # artifact keeps it out.
-    with pytest.raises(EvidenceUriError):
-        safe_artifact({"paths": ["neo4j://u:SECRETPW/ZQ@host/r", unparseable]})
+def test_unparseable_whole_values_hide_beside_their_siblings():
+    assert safe_artifact(
+        {"paths": ["neo4j://u:SECRETPW/ZQ@host/r", "https://[x/r", "https://u:p[)ss@h/r"]}
+    ) == {"paths": ["neo4j://<redacted-uri>", "https://<redacted-uri>", "https://<redacted-uri>"]}
 
 
 def test_nesting_limit_is_checked_before_uri_refusal():
     def nested(depth):
-        value = "https://[x/r"
+        value = "(t) -R-> (https://[x/r)"
         for _ in range(depth):
             value = [value]
         return value
@@ -254,6 +352,49 @@ def test_nesting_limit_is_checked_before_uri_refusal():
     with pytest.raises(ValueError, match="nesting exceeds") as raised:
         redact(nested(101))
     assert not isinstance(raised.value, EvidenceUriError)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # Resource positions are whole values even with whitespace in them.
+        ({"resource": "https://u:QX) ZQ@[::1/r"}, {"resource": "https://<redacted-uri>"}),
+        ({"read_resource": "neo4j://u:QX/ZQ@h/r"}, {"read_resource": "neo4j://<redacted-uri>"}),
+        (
+            {"resources_created": ["\nneo4j://u:QX/ZQ@host/r", "123://u:QXZQ@h"]},
+            {"resources_created": ["\nneo4j://<redacted-uri>", "123://<redacted-uri>"]},
+        ),
+        (
+            {"kind": "governed_by", "node_kind": "resource", "ref": "neo4j://u:QX) ZQ@h/r"},
+            {"kind": "governed_by", "node_kind": "resource", "ref": "neo4j://h/r"},
+        ),
+        (
+            {"kind": "resource", "ref": "neo4j://u:QX) ZQ@h/r", "policy": "p"},
+            {"kind": "resource", "ref": "neo4j://h/r", "policy": "p"},
+        ),
+        # A tool ref is not a resource value; free-text rules apply to it.
+        (
+            {"kind": "tool", "ref": "s::t", "policy": "p"},
+            {"kind": "tool", "ref": "s::t", "policy": "p"},
+        ),
+        # A URI-shaped policy id is displayed like a resource.
+        ({"policy": "neo4j://u:QX/ZQ@host/r"}, {"policy": "neo4j://<redacted-uri>"}),
+        (
+            {"exception_reason": "see neo4j://u:QX/ZQ@host/r"},
+            {"exception_reason": "see neo4j://<redacted-uri>"},
+        ),
+    ],
+)
+def test_resource_positions_are_whole_values(value, expected):
+    assert redact(value) == expected
+    assert safe_artifact({"evidence": [value]}) == {"evidence": [expected]}
+
+
+def test_top_level_resource_fields_are_whole_values():
+    # safe_artifact passes the key on; before #212 it scanned these as text.
+    assert safe_artifact(
+        {"read_resource": "neo4j://u:QX/ZQ@h/r", "write_resource": "https://u:QX) ZQ@[::1/r"}
+    ) == {"read_resource": "neo4j://<redacted-uri>", "write_resource": "https://<redacted-uri>"}
 
 
 @pytest.mark.parametrize(
@@ -288,6 +429,10 @@ def test_planted_parenthesized_passwords_never_survive(template):
         "a://)" * 20_000,
         "x://" + ")" * 100_000,
         "https://h/ " * 9_000,
+        "%3A" * 60_000,
+        "x%3a%2f%2f" * 20_000,
+        "(https://h/" * 18_000,
+        "a://u:" * 30_000 + "@",
     ],
 )
 def test_redaction_is_linear(value):
@@ -324,7 +469,27 @@ def _ingest(resource: str):
     assert report.applied, report.warnings
 
 
-@pytest.mark.parametrize("resource", _UNPARSEABLE)
+# #212 shapes, each with its password marked QX..ZQ. They pass
+# normalize_resource_uri unchanged (or percent-encoded) and leaked before.
+_PASSWORD_SHAPES = [
+    "https://u:QX) ZQ@[::1/r",
+    "neo4j://u:QX/ZQ@host/r",
+    "neo4j://u:12QX/ZQ@host/r",
+    "https://host/neo4j://u:QXZQ@h/r",
+    "https://h/r?k=QX)ZQ",
+    "neo4j://u:QXZQ%40host/r",
+    'neo4j://u:"QX ZQ"@host/r',
+]
+_MARKERS = ("SECRETPW", "QX", "ZQ")
+
+
+def _shown(resource: str) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return display_resource(normalize_resource_uri(resource))
+
+
+@pytest.mark.parametrize("resource", _UNPARSEABLE + _PASSWORD_SHAPES)
 @pytest.mark.parametrize(
     "command",
     [
@@ -333,43 +498,62 @@ def _ingest(resource: str):
         ["policy", "compile", "--agent", "bot", "--output", "{out}"],
     ],
 )
-def test_artifact_commands_refuse_an_unparseable_resource(
-    backend_graph, tmp_path, resource, command
-):
+def test_artifact_commands_hide_a_resource_password(backend_graph, tmp_path, resource, command):
     _ingest(resource)
     out = tmp_path / "artifact.json"
     args = [arg.replace("{out}", str(out)) for arg in command]
     result = CliRunner().invoke(cli.app, args)
-    assert result.exit_code == 1, result.output
-    assert result.stdout == ""
-    assert result.stderr == _REFUSAL
-    assert not out.exists()
-
-
-@pytest.mark.parametrize("resource", _UNPARSEABLE)
-def test_dry_run_json_refuses_an_unparseable_resource(backend_graph, tmp_path, resource):
-    _seed_tool()  # the resource is new, so the delta carries it
-    path = tmp_path / "governance.yaml"
-    path.write_text(yaml.safe_dump(_governance(resource), allow_unicode=True))
-    result = CliRunner().invoke(
-        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
-    )
-    assert result.exit_code == 1, result.output
-    assert result.exception is None or isinstance(result.exception, SystemExit)
-    assert result.stdout == ""
-    # The normalization warning for the stored URI may precede it; it does
-    # not quote the URI.
-    assert result.stderr.endswith(_REFUSAL)
-    assert "SECRETPW" not in result.stderr and "Traceback" not in result.stderr
-
-
-def test_dry_run_json_hides_a_parenthesized_password(backend_graph, tmp_path):
-    _seed_tool()
-    path = tmp_path / "governance.yaml"
-    path.write_text(yaml.safe_dump(_governance("neo4j://u:p)ss@host/r", governed=False)))
-    result = CliRunner().invoke(
-        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
-    )
     assert result.exit_code == 0, result.output
-    assert json.loads(result.stdout)["resources_created"] == ["neo4j://<redacted-uri>"]
-    assert "p)ss" not in result.output
+    text = result.stdout + (out.read_text() if out.exists() else "")
+    assert _shown(resource) in text  # the evidence is there, displayed
+    for marker in _MARKERS:
+        assert marker not in text + result.stderr, (resource, marker)
+
+
+def _dry_run(tmp_path, governance: dict):
+    path = tmp_path / "governance.yaml"
+    path.write_text(yaml.safe_dump(governance, allow_unicode=True))
+    return CliRunner().invoke(
+        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+    )
+
+
+@pytest.mark.parametrize("resource", _UNPARSEABLE + _PASSWORD_SHAPES)
+def test_dry_run_json_hides_a_new_resource_password(backend_graph, tmp_path, resource):
+    _seed_tool()  # the resource is new, so the delta carries it
+    result = _dry_run(tmp_path, _governance(resource))
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["resources_created"] == [_shown(resource)]
+    for marker in _MARKERS:
+        assert marker not in result.output, (resource, marker)
+
+
+@pytest.mark.parametrize("resource", _PASSWORD_SHAPES)
+def test_dry_run_warnings_hide_a_resource_password(backend_graph, tmp_path, resource):
+    _seed_tool()
+    governance = _governance(resource)
+    governance["governed_by"][resource] = ["deny1", "undefined-policy"]
+    governance["expected_exceptions"] = [
+        {"agent": "bot", "tool": "s::t", "policy": "deny1", "resource": resource + "-other"}
+    ]
+    result = _dry_run(tmp_path, governance)
+    assert result.exit_code == 1, result.output
+    report = json.loads(result.stdout)
+    assert len(report["warnings"]) == 2, report["warnings"]
+    for marker in _MARKERS:
+        assert marker not in result.output, (resource, marker)
+
+
+@pytest.mark.parametrize("resource", _PASSWORD_SHAPES)
+def test_dry_run_provenance_update_hides_a_resource_password(backend_graph, tmp_path, resource):
+    _ingest(resource)
+    governance = _governance(resource)
+    governance["governed_by"] = {
+        resource: [{"policy": "deny1", "provenance": {"evidence": "runbook"}}]
+    }
+    result = _dry_run(tmp_path, governance)
+    assert result.exit_code == 0, result.output
+    [row] = json.loads(result.stdout)["provenance_modified"]
+    assert (row["node_kind"], row["ref"]) == ("resource", _shown(resource))
+    for marker in _MARKERS:
+        assert marker not in result.output, (resource, marker)

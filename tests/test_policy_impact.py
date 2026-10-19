@@ -468,7 +468,10 @@ def test_quoted_userinfo_is_hidden_in_evidence_json_and_markdown(backend_graph):
     evidence = [path for row in report["rows"] for path in row["after"]["evidence"]]
     assert evidence
     assert {path["resource"] for path in evidence} == {"neo4j://<redacted-uri>"}
-    assert {path["path"] for path in evidence} == {"(read) -READS-> (neo4j://<redacted-uri>"}
+    # The path shows the resource displayed whole, so the rest of it stays.
+    assert {path["path"] for path in evidence} == {
+        "(read) -READS-> (neo4j://<redacted-uri>) -GOVERNED_BY-> (p:DENY)"
+    }
     for rendered in (canonical_json_bytes(report).decode(), impact_markdown(report)):
         assert "hunter" not in rendered and "x/y" not in rendered and "planted" not in rendered
 
@@ -484,6 +487,48 @@ def test_check_hides_quoted_userinfo_in_expected_evidence(backend_graph):
     [row] = [row for row in result["rows"] if row["candidate"] == report["rows"][0]["candidate"]]
     assert row["expected"]["evidence"] == [{"path": "(one::read) -READS-> (neo4j://<redacted-uri>"}]
     assert "hunter" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        # In free text a URI ends at ')', so a credential name glued after it
+        # stays text and is scrubbed with its value.
+        ("see https://h/r?x=1)password = HUNTER2", "see https://h/r)password=<redacted>"),
+        ('see https://h/r?x=1)password="prefix HUNTER2"', "see https://h/r)password=<redacted>"),
+        ("see https://h/r?x=1)secret='prefix HUNTER2' end", "see https://h/r)secret=<redacted>"),
+        ("see https://h/r?x=1)token=[a, HUNTER2] end", "see https://h/r)token=<redacted>"),
+        (
+            "see https://h/r?x=1)Authorization: Basic HUNTER2",
+            "see https://h/r)Authorization=<redacted>",
+        ),
+        ("see https://h/r?token=x)password = HUNTER2", "see https://h/r)password=<redacted>"),
+        ('see https://h/r?password=x)token="a HUNTER2"', "see https://h/r)token=<redacted>"),
+        # A URI hidden from its scheme hides the rest of the text, value and all.
+        ("see https://h/@scope/secret = HUNTER2", "see https://<redacted-uri>"),
+        ("see https%3A%2F%2Fh/password = HUNTER2", "see <redacted-uri>"),
+        # Credential names are scrubbed after the URI policy: scrubbing first
+        # would split this userinfo at `secret=` and show `QXsecret`.
+        ("neo4j://u:QXsecret=ZQ@host/r", "neo4j://host/r"),
+        ("see https://h/r?token=HUNTER2 end", "see https://h/r end"),
+        # Removing a query or fragment forms an assignment that is scrubbed.
+        ("see https://h/password? = HUNTER2", "see https://h/password=<redacted>"),
+        ("see https://h/password# = HUNTER2", "see https://h/password=<redacted>"),
+        ("see https://h/r password=HUNTER2", "see https://h/r password=<redacted>"),
+        ("file:///etc/password", "file:///etc/password"),
+        ("https://runbooks/new/secret", "https://runbooks/new/secret"),
+    ],
+)
+def test_check_never_shows_a_credential_value_without_its_name(backend_graph, path, expected):
+    gov = seed()
+    report = impact(gov)
+    report["rows"][0]["after"]["evidence"] = [{"path": path}]
+    report["rows"][0]["details_changed"] = True
+    result = check_policy_impact(ImpactReport.model_validate(report))
+    [row] = [row for row in result["rows"] if row["candidate"] == report["rows"][0]["candidate"]]
+    assert row["expected"]["evidence"] == [{"path": expected}]
+    for marker in ("HUNTER2", "QX", "ZQ"):
+        assert marker not in json.dumps(result)
 
 
 def test_schema_stays_in_sync_with_runtime_model():

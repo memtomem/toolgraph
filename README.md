@@ -304,7 +304,9 @@ come from the orchestrator and Tracegraph runs against your own fleet.
 with a bracketed `graph_generation`. It remains advisory: rejected candidates
 produce `decision: advisory_warn` and exit 0. Unknown agents produce
 `unresolved_identity`, never a false allow. Resource URIs in evidence are
-scrubbed of userinfo and query strings before the artifact is written. Pass
+scrubbed of userinfo, query strings and fragments before the artifact is
+written; one with an `@` after its authority, or one that cannot be parsed,
+is shown as `<scheme>://<redacted-uri>`. Pass
 `--features` only when the consumer needs the full selector feature rows.
 With `--out` the artifact is written privately and atomically, and the command
 prints a result envelope carrying `artifact_digest` — the SHA-256 of the exact

@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from toolgraph.artifact_safety import display_resource
 from toolgraph.graph import queries
 from toolgraph.graph.driver import acquire_readonly_session, read_session, session
 from toolgraph.graph.queries import resolve_tool_refs
@@ -247,7 +248,10 @@ def _validate_manifest(
         bindings = _normalize_bindings(items)
         for b in bindings:
             if b.policy not in known_policies:
-                warnings.append(f"GOVERNED_BY: policy {b.policy!r} not defined (node {node_ref!r})")
+                # A resource URI may hold a password; the warning shows it whole-value
+                # redacted, as artifact evidence does.
+                node = display_resource(node_ref) if is_resource_ref(node_ref) else node_ref
+                warnings.append(f"GOVERNED_BY: policy {b.policy!r} not defined (node {node!r})")
         valid = [
             (b.policy, edge_provenance_props(b.provenance))
             for b in bindings
@@ -331,16 +335,17 @@ def _validate_manifest(
         if resource_uri is not None:
             # Specific resource: tool must READ/WRITE it AND that resource
             # must be GOVERNED_BY this policy.
+            shown = display_resource(exc.resource)
             if (key, resource_uri) not in authored_access:
                 warnings.append(
                     f"EXPECTED_EXCEPTION: tool {exc.tool!r} has no READS/WRITES "
-                    f"to resource {exc.resource!r} in this manifest "
+                    f"to resource {shown!r} in this manifest "
                     f"(agent {exc.agent!r}, policy {exc.policy!r})"
                 )
                 continue
             if resource_uri not in policy_resource_set:
                 warnings.append(
-                    f"EXPECTED_EXCEPTION: resource {exc.resource!r} is not governed_by "
+                    f"EXPECTED_EXCEPTION: resource {shown!r} is not governed_by "
                     f"policy {exc.policy!r} in this manifest "
                     f"(agent {exc.agent!r}, tool {exc.tool!r})"
                 )

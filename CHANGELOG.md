@@ -2,6 +2,58 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Changed
+
+- Artifact evidence shows each resource URI as a whole value (#212). A
+  resource is redacted before it is written into an evidence path, and
+  resource fields (`resource`, `resource_uri`, `read_resource`,
+  `write_resource`, `policy`, a resource `ref` and the `resources_*` lists of
+  `ingest-manifest --dry-run --json`) are redacted as one value even when
+  they hold whitespace. In free text, such as an exception reason, a URI ends
+  at whitespace or at a `)`, as in 0.3.0. Consumers that match evidence can
+  notice:
+  - An `@` anywhere after a URI's authority, raw or as `%40`, hides
+    everything after the scheme, since where an unquoted password ends cannot
+    be told: `https://registry/@scope/pkg` is shown as
+    `https://<redacted-uri>`. In free text the rest of the text goes too, as
+    it already did after a quoted password, because it may hold the rest of
+    the password; this includes a URI-shaped tool name inside evidence text.
+  - A value whose scheme is percent-encoded (`https%3A%2F%2Fh/r`) is shown as
+    `<redacted-uri>`, in free text with the rest of the text.
+  - A resource value that cannot be parsed (`https://u:p@[::1/r`) is hidden
+    as `<scheme>://<redacted-uri>` instead of stopping the command, and so is
+    any evidence string that is nothing but such a URI, whitespace around it
+    aside. A URI that cannot be parsed among other text, such as
+    `see https://u:p@[::1/r` in an exception reason, still stops it, as in
+    0.3.0.
+  - An evidence path no longer loses the rest of its line when its resource
+    holds a `)` or a quoted password: a resource `neo4j://u:p)ss@host/r` is
+    shown as `(t) -READS-> (neo4j://host/r) -GOVERNED_BY-> (p:DENY)`, and a
+    quoted one as `(t) -READS-> (neo4j://<redacted-uri>) -GOVERNED_BY->
+    (p:DENY)`. In free text, a `)` followed by an `@` hides everything after
+    the scheme.
+  - `export:///sink` keeps its three slashes; it was shown as `export:/sink`.
+- Paths in `check-access`, `unsafe-tools`, `blast-radius` and `audit-report`
+  output, and in the matching MCP tools, show resources and policy ids the
+  same way. The rows still carry the raw `resource` and `policy` values
+  beside the path.
+- `ingest-manifest` warnings that name a resource show it redacted.
+
+### Fixed
+
+- Artifact evidence no longer shows URI passwords the evidence scan could not
+  bound (#212). Before, a password holding an unquoted `/`, `?` or `#`
+  (`neo4j://u:p/w@host/r`, also read as a port when it starts with digits),
+  a credential URI inside another URI's path, an encoded `@` (`%40`), and a
+  resource whose query holds `)` (`https://h/r?k=a)b` kept `)b`) could reach
+  preflight, policy bundle, control-plan and review artifacts, `policy
+  impact` and `policy check` output and `ingest-manifest --dry-run --json`,
+  including its warnings. Two shapes inside free text are still not bounded:
+  a password holding whitespace without quotes, and a query holding `)`
+  (`see https://h/r?k=a)b` still shows `)b`).
+
 ## 0.3.0 - 2026-10-19
 
 Fourth alpha. Read **Upgrading from 0.2.0** below before installing: it lists
