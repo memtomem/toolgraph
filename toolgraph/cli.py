@@ -432,7 +432,11 @@ def ingest_manifest(
         if json_output:
             # A display-only delta, not a replay artifact: scrub every string,
             # including URI lists and free-text warnings/reasons.
-            typer.echo(json.dumps(redact(report.to_dict()), indent=2))
+            try:
+                delta = redact(report.to_dict())
+            except ValueError as exc:
+                _fail(exc)
+            typer.echo(json.dumps(delta, indent=2))
             if report.warnings:
                 raise typer.Exit(code=1)
             return

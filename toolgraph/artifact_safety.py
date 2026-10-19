@@ -10,9 +10,15 @@ from toolgraph.redaction import is_credential_shaped
 # letter: `123://` is not a URI, but a URI after it (`123://https://...`) is.
 _SCHEME = re.compile(r"(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*://")
 _URI = re.compile(_SCHEME.pattern + r"[^\s)]+")
+# A scheme and the rest of its whitespace-free run.
+_RUN = re.compile(_SCHEME.pattern + r"\S*")
 # Encoded quotes count: graph resource URIs pass through
 # normalize_resource_uri, which writes `u:"p w"@host` as `u:%22p%20w%22@host`.
 _QUOTE = re.compile(r"['\"]|%2[27]")
+
+
+class EvidenceUriError(ValueError):
+    """Evidence holds a URI whose credentials cannot be located."""
 
 
 def _hide_quoted_userinfo(text: str) -> str:
@@ -31,11 +37,48 @@ def _hide_quoted_userinfo(text: str) -> str:
     return text[: scheme.end()] + "<redacted-uri>"
 
 
-def _redact_uri_keeping_prefix(value: str) -> str:
+def _hide_parenthesized_userinfo(text: str) -> str:
+    # `_URI` stops at ')' because graph notation closes a resource with one,
+    # so a password holding ')' (`neo4j://u:p)ss@host/r`) is cut before its
+    # '@' and kept. Where such a password ends cannot be told from that
+    # closing ')', so a run with an '@' after a ')' is hidden to its end.
+    def hide(match: re.Match) -> str:
+        run = match.group(0)
+        end = run.index("://") + 3
+        close = run.find(")", end)
+        if close == -1 or run.find("@", close) == -1:
+            return run
+        return run[:end] + "<redacted-uri>"
+
+    return _RUN.sub(hide, text)
+
+
+def _check_parseable(text: str) -> str:
+    # An unparseable URI has no authority to strip, and where it ends is
+    # unknown. Hiding it and going on would print the rest of the artifact,
+    # which may hold other values the scan cannot bound, so the artifact is
+    # refused instead. The parser's own message can quote the netloc,
+    # password included, so it is not chained. This runs on the same matches the final
+    # `_URI.sub` would, before any pass that could hide one of them.
+    for match in _URI.finditer(text):
+        try:
+            urlsplit(_without_prefix(match.group(0)))
+        except ValueError:
+            raise EvidenceUriError(
+                "artifact evidence holds a URI that cannot be parsed; it is not shown"
+            ) from None
+    return text
+
+
+def _without_prefix(value: str) -> str:
     # Characters before the scheme's first letter (`1https://`) are not part
-    # of the URI and stay as they are.
-    first = next(i for i, char in enumerate(value) if char.isalpha())
-    return value[:first] + _redact_uri(value[first:])
+    # of the URI.
+    return value[next(i for i, char in enumerate(value) if char.isalpha()) :]
+
+
+def _redact_uri_keeping_prefix(value: str) -> str:
+    uri = _without_prefix(value)
+    return value[: len(value) - len(uri)] + _redact_uri(uri)
 
 
 def _redact_uri(value: str) -> str:
@@ -63,10 +106,8 @@ def redact(value, *, _depth: int = 0):
         return [redact(item, _depth=_depth + 1) for item in value]
     if isinstance(value, str):
         # Evidence paths contain a URI inside surrounding graph notation.
-        return _URI.sub(
-            lambda match: _redact_uri_keeping_prefix(match.group(0)),
-            _hide_quoted_userinfo(value),
-        )
+        text = _hide_parenthesized_userinfo(_check_parseable(_hide_quoted_userinfo(value)))
+        return _URI.sub(lambda match: _redact_uri_keeping_prefix(match.group(0)), text)
     return value
 
 
