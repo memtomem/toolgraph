@@ -24,6 +24,7 @@ from toolgraph.policy_propose import (
     resolve_grants_from_graph,
     run_propose,
 )
+from toolgraph.redaction import WITHHELD
 
 
 @pytest.fixture
@@ -1468,3 +1469,19 @@ def test_cli_propose_withholds_an_error_that_would_quote_a_credential(
     assert result.exit_code == 1
     assert "SECRET" not in result.stderr
     assert "details withheld (they contain credential-shaped data)" in result.stderr
+
+
+def test_cli_observation_error_quoting_a_repr_escaped_credential_is_withheld(
+    backend_graph, sample_gov_path, sample_observed_jsonl
+):
+    """The row error prints the value with ``repr``, which escapes the tab."""
+    row = {"agent": "a", "decision": "rejected", "tool_key": "s::t", "calls": "password\t=QXZQ"}
+    with sample_observed_jsonl.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
+
+    result = CliRunner().invoke(
+        cli.app, ["policy", "propose", str(sample_gov_path), str(sample_observed_jsonl)]
+    )
+
+    assert result.exit_code == 1
+    assert result.output.strip() == f"ERROR: {WITHHELD}"

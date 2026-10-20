@@ -188,6 +188,28 @@ All notable changes to Toolgraph are documented here.
   `policy review-plan`, `policy impact --output`, `preflight` and
   `control-preflight` is left as given: it names the file the caller asked
   for.
+- Diagnostics that print a value with `repr` no longer show a credential
+  whose tab or no-break space it escaped (#229). Before, `repr`, `ascii`,
+  `%r`, a list or dict printed whole, a `KeyError` key and library errors
+  such as `invalid literal for int() with base 10: '<value>'` or
+  `could not convert string to float: b'<value>'` printed
+  `password<TAB>=secret` as `password\t=secret`, which the scrubber does not
+  read as an assignment: in `unknown profile` errors from the MCP tools, the
+  `AGENT_NOT_FOUND` line of the selector commands, `policy propose`
+  observation errors, and log records whose arguments were bytes or
+  containers. Now every message that goes through the credential scrubber
+  (CLI errors, MCP error text, log records, printed paths) is read as given
+  for str and bytes literals that hold a backslash escape, exactly as `repr`
+  or `ascii` prints them; such a literal that reads back as
+  credential-shaped, alone or in place in the message, withholds the whole
+  message, and so do more than 32 such literals. A literal without an
+  escape is scrubbed as before (`'password=secret'` reads
+  `'password=<redacted>`). Ordinary text is unchanged: a path is read only
+  when quoted as `repr` would quote it, so `C:\bearer\notes.json` is still
+  shown. A message that holds an escaped literal and also a credential the
+  scrubber would mask is withheld instead of masked. Not read: a literal printed through `repr`
+  twice, and one right after an odd run of backslashes. Artifact and
+  evidence text, which is stored rather than printed, is not affected.
 - A command that writes a file or a review annotation no longer prints a
   traceback when the durability warning is escalated to an error (#129).
   The warning (`ArtifactDurabilityWarning`, or

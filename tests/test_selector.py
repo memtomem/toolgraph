@@ -31,6 +31,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+from toolgraph.redaction import WITHHELD
 
 REPO = "repo:///work"
 SECRETS = "file:///secrets.env"
@@ -406,6 +407,17 @@ def test_cli_selector_commands_fail_loud_on_unknown_agent(backend_graph):
         if CLICK_SPLITS_STREAMS:
             assert "AGENT_NOT_FOUND" in result.stderr
             assert result.stdout == ""
+
+
+def test_cli_unknown_agent_with_a_repr_escaped_credential_is_withheld(backend_graph):
+    """``_require_agent`` prints the name with ``repr``, which escapes the tab;
+    its exit is not a usage error, so the argv check does not apply."""
+    _seed()
+    result = runner.invoke(cli.app, ["selection-explain", "password\t=QXZQ", "alpha::git_status"])
+
+    assert result.exit_code == 1
+    assert f"AGENT_NOT_FOUND: no agent named {WITHHELD} in the graph" in result.output
+    assert "QXZQ" not in result.output
 
 
 def test_cli_rejects_unknown_profile(backend_graph):

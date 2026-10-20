@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import shlex
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
@@ -243,6 +246,92 @@ def _hide_quoted_userinfo(text: str) -> str:
     return text[:start] + "<redacted-uri>"
 
 
+# `repr`, `ascii`, `%r`, a container's `str()` and many library errors
+# (`int('…')`) print a tab or a no-break space as an escape (`\t`, `\xa0`), so
+# `password<TAB>=value` no longer reads as an assignment. Such output is a
+# Python literal, read back here with Python's own parser.
+#
+# A candidate: a quote, then escapes or characters other than that quote, a
+# backslash or a newline (repr never prints a raw newline), then the same
+# quote. The repeat is possessive: the two branches never overlap, so giving
+# characters back could not find another match, and a backtracking repeat
+# keeps state for every character (about 180 MiB for a 1 MB literal).
+_LITERAL = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\\n])*+)\1""")
+# The escapes repr and ascii print. A candidate holding any other backslash
+# sequence is not their output and never reaches the parser, which would
+# warn about an invalid escape. Bytes never hold `\u` or `\U`.
+_STR_ESCAPES = re.compile(r"""\\(?:[\\'"tnr]|x[0-9a-f]{2}|u[0-9a-f]{4}|U[0-9a-f]{8})""")
+_BYTES_ESCAPES = re.compile(r"""\\(?:[\\'"tnr]|x[0-9a-f]{2})""")
+# A text holding more read-back literals than this is withheld unread.
+_MAX_LITERALS = 32
+
+
+def _escaped(text: str, index: int) -> bool:
+    run = 0
+    while index - run > 0 and text[index - run - 1] == "\\":
+        run += 1
+    return run % 2 == 1
+
+
+def _parsed(span: str) -> object:
+    # `\U00110000` is a well-formed escape outside Unicode: a SyntaxError.
+    try:
+        return ast.literal_eval(span)
+    except (SyntaxError, ValueError):
+        return None
+
+
+def _literal_values(text: str, start: int, end: int, body: str) -> Iterator[tuple[int, str]]:
+    # A span is kept only if it is exactly what repr or ascii prints for the
+    # value, not merely a valid literal. When a `b` precedes the quote both
+    # readings are tried: `x%r` of bytes prints `xb'…'`, `b%r` of a str `b'…'`.
+    if "\\" not in _STR_ESCAPES.sub("", body):
+        span = text[start:end]
+        value = _parsed(span)
+        if isinstance(value, str) and span in (repr(value), ascii(value)):
+            yield start, value
+    if start and text[start - 1] == "b" and "\\" not in _BYTES_ESCAPES.sub("", body):
+        span = text[start - 1 : end]
+        value = _parsed(span)
+        if isinstance(value, bytes) and span == repr(value):
+            yield start - 1, value.decode("utf-8", "replace")
+
+
+def _repr_literals(text: str) -> Iterator[list[tuple[int, int, str]]]:
+    """The readings of each literal in *text* that reads back, as (start, end, value).
+
+    Every unescaped quote may start a literal, so a prose apostrophe (`can't
+    read '…'`) cannot pair with a literal's opening quote. An escaped quote
+    never starts repr output; skipping it keeps the scan linear, since each
+    search then ends at the next unescaped same quote. A literal right after
+    an odd run of backslashes (`C:\\` followed by repr output) is therefore
+    not read.
+    """
+    for index, char in enumerate(text):
+        if char not in "'\"" or _escaped(text, index):
+            continue
+        match = _LITERAL.match(text, index)
+        if not match or "\\" not in match[2]:
+            continue
+        end = match.end()
+        readings = _literal_values(text, index, end, match[2])
+        if read := [(start, end, value) for start, value in readings]:
+            yield read
+
+
+def _repr_reads_as_credential(text: str) -> bool:
+    # Counted first, so a text over the limit costs one scan and no checks.
+    # Each form is then built and checked on its own: holding them all would
+    # copy the whole text twice per reading.
+    if sum(1 for _ in islice(_repr_literals(text), _MAX_LITERALS + 1)) > _MAX_LITERALS:
+        return True
+    return any(
+        is_credential_shaped(value) or is_credential_shaped(text[:start] + value + text[end:])
+        for readings in _repr_literals(text)
+        for start, end, value in readings
+    )
+
+
 WITHHELD = "details withheld (they contain credential-shaped data)"
 PATH_WITHHELD = "<path withheld: credential-shaped>"
 # A placeholder written in the input is shown as `\u2039redacted...`, so it can
@@ -260,14 +349,21 @@ def redact_text(value: object) -> str:
 
     The scrubbers do not decode percent-encoding, so a message whose decoded
     form is credential-shaped (`?%74oken=x`, `https%3A//user:pw@host`) is
-    replaced by ``WITHHELD`` before scrubbing. After scrubbing, the text
-    without the placeholders the scrubbers inserted is checked with the
-    refusal rule, and withheld if it is still credential-shaped. A
-    placeholder the input itself carries is shown as `\u2039redacted`.
+    replaced by ``WITHHELD`` before scrubbing. Nor do they read escapes: a
+    message holding a str or bytes literal exactly as ``repr`` or ``ascii``
+    prints it (`'password\\t=x'`) is withheld when that literal, read back,
+    is credential-shaped, alone or in place in the message, and when it holds
+    more than ``_MAX_LITERALS`` such literals. Both checks read the message
+    as given, before anything rewrites it. After scrubbing, the text without
+    the placeholders the scrubbers inserted is checked with the refusal rule,
+    and withheld if it is still credential-shaped. A placeholder the input
+    itself carries is shown as `\u2039redacted`.
     """
     raw = str(value)
     decoded = unquote(raw)
     if decoded != raw and is_credential_shaped(decoded):
+        return WITHHELD
+    if _repr_reads_as_credential(raw):
         return WITHHELD
     text = _hide_quoted_userinfo(_INPUT_PLACEHOLDER.sub("\u2039", raw))
     text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
