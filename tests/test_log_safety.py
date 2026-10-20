@@ -52,6 +52,35 @@ def test_arguments_are_redacted_after_formatting():
     assert lines == ["tool 'password=<redacted> failed"]
 
 
+# Credential-shaped values that `%r` prints escaped (`\\t`, `\\xa0`, `\\u2000`).
+ESCAPED = ["password\t=QXZQ", "password\u00a0=QXZQ", "password\u2000=QXZQ"]
+
+
+@pytest.mark.parametrize("value", ESCAPED)
+def test_an_argument_repr_escapes_is_checked_before_formatting(value):
+    lines = _logged(lambda log: log.info("Tool %r failed", value))
+
+    assert lines == [WITHHELD]
+
+
+def test_mapping_arguments_are_checked_before_formatting():
+    lines = _logged(lambda log: log.info("%(name)r", {"name": ESCAPED[0]}))
+
+    assert lines == [WITHHELD]
+
+
+def test_an_ordinary_argument_is_formatted_as_before():
+    lines = _logged(lambda log: log.info("Tool %r failed", "nope"))
+
+    assert lines == ["Tool 'nope' failed"]
+
+
+@pytest.mark.parametrize("value", ESCAPED)
+def test_an_exception_argument_repr_escapes_is_withheld(value):
+    """``KeyError``'s text is the ``repr`` of its key."""
+    assert _chain_lines(KeyError(value)) == ["boom", f"KeyError: {WITHHELD}"]
+
+
 def test_percent_encoded_credential_withholds_the_message():
     lines = _logged(lambda log: log.info("Tool %r failed", "?%74oken=QXZQ"))
 
@@ -437,6 +466,7 @@ async def _call_server(stderr) -> list[str]:
             ("check_access", {"agent": "a", "tool": "s::t"}),
             ("?%74oken=QXZQ", {}),
             ("password=QXZQ", {}),
+            *[(name, {}) for name in ESCAPED],
         ]:
             result = await session.call_tool(name, arguments)
             texts.append(result.content[0].text)
@@ -456,3 +486,5 @@ def test_server_log_carries_no_input_or_exception_text(tmp_path):
     assert "Tool 'password=<redacted> failed" in output
     assert "Traceback" not in output
     _assert_hidden(output)
+    for text in texts:
+        _assert_hidden(text)

@@ -23,11 +23,11 @@ nothing guarantees it, and the exception chain is what an operator reads.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 
 from toolgraph.error_text import describe_error
-from toolgraph.redaction import redact_text
+from toolgraph.redaction import WITHHELD, is_credential_shaped, redact_text
 
 # Enough for any real chain; a longer one is cut rather than walked.
 _MAX_LINKS = 64
@@ -83,9 +83,27 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return links
 
 
+def _credential_shaped_value(values: Iterable[object]) -> bool:
+    """Whether any value is credential-shaped and changed by ``repr``.
+
+    `%r`, and an exception's text built from the ``repr`` of its arguments
+    (``KeyError``), escape a tab or a no-break space (`\\t`, `\\xa0`) out of
+    the scrubber's sight, so such a value is checked as it was before
+    formatting. A value ``repr`` leaves as it is reaches the scrubber intact.
+    """
+    for value in values:
+        try:
+            text = value if isinstance(value, str) else str(value)
+        except Exception:
+            continue
+        if repr(text)[1:-1] != text and is_credential_shaped(text):
+            return True
+    return False
+
+
 def _describe_link(exc: BaseException) -> str:
     try:
-        text = describe_error(exc)
+        text = WITHHELD if _credential_shaped_value(exc.args) else describe_error(exc)
     except Exception:
         text = "(message could not be rendered)"
     name = type(exc).__name__
@@ -94,8 +112,10 @@ def _describe_link(exc: BaseException) -> str:
 
 def render(record: logging.LogRecord) -> str:
     """The text a handler may show for *record*."""
+    args = record.args
+    values = args.values() if isinstance(args, Mapping) else args or ()
     try:
-        message = record.getMessage()
+        message = WITHHELD if _credential_shaped_value(values) else record.getMessage()
     except Exception:
         message = f"log message could not be rendered ({record.name})"
     lines = [redact_text(message)]

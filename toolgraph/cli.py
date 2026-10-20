@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sys
+from contextlib import contextmanager
 from enum import StrEnum
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import NoReturn
 import typer
 import yaml
 from pydantic import BaseModel, ValidationError
+
+# Typer vendors Click; this is the class its main loop catches and prints.
+from typer._click.exceptions import ClickException
+from typer.core import TyperGroup
 
 from toolgraph import __version__, config, log_safety
 from toolgraph.artifact_safety import redact
@@ -55,7 +60,7 @@ from toolgraph.policy_impact import (
 from toolgraph.policy_propose import PolicyProposeError, run_propose
 from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_plan
 from toolgraph.preflight import build_preflight
-from toolgraph.redaction import redact_text
+from toolgraph.redaction import WITHHELD, display_path, is_credential_shaped, redact_text
 from toolgraph.review_candidates import (
     ReviewCandidateError,
     annotate_candidate,
@@ -76,7 +81,56 @@ class ReviewDisposition(StrEnum):
     dismissed = "dismissed"
 
 
+_ARGV = "toolgraph.argv"
+
+
+def _credential_shaped_argument(args: list[str]) -> bool:
+    """Whether any command-line token is credential-shaped (the refusal rule).
+
+    Checked on the tokens as typed: Click and Typer print a value escaped
+    (`\\x09`, `\\xa0`) or quoted, a form the scrubber does not read. The
+    tokens joined by spaces are checked too: Click prints unexpected extra
+    arguments that way, so `password` and `<TAB>=value` make one assignment.
+    """
+    return any(is_credential_shaped(arg) for arg in args) or is_credential_shaped(" ".join(args))
+
+
+@contextmanager
+def _redacted_usage_errors(args: list[str]):
+    try:
+        yield
+    except ClickException as exc:
+        exc.message = WITHHELD if _credential_shaped_argument(args) else redact_text(exc.message)
+        raise
+
+
+class _RedactingGroup(TyperGroup):
+    """The root command group, through which every usage error passes.
+
+    Click and Typer build usage errors from what was typed (`No such command
+    '<arg>'`, `'<value>' is not a valid float`), and so do Toolgraph's own
+    ``BadParameter`` messages. Parsing the root options, running the root
+    callback, and resolving, parsing and running every subcommand all happen
+    inside these two calls. When any token on the command line is
+    credential-shaped, the error's message is withheld whole; otherwise it
+    goes through ``redact_text``, once, before Typer prints it.
+    """
+
+    def make_context(self, info_name, args, parent=None, **extra):
+        # A copy: Click's parser consumes the list it is given.
+        typed = list(args)
+        with _redacted_usage_errors(typed):
+            ctx = super().make_context(info_name, args, parent=parent, **extra)
+        ctx.meta[_ARGV] = typed
+        return ctx
+
+    def invoke(self, ctx):
+        with _redacted_usage_errors(ctx.meta.get(_ARGV, [])):
+            return super().invoke(ctx)
+
+
 app = typer.Typer(
+    cls=_RedactingGroup,
     add_completion=False,
     help="Graph-native MCP/tool registry for advisory governance analysis.",
 )
@@ -95,6 +149,11 @@ example_app = typer.Typer(
 app.add_typer(review_candidates_app, name="review-candidates")
 app.add_typer(policy_app, name="policy")
 app.add_typer(example_app, name="example")
+
+
+def _os_reason(exc: OSError) -> str:
+    """An OSError's reason without the file names its text repeats."""
+    return exc.strerror or type(exc).__name__
 
 
 def _fail(exc: BaseException, model: type[BaseModel] | None = None) -> NoReturn:
@@ -174,7 +233,7 @@ def example_init(
     destination = destination.expanduser().resolve()
     if destination.exists():
         raise typer.BadParameter(
-            f"destination already exists: {destination}", param_hint="DESTINATION"
+            f"destination already exists: {display_path(destination)}", param_hint="DESTINATION"
         )
     source = files("toolgraph").joinpath("quickstart")
     # Stage next to the destination and rename once complete: a failure
@@ -195,8 +254,8 @@ def example_init(
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
-    typer.echo(f"Created Toolgraph quickstart at {destination}")
-    typer.echo(f"Next: cd {destination} && toolgraph init")
+    typer.echo(f"Created Toolgraph quickstart at {display_path(destination)}")
+    typer.echo(f"Next: cd {display_path(destination)} && toolgraph init")
 
 
 @app.command()
@@ -207,7 +266,7 @@ def check() -> None:
     # behind and report "OK".
     driver.verify_connectivity(read_only=True)
     if driver.backend_name() == "ladybug":
-        typer.echo(f"OK: backend=ladybug path={config.settings.db_path}")
+        typer.echo(f"OK: backend=ladybug path={display_path(config.settings.db_path)}")
     else:
         typer.echo(f"OK: backend=neo4j uri={redact_text(config.settings.neo4j_uri)}")
 
@@ -270,15 +329,19 @@ def init_backend(
                         pass
                     except OSError as cleanup_error:
                         typer.echo(
-                            f"WARNING: could not remove partial database {leftover}: "
-                            f"{redact_text(cleanup_error.strerror or cleanup_error)}",
+                            f"WARNING: could not remove partial database {display_path(leftover)}: "
+                            f"{redact_text(_os_reason(cleanup_error))}",
                             err=True,
                         )
         if isinstance(exc, OSError):
-            typer.echo(f"ERROR: cannot initialize {state_dir}: {redact_text(exc)}", err=True)
+            typer.echo(
+                f"ERROR: cannot initialize {display_path(state_dir)}: "
+                f"{redact_text(_os_reason(exc))}",
+                err=True,
+            )
             raise typer.Exit(code=1) from None
         raise
-    typer.echo(f"Initialized backend={normalized} config={runtime_path}")
+    typer.echo(f"Initialized backend={normalized} config={display_path(runtime_path)}")
 
 
 @app.command("init-schema")
@@ -349,7 +412,8 @@ def crawl(
         specs = load_servers_config(path)
     except Exception as exc:  # config errors share one CLI contract
         typer.echo(
-            f"Invalid servers config at {path}: {describe_error(exc, ServersConfig)}", err=True
+            f"Invalid servers config at {display_path(path)}: {describe_error(exc, ServersConfig)}",
+            err=True,
         )
         raise typer.Exit(code=1) from None
     dupes = duplicate_name_overrides(specs)
@@ -358,12 +422,12 @@ def crawl(
         # last-load-wins reconcile each other's tools away — reject before
         # connecting to anything.
         typer.echo(
-            f"  [error] duplicate name override(s) in {path}: "
+            f"  [error] duplicate name override(s) in {display_path(path)}: "
             f"{redact_text(', '.join(sorted(dupes)))}",
             err=True,
         )
         raise typer.Exit(code=1)
-    typer.echo(f"Crawling {len(specs)} server(s) from {path} ...")
+    typer.echo(f"Crawling {len(specs)} server(s) from {display_path(path)} ...")
 
     results, failures = crawl_all(specs, timeout=timeout, budget=budget)
     dupes = duplicate_identities(results, failures)
@@ -371,7 +435,7 @@ def crawl(
         typer.echo(
             "  [error] multiple servers claim the same graph identity: "
             f"{', '.join(sorted(dupes))} — add distinct `name:` overrides in "
-            f"{path}; nothing was loaded",
+            f"{display_path(path)}; nothing was loaded",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -394,14 +458,14 @@ def crawl(
             typer.echo(
                 "  [warn] fleet reconciliation skipped: failed server(s) "
                 f"{', '.join(sorted(blockers))} have no `name:` override in "
-                f"{path}, so a crawl failure cannot be told apart from a "
+                f"{display_path(path)}, so a crawl failure cannot be told apart from a "
                 "removed server — add `name:` to keep reconciliation running "
                 "through failures"
             )
         else:
             retired, warnings = loader.retire_unlisted_servers(keep)
             for name in retired:
-                typer.echo(f"  retired {name!r}: no longer in {path}")
+                typer.echo(f"  retired {name!r}: no longer in {display_path(path)}")
             for w in warnings:
                 typer.echo(f"    [warn] {w}")
 
@@ -438,7 +502,8 @@ def ingest_manifest(
         gov = load_governance(path)
     except Exception as exc:  # config errors share one CLI contract
         typer.echo(
-            f"Invalid governance config at {path}: {describe_error(exc, Governance)}", err=True
+            f"Invalid governance config at {display_path(path)}: {describe_error(exc, Governance)}",
+            err=True,
         )
         raise typer.Exit(code=1) from None
     if dry_run:
@@ -455,7 +520,10 @@ def ingest_manifest(
                 raise typer.Exit(code=1)
             return
         if report.warnings:
-            typer.echo(f"DRY-RUN REJECTED — manifest at {path} would not apply (graph unchanged)")
+            typer.echo(
+                f"DRY-RUN REJECTED — manifest at {display_path(path)} would not apply "
+                "(graph unchanged)"
+            )
             for w in report.warnings:
                 typer.echo(f"  [warn] {redact_text(w)}")
             for n in report.notices:
@@ -463,7 +531,7 @@ def ingest_manifest(
             raise typer.Exit(code=1)
         for n in report.notices:
             typer.echo(f"  [info] {redact_text(n)}")
-        typer.echo(f"DRY-RUN: manifest at {path} would apply cleanly")
+        typer.echo(f"DRY-RUN: manifest at {display_path(path)} would apply cleanly")
         typer.echo(report.summary_text())
         return
     schema.init_schema()
@@ -472,7 +540,7 @@ def ingest_manifest(
         # Ingest is atomic: any warning rejects the whole manifest. Reflect
         # that in the headline so an operator with a typo doesn't read
         # "Ingested" as success.
-        typer.echo(f"REJECTED — manifest at {path} not applied (graph unchanged)")
+        typer.echo(f"REJECTED — manifest at {display_path(path)} not applied (graph unchanged)")
         for w in report.warnings:
             typer.echo(f"  [warn] {redact_text(w)}")
         for n in report.notices:
@@ -480,7 +548,7 @@ def ingest_manifest(
         raise typer.Exit(code=1)
     for n in report.notices:
         typer.echo(f"  [info] {redact_text(n)}")
-    typer.echo(f"Ingested governance from {path}")
+    typer.echo(f"Ingested governance from {display_path(path)}")
     typer.echo(f"Governance now: {governance_counts()}")
 
 
@@ -1107,7 +1175,7 @@ def policy_propose(
             atomic_write_private(output, rendered.encode("utf-8"))
         except OSError as exc:
             _fail(exc)
-        typer.echo(f"Wrote proposal to {output}")
+        typer.echo(f"Wrote proposal to {display_path(output)}")
     else:
         typer.echo(rendered, nl=False)
 

@@ -27,6 +27,7 @@ aliases, anchors, tags, characters and keys from the document.
 
 from __future__ import annotations
 
+import os
 import types
 import typing
 from typing import Any
@@ -35,7 +36,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
-from toolgraph.redaction import redact_text
+from toolgraph.redaction import PATH_WITHHELD, display_path, redact_text
 from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
@@ -77,7 +78,45 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
         return describe_validation_error(exc, model)
     if isinstance(exc, yaml.MarkedYAMLError):
         return describe_yaml_error(exc)
+    # Only Python's own OSError text is rebuilt; a subclass that formats
+    # itself (``HTTPError``) keeps its text and goes to the scrubber.
+    if (
+        isinstance(exc, OSError)
+        and exc.filename is not None
+        and type(exc).__str__ is OSError.__str__
+    ):
+        return describe_os_error(exc)
     return redact_text(exc)
+
+
+def describe_os_error(exc: OSError) -> str:
+    """``str(exc)``, with each credential-shaped file name replaced by ``PATH_WITHHELD``.
+
+    ``str(OSError)`` writes a file name with ``repr``, which escapes a tab or
+    a no-break space (`\\t`, `\\xa0`) into a form the scrubber cannot read.
+    Python formats a copy, so every other part reads exactly as it would. The
+    copy is built from errno and reason alone and given the names afterwards:
+    a third constructor argument can mean something else (``BlockingIOError``
+    reads an integer there as ``characters_written``).
+    """
+    copy = OSError(exc.errno, exc.strerror)
+    copy.filename = _shown_name(exc.filename)
+    if exc.filename2 is not None:
+        copy.filename2 = _shown_name(exc.filename2)
+    if getattr(exc, "winerror", None) is not None:  # Windows: `[WinError N]`
+        copy.winerror = exc.winerror
+    return redact_text(copy)
+
+
+def _shown_name(name: Any) -> Any:
+    """*name* as it is, or ``PATH_WITHHELD`` when it is credential-shaped.
+
+    A bytes name is checked decoded, as the OS reads it.
+    """
+    text = os.fsdecode(name) if isinstance(name, bytes) else name
+    if isinstance(text, str | os.PathLike) and display_path(text) == PATH_WITHHELD:
+        return PATH_WITHHELD
+    return name
 
 
 def describe_yaml_error(exc: yaml.MarkedYAMLError) -> str:

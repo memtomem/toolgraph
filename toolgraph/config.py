@@ -15,6 +15,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from toolgraph.redaction import display_path
+
 _explicit_config_path: Path | None = None
 
 
@@ -90,16 +92,20 @@ def _runtime_config() -> dict:
             raw = handle.read(_MAX_CONFIG_BYTES + 1)
         if len(raw) > _MAX_CONFIG_BYTES:
             raise RuntimeConfigurationError(
-                f"invalid Toolgraph runtime config at {path}: exceeds"
+                f"invalid Toolgraph runtime config at {display_path(path)}: exceeds"
                 f" the {_MAX_CONFIG_BYTES}-byte limit"
             )
         value = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # An OSError's text names the file again; keep only its reason.
+        reason = (exc.strerror or "could not be read") if isinstance(exc, OSError) else exc
         raise RuntimeConfigurationError(
-            f"invalid Toolgraph runtime config at {path}: {exc}"
+            f"invalid Toolgraph runtime config at {display_path(path)}: {reason}"
         ) from exc
     if not isinstance(value, dict) or value.get("schema_version") != 1:
-        raise RuntimeConfigurationError(f"unsupported Toolgraph runtime config at {path}")
+        raise RuntimeConfigurationError(
+            f"unsupported Toolgraph runtime config at {display_path(path)}"
+        )
     return value
 
 
@@ -150,11 +156,14 @@ def ambient_conflict() -> str | None:
     env_db = os.getenv("TOOLGRAPH_DB_PATH")
     file_db = runtime.get("db_path")
     if env_db and file_db and not _same_path(env_db, str(file_db)):
-        problems.append(f"TOOLGRAPH_DB_PATH={env_db} but the config file says {file_db}")
+        problems.append(
+            f"TOOLGRAPH_DB_PATH={display_path(env_db)} but the config file says "
+            f"{display_path(file_db)}"
+        )
     if not problems:
         return None
     return (
-        f"conflicting backend configuration ({runtime_config_path()}): "
+        f"conflicting backend configuration ({display_path(runtime_config_path())}): "
         + "; ".join(problems)
         + ". Pass --config to choose the file, or unset the variable."
     )
@@ -171,7 +180,8 @@ def _backend_default() -> str:
         backend = runtime.get("backend")
         if not backend:
             raise RuntimeConfigurationError(
-                f'no backend configured in {_explicit_config_path}: add "backend" '
+                f"no backend configured in {display_path(_explicit_config_path)}: "
+                'add "backend" '
                 '("ladybug" or "neo4j") to that file'
             )
         return str(backend)
@@ -240,7 +250,9 @@ def configure(config_path: Path) -> None:
     global _explicit_config_path
     selected = config_path.expanduser().resolve()
     if not selected.is_file():
-        raise RuntimeConfigurationError(f"Toolgraph runtime config does not exist: {selected}")
+        raise RuntimeConfigurationError(
+            f"Toolgraph runtime config does not exist: {display_path(selected)}"
+        )
     previous = _explicit_config_path
     previous_settings = globals().pop("settings", None)
     _explicit_config_path = selected
