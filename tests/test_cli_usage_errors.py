@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -27,8 +28,10 @@ def _run(args: list[str]):
 
 
 def _flat(output: str) -> str:
-    """Typer's error box wraps long lines; join it back into one line."""
-    lines = [line.strip("│╭╮╰╯─ ") for line in output.splitlines()]
+    """Typer's error box wraps long lines, and colors them on CI; join it back
+    into one plain line."""
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    lines = [line.strip("│╭╮╰╯─ ") for line in plain.splitlines()]
     return " ".join(line for line in lines if line)
 
 
@@ -58,6 +61,7 @@ def _assert_hidden(text: str) -> None:
         (["crawl", "--timeout", EN_QUAD], f"Invalid value for '--timeout': {WITHHELD}"),
         (["chek", "--note", PLAIN], WITHHELD),
         (["?%74oken\t=QXZQ"], WITHHELD),
+        (["check", "password", "\t=QXZQ"], WITHHELD),
         (
             ["review-candidates", "annotate", "r", "c", "--status", TABBED],
             f"Invalid value for '--status': {WITHHELD}",
@@ -75,11 +79,12 @@ def _assert_hidden(text: str) -> None:
         "escaped-command",
         "escaped-float",
         "escaped-extra-argument",
-        "escaped-choice",
         "nbsp-command",
         "en-quad-float",
         "unrelated-token",
         "encoded-and-escaped",
+        "split-extra-arguments",
+        "escaped-choice",
     ],
 )
 def test_usage_errors_are_scrubbed(args, shown):
@@ -325,6 +330,8 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
         FileNotFoundError(2, "No such file or directory", "/srv/servers.yaml"),
         OSError(18, "Invalid cross-device link", "/srv/a", None, "/mnt/b"),
         PermissionError(13, "Permission denied"),
+        OSError(2, None, "/srv/servers.yaml"),
+        OSError(2, "", "/srv/servers.yaml"),
     ],
 )
 def test_an_os_error_reads_as_python_prints_it(exc):
@@ -336,6 +343,8 @@ def test_an_os_error_reads_as_python_prints_it(exc):
     [
         FileNotFoundError(2, "No such file or directory", f"/srv/{TABBED}".encode()),
         OSError(18, "Invalid cross-device link", "/srv/a", None, f"/srv/{NBSP}".encode()),
+        OSError(2, None, f"/srv/{TABBED}"),
+        OSError(2, "", f"/srv/{TABBED}"),
     ],
 )
 def test_a_bytes_file_name_is_decoded_before_it_is_shown(exc):
