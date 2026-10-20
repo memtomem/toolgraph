@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 import shlex
 from pathlib import Path, PureWindowsPath
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
 
-from toolgraph.models import ServerSpec
+if TYPE_CHECKING:
+    from toolgraph.models import ServerSpec
 
 # A scheme is the whole run of scheme characters before '://'. Starting a
 # match only where such a run starts keeps the scan linear (a pattern that may

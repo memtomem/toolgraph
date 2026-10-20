@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from toolgraph.graph.driver import read_session, session
 from toolgraph.graph.schema import bump_generation, tool_key
-from toolgraph.models import CrawlResult
+from toolgraph.models import CrawlResult, revalidated
 from toolgraph.redaction import persisted_endpoint
 from toolgraph.uris import normalize_resource_uri
 
@@ -171,6 +171,7 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
 
 def load_crawl_result(result: CrawlResult) -> list[str]:
     """Upsert one server's crawl into the graph; return reconciliation warnings."""
+    result = revalidated(result)
     with session() as s:
         return s.execute_write(_merge_crawl, result)
 

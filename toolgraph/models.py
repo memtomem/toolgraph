@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+from toolgraph.redaction import is_credential_shaped_identity
+from toolgraph.uris import is_resource_ref
 
 Transport = Literal["stdio", "streamable-http", "sse"]
 
@@ -23,6 +26,33 @@ def _no_key_delimiter(kind: str, value: str) -> str:
     if "::" in value:
         raise ValueError(f"{kind} must not contain '::' (the tool-key delimiter)")
     return value
+
+
+def _credential_free(kind: str, value: str) -> str:
+    # Identities are stored and printed as given, so a credential in one would
+    # reach every query and artifact that names it. The message names the
+    # field only, and every model here hides its input in errors.
+    if is_credential_shaped_identity(value):
+        raise ValueError(f"{kind} must not contain credential-shaped data")
+    return value
+
+
+def revalidated[ModelT: BaseModel](model: ModelT) -> ModelT:
+    """A freshly validated copy of ``model``, for a boundary that writes it.
+
+    Validators run only when a model is built: ``model_construct``, field
+    assignment and mutating a list in place all skip them. Only such a model
+    can fail here, and neither the dump's serializer warnings nor the
+    validation error may describe it: both quote values, and an error inside
+    a mapping carries the key. So the failure names the model only.
+    """
+    name = type(model).__name__
+    try:
+        return type(model).model_validate(model.model_dump(mode="json", warnings=False))
+    except Exception:
+        raise ValueError(
+            f"{name} does not validate; build it with {name}.model_validate to see why"
+        ) from None
 
 
 class StrictInputModel(BaseModel):
@@ -43,7 +73,9 @@ class ServerSpec(StrictInputModel):
     @field_validator("name")
     @classmethod
     def _name_is_key_safe(cls, value: str | None) -> str | None:
-        return value if value is None else _no_key_delimiter("server name", value)
+        if value is None:
+            return None
+        return _credential_free("server name", _no_key_delimiter("server name", value))
 
     # stdio
     command: str | None = None
@@ -73,13 +105,17 @@ class ServersConfig(StrictInputModel):
 
 
 class ToolRecord(BaseModel):
+    # Built from what a server reports: a refused name must not reach the
+    # crawl failure text through the error's input.
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     name: str
     description: str | None = None
 
     @field_validator("name")
     @classmethod
     def _name_is_key_safe(cls, value: str) -> str:
-        return _no_key_delimiter("tool name", value)
+        return _credential_free("tool name", _no_key_delimiter("tool name", value))
 
     input_schema: dict | None = None
     # MCP tool annotations (ADR-0006): the server's self-claims about its own
@@ -100,6 +136,8 @@ TOOL_HINT_FIELDS = (
 
 
 class ResourceRecord(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     uri: str
     name: str | None = None
     mime_type: str | None = None
@@ -107,13 +145,15 @@ class ResourceRecord(BaseModel):
 
 
 class CrawlResult(BaseModel):
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     server_name: str
     server_version: str | None = None
 
     @field_validator("server_name")
     @classmethod
     def _server_name_is_key_safe(cls, value: str) -> str:
-        return _no_key_delimiter("server name", value)
+        return _credential_free("server name", _no_key_delimiter("server name", value))
 
     transport: Transport = "stdio"
     endpoint: str | None = None  # command line or url, for provenance
@@ -151,6 +191,11 @@ class Policy(StrictInputModel):
     scope: str | None = None
     description: str | None = None
 
+    @field_validator("id")
+    @classmethod
+    def _id_is_credential_free(cls, value: str) -> str:
+        return _credential_free("policy id", value)
+
 
 class AccessGrant(StrictInputModel):
     """Agent -[:CAN_CALL]-> Tool. Tool referenced as '<server>::<tool>' or '<tool>'."""
@@ -160,6 +205,11 @@ class AccessGrant(StrictInputModel):
     granted_by: str | None = None
     provenance: Provenance | None = None
 
+    @field_validator("agent", "tool", "granted_by")
+    @classmethod
+    def _identity_is_credential_free(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return value if value is None else _credential_free(info.field_name, value)
+
 
 class DataAccess(StrictInputModel):
     """Tool -[:READS|WRITES]-> Resource."""
@@ -168,6 +218,11 @@ class DataAccess(StrictInputModel):
     resource: str  # resource uri
     mode: Literal["READS", "WRITES"]
     provenance: Provenance | None = None
+
+    @field_validator("tool")
+    @classmethod
+    def _tool_is_credential_free(cls, value: str) -> str:
+        return _credential_free("tool", value)
 
 
 class ExpectedException(StrictInputModel):
@@ -180,6 +235,11 @@ class ExpectedException(StrictInputModel):
     policy: str
     resource: str | None = None  # narrow to a specific resource; None = any
     reason: str | None = None
+
+    @field_validator("agent", "tool", "policy")
+    @classmethod
+    def _identity_is_credential_free(cls, value: str, info: ValidationInfo) -> str:
+        return _credential_free(info.field_name, value)
 
 
 class GovernedByBinding(StrictInputModel):
@@ -205,6 +265,26 @@ class Governance(StrictInputModel):
     # per-binding source citation. node id is a resource uri or '<server>::<tool>'.
     governed_by: dict[str, list[str | GovernedByBinding]] = Field(default_factory=dict)
     expected_exceptions: list[ExpectedException] = Field(default_factory=list)
+
+    @field_validator("agents")
+    @classmethod
+    def _agents_are_credential_free(cls, value: list[str]) -> list[str]:
+        for agent in value:
+            _credential_free("agent", agent)
+        return value
+
+    @model_validator(mode="after")
+    def _governed_by_is_credential_free(self) -> Governance:
+        # Checked here rather than per field: an error raised inside the
+        # mapping would carry its key in the error location, which hiding the
+        # input does not cover. A resource key is a resource, not an identity.
+        for node, bindings in self.governed_by.items():
+            if not is_resource_ref(node):
+                _credential_free("governed_by tool ref", node)
+            for binding in bindings:
+                policy = binding if isinstance(binding, str) else binding.policy
+                _credential_free("governed_by policy id", policy)
+        return self
 
 
 def edge_provenance_props(p: Provenance | None) -> dict:
