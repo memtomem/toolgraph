@@ -16,9 +16,11 @@ from toolgraph.yaml_loader import UniqueKeySafeLoader, YAMLContentError, load_ya
 
 M = "neo4j://u:QX ZQ@h/r"
 
-# (document, rendered error). Every document plants QX/ZQ where PyYAML's own
-# text would quote it: the source line, an alias, anchor, tag or tag handle, a
-# character, a key, or a value a constructor rejects.
+# (document, rendered error). Documents plant QX/ZQ where PyYAML's own text
+# would quote it: the source line, an alias, anchor, tag or tag handle, a
+# character, a key, or a value a constructor rejects. An empty int and deep
+# nesting carry no marker: they pin the text for plain Python exceptions
+# (IndexError, RecursionError) raised while loading.
 CORPUS = {
     "duplicate key": (
         f'agents: [a]\ngoverned_by:\n  "{M}": [p]\n  "{M}": [p]\n',
@@ -104,6 +106,10 @@ CORPUS = {
     "control character": (
         "x: QXZQ\x01\n",
         "invalid YAML: unacceptable character (position 7)",
+    ),
+    "NUL": (
+        "agents: [QXZQ\x00]\n",
+        "invalid YAML: unacceptable character (position 13)",
     ),
 }
 
