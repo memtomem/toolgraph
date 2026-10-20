@@ -324,8 +324,8 @@ def test_atomic_write_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
     assert [p for p in sidecar.parent.iterdir() if p.name.startswith(f".{sidecar.name}.")] == []
 
 
-def test_nothing_after_the_replace_can_fail_a_persisted_event(tmp_path, monkeypatch):
-    """Once the sidecar is replaced the event exists; reporting failure invites a duplicate."""
+def test_published_sidecar_is_not_chmodded_after_replace(tmp_path, monkeypatch):
+    """The event exists once the sidecar is replaced; a failing chmod then would invite a retry."""
     source = _source(tmp_path)
     sidecar = default_annotations_path(source)
     real_chmod = os.chmod

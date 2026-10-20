@@ -23,7 +23,12 @@ from typer.core import TyperGroup
 
 from toolgraph import __version__, config, log_safety
 from toolgraph.artifact_safety import redact
-from toolgraph.artifacts import atomic_write_private, canonical_json_bytes, sha256_prefixed
+from toolgraph.artifacts import (
+    ArtifactDurabilityWarning,
+    atomic_write_private,
+    canonical_json_bytes,
+    sha256_prefixed,
+)
 from toolgraph.control_plan import (
     MAX_PLAN_BYTES,
     ControlPlanError,
@@ -62,6 +67,7 @@ from toolgraph.policy_review import PolicyReviewPlanError, build_policy_review_p
 from toolgraph.preflight import build_preflight
 from toolgraph.redaction import WITHHELD, display_path, is_credential_shaped, redact_text
 from toolgraph.review_candidates import (
+    ReviewCandidateDurabilityWarning,
     ReviewCandidateError,
     annotate_candidate,
     list_candidates,
@@ -82,6 +88,10 @@ class ReviewDisposition(StrEnum):
 
 
 _ARGV = "toolgraph.argv"
+
+# Raised only when the caller escalated the warning to an error: the write is
+# already published, so the CLI reports one line instead of a traceback.
+_DURABILITY_WARNINGS = (ArtifactDurabilityWarning, ReviewCandidateDurabilityWarning)
 
 
 def _credential_shaped_argument(args: list[str]) -> bool:
@@ -114,6 +124,9 @@ class _RedactingGroup(TyperGroup):
     inside these two calls. When any token on the command line is
     credential-shaped, the error's message is withheld whole; otherwise it
     goes through ``redact_text``, once, before Typer prints it.
+
+    A durability warning that ``-W error`` escalated is raised after the file
+    or event was published; it exits 1 with its own fixed text on one line.
     """
 
     def make_context(self, info_name, args, parent=None, **extra):
@@ -125,8 +138,12 @@ class _RedactingGroup(TyperGroup):
         return ctx
 
     def invoke(self, ctx):
-        with _redacted_usage_errors(ctx.meta.get(_ARGV, [])):
-            return super().invoke(ctx)
+        try:
+            with _redacted_usage_errors(ctx.meta.get(_ARGV, [])):
+                return super().invoke(ctx)
+        except _DURABILITY_WARNINGS as exc:
+            typer.echo(f"ERROR: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
 
 app = typer.Typer(
@@ -305,6 +322,10 @@ def init_backend(
             }
         )
         atomic_write_private(runtime_path, payload)
+    except _DURABILITY_WARNINGS:
+        # The config is published and names the database just created; a
+        # rollback would leave it pointing at a deleted file.
+        raise
     except Exception as exc:
         if previous is None:
             vars(config).pop("settings", None)

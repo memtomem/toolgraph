@@ -104,7 +104,9 @@ def atomic_write_private(
     """Write 0600 bytes via fsync + atomic replace; return exact digest.
 
     A caller with its own durability warning passes it, so its consumers keep
-    filtering on the type they already know.
+    filtering on the type they already know. A caller that escalates that
+    warning to an error gets it raised after the file is published: the
+    escalation is the caller's choice, and it is honoured rather than swallowed.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary: str | None = None
@@ -121,10 +123,11 @@ def atomic_write_private(
             handle.flush()
             os.fsync(handle.fileno())
         # The temporary file is already 0600 and the replace keeps its inode.
-        # Nothing may fail after this point: the payload is published, and an
-        # error would invite a retry (a duplicate review annotation event).
         os.replace(temporary, path)
         temporary = None
+        # The payload is published: an error from here on would invite a
+        # retry (a duplicate review annotation event), so nothing below raises
+        # unless the caller escalated the durability warning.
         try:
             fsync_parent_dir(path)
         except OSError:
