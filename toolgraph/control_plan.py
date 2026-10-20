@@ -14,12 +14,21 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from toolgraph.artifact_safety import safe_artifact
 from toolgraph.artifacts import rfc3339_offset_error, sha256_prefixed
 from toolgraph.graph import driver, queries, selector
-from toolgraph.redaction import is_credential_shaped
+from toolgraph.models import refuse_credential_identity
+from toolgraph.redaction import is_credential_shaped, is_credential_shaped_identity
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "toolgraph.control-plan"
@@ -87,7 +96,8 @@ class ControlPlanError(ValueError):
 class _AdditiveModel(BaseModel):
     """Versioned artifact model: same-major additive fields are ignored."""
 
-    model_config = ConfigDict(extra="ignore", strict=True)
+    # A refused identity must not survive in the chained ValidationError.
+    model_config = ConfigDict(extra="ignore", strict=True, hide_input_in_errors=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -125,10 +135,20 @@ class Producer(_AdditiveModel):
     name: str = Field(min_length=1, max_length=128, pattern=r"^\S+$")
     version: str = Field(min_length=1, max_length=128, pattern=r"^\S+$")
 
+    @field_validator("name", "version")
+    @classmethod
+    def _identity_is_credential_free(cls, value: str, info: ValidationInfo) -> str:
+        return refuse_credential_identity(f"producer {info.field_name}", value)
+
 
 class Principal(_AdditiveModel):
     id: str = Field(min_length=1, max_length=256, pattern=r"^\S+$")
     candidate_tools: list[str] = Field(min_length=1, max_length=4096)
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_credential_free(cls, value: str) -> str:
+        return refuse_credential_identity("principal id", value)
 
     @model_validator(mode="after")
     def _qualified_unique_tools(self) -> Principal:
@@ -143,6 +163,17 @@ class Principal(_AdditiveModel):
             raise ValueError(
                 "candidate_tools must use qualified 'server::tool' keys; "
                 "invalid at index " + ", ".join(bad)
+            )
+        # The key pattern refuses a raw '://', not a percent-encoded one.
+        shaped = [
+            str(index)
+            for index, tool in enumerate(self.candidate_tools)
+            if is_credential_shaped_identity(tool)
+        ]
+        if shaped:
+            raise ValueError(
+                "candidate_tools must not contain credential-shaped data; at index "
+                + ", ".join(shaped)
             )
         if len(set(self.candidate_tools)) != len(self.candidate_tools):
             raise ValueError("candidate_tools must be unique within one principal")
@@ -165,6 +196,18 @@ class ControlNode(_AdditiveModel):
     max_parallelism: int | None = Field(default=None, ge=1)
     timeout_seconds: int | None = Field(default=None, ge=1)
     validator_scope: Literal["workspace_result"] | None = None
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_credential_free(cls, value: str) -> str:
+        return refuse_credential_identity("node id", value)
+
+    @field_validator("principals")
+    @classmethod
+    def _principals_are_credential_free(cls, value: list[str]) -> list[str]:
+        for principal in value:
+            refuse_credential_identity("node principal", principal)
+        return value
 
     @model_validator(mode="after")
     def _coherent_execution_shape(self) -> ControlNode:
@@ -212,6 +255,11 @@ class ControlEdge(_AdditiveModel):
     decided_by: Literal["code", "model", "human"]
     max_fan_out: int | None = Field(default=None, ge=1)
 
+    @field_validator("source", "target")
+    @classmethod
+    def _endpoint_is_credential_free(cls, value: str, info: ValidationInfo) -> str:
+        return refuse_credential_identity(f"edge {info.field_name}", value)
+
     @model_validator(mode="after")
     def _coherent_fanout_bound(self) -> ControlEdge:
         if self.kind != "fanout" and self.max_fan_out is not None:
@@ -234,6 +282,11 @@ class ControlPlan(_AdditiveModel):
     nodes: list[ControlNode] = Field(min_length=1, max_length=4096)
     edges: list[ControlEdge] = Field(max_length=16384)
     limits: ControlLimits
+
+    @field_validator("run_id")
+    @classmethod
+    def _run_id_is_credential_free(cls, value: str) -> str:
+        return refuse_credential_identity("run_id", value)
 
     @model_validator(mode="after")
     def _unique_identities(self) -> ControlPlan:
@@ -264,7 +317,9 @@ def _assert_body_free(value: object, *, path: tuple[str, ...] = ()) -> None:
         raise ControlPlanError(f"control plan nesting exceeds the {_MAX_PLAN_DEPTH}-level limit")
     if isinstance(value, dict):
         for key, child in value.items():
-            if is_credential_shaped(str(key)):
+            # A key is a field name, so it gets the identity rule. Checked
+            # before descending, a refused key never appears in a later path.
+            if is_credential_shaped_identity(str(key)):
                 # The key is the secret: name only where it sits.
                 where = ".".join(path) or "the top level"
                 raise ControlPlanError(f"control plan contains a credential-shaped key in {where}")
@@ -293,7 +348,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
         if key in value:
             # Parsing runs before the body check, so a credential-shaped key
             # must not be echoed here either.
-            shown = "a credential-shaped key" if is_credential_shaped(key) else repr(key)
+            shown = "a credential-shaped key" if is_credential_shaped_identity(key) else repr(key)
             raise ControlPlanError(f"control plan contains duplicate key {shown}")
         value[key] = child
     return value
@@ -656,7 +711,7 @@ def build_control_preflight(
         "mode": "advisory",
         "profile": profile,
         "plan_digest": sha256_prefixed(raw_plan),
-        "graph_state": graph_state,
+        "graph_state": safe_artifact(graph_state),
         "decision": "advisory_warn" if warned else "advisory_allow",
         "evaluations": safe_artifact(compiled["evaluations"]),
         "findings": findings,

@@ -28,10 +28,10 @@ def _no_key_delimiter(kind: str, value: str) -> str:
     return value
 
 
-def _credential_free(kind: str, value: str) -> str:
+def refuse_credential_identity(kind: str, value: str) -> str:
     # Identities are stored and printed as given, so a credential in one would
     # reach every query and artifact that names it. The message names the
-    # field only, and every model here hides its input in errors.
+    # field only, and every model that calls this hides its input in errors.
     if is_credential_shaped_identity(value):
         raise ValueError(f"{kind} must not contain credential-shaped data")
     return value
@@ -75,7 +75,7 @@ class ServerSpec(StrictInputModel):
     def _name_is_key_safe(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        return _credential_free("server name", _no_key_delimiter("server name", value))
+        return refuse_credential_identity("server name", _no_key_delimiter("server name", value))
 
     # stdio
     command: str | None = None
@@ -115,7 +115,7 @@ class ToolRecord(BaseModel):
     @field_validator("name")
     @classmethod
     def _name_is_key_safe(cls, value: str) -> str:
-        return _credential_free("tool name", _no_key_delimiter("tool name", value))
+        return refuse_credential_identity("tool name", _no_key_delimiter("tool name", value))
 
     input_schema: dict | None = None
     # MCP tool annotations (ADR-0006): the server's self-claims about its own
@@ -153,7 +153,7 @@ class CrawlResult(BaseModel):
     @field_validator("server_name")
     @classmethod
     def _server_name_is_key_safe(cls, value: str) -> str:
-        return _credential_free("server name", _no_key_delimiter("server name", value))
+        return refuse_credential_identity("server name", _no_key_delimiter("server name", value))
 
     transport: Transport = "stdio"
     endpoint: str | None = None  # command line or url, for provenance
@@ -194,7 +194,7 @@ class Policy(StrictInputModel):
     @field_validator("id")
     @classmethod
     def _id_is_credential_free(cls, value: str) -> str:
-        return _credential_free("policy id", value)
+        return refuse_credential_identity("policy id", value)
 
 
 class AccessGrant(StrictInputModel):
@@ -208,7 +208,7 @@ class AccessGrant(StrictInputModel):
     @field_validator("agent", "tool", "granted_by")
     @classmethod
     def _identity_is_credential_free(cls, value: str | None, info: ValidationInfo) -> str | None:
-        return value if value is None else _credential_free(info.field_name, value)
+        return value if value is None else refuse_credential_identity(info.field_name, value)
 
 
 class DataAccess(StrictInputModel):
@@ -222,7 +222,7 @@ class DataAccess(StrictInputModel):
     @field_validator("tool")
     @classmethod
     def _tool_is_credential_free(cls, value: str) -> str:
-        return _credential_free("tool", value)
+        return refuse_credential_identity("tool", value)
 
 
 class ExpectedException(StrictInputModel):
@@ -239,7 +239,7 @@ class ExpectedException(StrictInputModel):
     @field_validator("agent", "tool", "policy")
     @classmethod
     def _identity_is_credential_free(cls, value: str, info: ValidationInfo) -> str:
-        return _credential_free(info.field_name, value)
+        return refuse_credential_identity(info.field_name, value)
 
 
 class GovernedByBinding(StrictInputModel):
@@ -270,7 +270,7 @@ class Governance(StrictInputModel):
     @classmethod
     def _agents_are_credential_free(cls, value: list[str]) -> list[str]:
         for agent in value:
-            _credential_free("agent", agent)
+            refuse_credential_identity("agent", agent)
         return value
 
     @model_validator(mode="after")
@@ -280,10 +280,10 @@ class Governance(StrictInputModel):
         # input does not cover. A resource key is a resource, not an identity.
         for node, bindings in self.governed_by.items():
             if not is_resource_ref(node):
-                _credential_free("governed_by tool ref", node)
+                refuse_credential_identity("governed_by tool ref", node)
             for binding in bindings:
                 policy = binding if isinstance(binding, str) else binding.policy
-                _credential_free("governed_by policy id", policy)
+                refuse_credential_identity("governed_by policy id", policy)
         return self
 
 

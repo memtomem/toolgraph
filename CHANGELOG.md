@@ -70,6 +70,16 @@ All notable changes to Toolgraph are documented here.
   names it. Resource URIs are not identities and are not checked. A graph
   keeps the values it stored earlier until they are re-ingested or reset.
 
+- A control plan's identities get the identity rule at load (#215): `run_id`,
+  producer name and version, principal ids, node ids and the principals a
+  node lists, edge endpoints and candidate tools, so a credential URI with a
+  `/` in its password or a percent-encoded scheme is refused there instead of
+  being published as the result's `run_id`. Keys are field names and get the
+  same rule, so a duplicate or forbidden-field error can no longer print an
+  encoded credential-shaped key. String values of additive fields keep the
+  prose rule. The result's `graph_state` goes through the same artifact
+  check as the rest of the result.
+
 ### Fixed
 
 - Artifact evidence no longer shows URI passwords the evidence scan could not
