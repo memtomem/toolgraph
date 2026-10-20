@@ -477,7 +477,13 @@ def annotate_candidate(
     annotations_path: str | Path | None = None,
     recorded_at: datetime | None = None,
 ) -> dict:
-    """Append one human disposition and return the candidate's updated view."""
+    """Append one human disposition and return the candidate's updated view.
+
+    If the sidecar was replaced but its directory could not be fsynced, this
+    warns ``ReviewCandidateDurabilityWarning`` and returns. A caller that
+    escalates that warning to an error gets it raised with the event already
+    persisted; retrying would append a second event.
+    """
     if disposition not in DISPOSITIONS:
         raise ReviewCandidateError(f"unknown review disposition {disposition!r}")
     reviewer = normalize_reviewer(reviewer)
@@ -540,7 +546,8 @@ def annotate_candidate(
         try:
             # The event is already atomically visible if only the directory
             # fsync fails. Reporting total failure would invite a retry that
-            # appends a duplicate event, so the writer warns instead.
+            # appends a duplicate event, so the writer warns instead; an
+            # escalated warning says the same in its text.
             atomic_write_private(
                 annotation_file,
                 _annotation_bytes(updated),
@@ -548,6 +555,7 @@ def annotate_candidate(
                 warning_message=(
                     "review annotations were replaced, but parent-directory fsync "
                     "failed; the event is persisted but crash durability is uncertain"
+                    " — do not retry: a retry appends a second event"
                 ),
             )
         except OSError as exc:

@@ -188,6 +188,18 @@ All notable changes to Toolgraph are documented here.
   `policy review-plan`, `policy impact --output`, `preflight` and
   `control-preflight` is left as given: it names the file the caller asked
   for.
+- A command that writes a file or a review annotation no longer prints a
+  traceback when the durability warning is escalated to an error (#129).
+  The warning (`ArtifactDurabilityWarning`, or
+  `ReviewCandidateDurabilityWarning` for `review-candidates annotate`) is
+  raised after the write is published, when the directory could not be
+  fsynced. With `-W error` the command still fails, as asked, but with one
+  `ERROR:` line and exit 1 instead of a traceback; no JSON receipt is
+  printed. Before, `init` also deleted the database it had just created
+  while keeping the published `config.json` that names it; both are now
+  kept. The annotation warning now ends `do not retry: a retry appends a
+  second event`, since the event is already recorded. Library calls still
+  raise the escalated warning after publication.
 
 ## 0.3.0 - 2026-10-19
 

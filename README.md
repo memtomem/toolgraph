@@ -349,7 +349,9 @@ report's run ids and tool keys more strictly: as identities, they also refuse
 any URI with an `@` after its `://`.
 If a genuine parent-directory fsync error occurs after replacement, the event
 remains successful and visible while a durability warning is written to stderr;
-retrying would append a duplicate event.
+retrying would append a duplicate event. With that warning escalated to an
+error (`-W error`), `annotate` exits 1 with one `ERROR:` line, and the event is
+still recorded: do not retry.
 
 Candidate ids use the same exact-tuple UUIDv5 as SyncMill's merged
 `board import-review-candidates` consumer (SyncMill PR #57), so the two human
@@ -439,11 +441,19 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `audit-report --fail-on-blocking` | 1 when `status` is `fail` (unsafe violations or drifted governed tools) |
 | `preflight` | 0 for advisory allow, warn, and unresolved identity · 1 when the artifact cannot be built or written |
 | `control-preflight` | 0 including advisory warnings · 1 on an invalid plan or an I/O failure |
-| `policy compile` | 0 after atomic bundle replacement · 1 on unresolved identity/state or I/O failure |
+| `policy compile` | 0 after atomic bundle replacement (see the note below on escalated durability warnings) · 1 on unresolved identity/state or I/O failure |
 | `policy review-plan` | 0 · 1 on an invalid or stale report, unresolved graph state, or I/O failure |
 | `policy propose` | 0 · 1 on invalid input or a refused export · 2 for `--json` with `--output`, or `--min-would-block` below 1 |
 | `review-candidates list/annotate` | 0 on valid JSON output · 1 on invalid/stale artifacts or I/O failure · 2 on invalid CLI arguments |
 | `example init` | 2 when the destination already exists |
+
+A command that writes a file (`init`, `preflight --out`, `control-preflight
+--out`, `policy impact --output`, `policy compile`, `policy review-plan`,
+`policy propose --output`) or a review annotation warns on stderr and exits as
+above when the file is published but its directory could not be fsynced. With
+that warning escalated to an error (`-W error`), it exits 1 with one `ERROR:`
+line and prints no receipt; the file or event is published, but its crash
+durability is uncertain.
 
 An error outside these classes exits 1 with a Python traceback instead of an
 `ERROR:` line.
