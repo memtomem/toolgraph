@@ -6,7 +6,9 @@ import errno
 import json
 import re
 import sys
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from typer.testing import CliRunner
@@ -346,6 +348,7 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
         _OwnOSError(errno.EAGAIN, "busy", 10**100),
         OSError(2, "No such file or directory", Path("/srv/servers.yaml")),
         OSError(2, "No such file or directory", b"/srv/servers.yaml"),
+        HTTPError("/srv/config.yaml", 404, "Not Found", Message(), None),
     ],
 )
 def test_an_os_error_reads_as_python_prints_it(exc):

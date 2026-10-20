@@ -78,7 +78,13 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
         return describe_validation_error(exc, model)
     if isinstance(exc, yaml.MarkedYAMLError):
         return describe_yaml_error(exc)
-    if isinstance(exc, OSError) and exc.filename is not None:
+    # Only Python's own OSError text is rebuilt; a subclass that formats
+    # itself (``HTTPError``) keeps its text and goes to the scrubber.
+    if (
+        isinstance(exc, OSError)
+        and exc.filename is not None
+        and type(exc).__str__ is OSError.__str__
+    ):
         return describe_os_error(exc)
     return redact_text(exc)
 
