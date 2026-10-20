@@ -23,7 +23,7 @@ from toolgraph.graph.driver import acquire_readonly_session, read_session, sessi
 from toolgraph.graph.queries import resolve_tool_refs
 from toolgraph.graph.schema import bump_generation, check_backend_schema_version, exception_key
 from toolgraph.manifest.parser import governance_digest
-from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props
+from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props, revalidated
 from toolgraph.uris import is_resource_ref, normalize_resource_uri
 
 if TYPE_CHECKING:
@@ -606,6 +606,7 @@ def ingest_governance(gov: Governance, strict_drift: bool = False) -> IngestRepo
     Non-empty ``report.warnings`` means rejected — graph untouched.
     ``report.notices`` are non-fatal drift advisories (see IngestReport).
     """
+    gov = revalidated(gov)
     with session() as s:
         warnings, notices = s.execute_write(_ingest, gov, strict_drift, governance_digest(gov))
         return IngestReport(warnings=warnings, notices=notices)
@@ -916,6 +917,7 @@ def _compute_dry_run_diff(
 
 def dry_run_ingest(gov: Governance, strict_drift: bool = False) -> GovernanceDiffReport:
     """Analyze the exact delta that would be applied without mutating anything."""
+    gov = revalidated(gov)
     with acquire_readonly_session() as session:
         check_backend_schema_version(session)
         res = queries.with_graph_state(

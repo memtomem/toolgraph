@@ -54,6 +54,19 @@ All notable changes to Toolgraph are documented here.
   refuses to emit a proposal whose note would show one holding userinfo
   (#216).
 
+- The governance manifest and the crawler refuse a credential-shaped identity
+  at input, with the same identity rule (#217): an agent, policy id, tool ref
+  or `granted_by`, a `governed_by` policy or tool-ref key, a `servers.yaml`
+  server name, and the server and tool names a server reports. Before, such a
+  value was stored and printed by `check-access`, `unsafe-tools`,
+  `blast-radius`, `unbacked-edges`, `audit-report` and `eligible-tools`. The
+  error names the field, never the value. A manifest is rejected whole
+  (`ingest-manifest`, `policy propose` and `policy impact` exit 1), and so
+  is a `servers.yaml`, before any server is contacted; a server
+  that reports such a name fails its own crawl, and the rest of the fleet
+  still loads. Resource URIs are not identities and are not checked. A graph
+  keeps the values it stored earlier until they are re-ingested or reset.
+
 ### Fixed
 
 - Artifact evidence no longer shows URI passwords the evidence scan could not

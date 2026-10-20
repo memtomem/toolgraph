@@ -18,7 +18,7 @@ from toolgraph.graph.driver import acquire_readonly_session
 from toolgraph.graph.schema import check_backend_schema_version
 from toolgraph.manifest.ingest import _validate_manifest
 from toolgraph.manifest.parser import governance_digest
-from toolgraph.models import Governance
+from toolgraph.models import Governance, revalidated
 from toolgraph.policy_bundle import tool_contract_digest
 from toolgraph.policy_impact_models import (
     UNRESOLVED,
@@ -266,7 +266,7 @@ def build_policy_impact(
     created_at: datetime | None = None,
 ) -> dict[str, Any]:
     candidates = _scope(agent, candidates, profile)
-    governance = Governance.model_validate(governance.model_dump(mode="json"))
+    governance = revalidated(governance)
     with acquire_readonly_session() as session:
         check_backend_schema_version(session)
 
