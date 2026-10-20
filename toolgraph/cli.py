@@ -16,7 +16,7 @@ import typer
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from toolgraph import __version__, config
+from toolgraph import __version__, config, log_safety
 from toolgraph.artifact_safety import redact
 from toolgraph.artifacts import atomic_write_private, canonical_json_bytes, sha256_prefixed
 from toolgraph.control_plan import (
@@ -152,6 +152,10 @@ def main(
 ) -> None:
     """Configure Toolgraph before running a command."""
     del version
+    # The CLI configures no log handler, so a library's record (the MCP SDK
+    # client's, during crawl) reaches Python's last-resort handler with its
+    # full traceback. Filter that handler first: loading .env can log too.
+    log_safety.install_on_last_resort()
     config.load_dotenv_file()
     if config_path is not None:
         try:
