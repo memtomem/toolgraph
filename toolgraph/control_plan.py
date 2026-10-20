@@ -96,7 +96,9 @@ class ControlPlanError(ValueError):
 class _AdditiveModel(BaseModel):
     """Versioned artifact model: same-major additive fields are ignored."""
 
-    # A refused identity must not survive in the chained ValidationError.
+    # A refused identity must not appear in the chained ValidationError's
+    # text or a formatted traceback. (Its errors() still return the input to
+    # a caller that asks; nothing in Toolgraph renders them.)
     model_config = ConfigDict(extra="ignore", strict=True, hide_input_in_errors=True)
 
     @model_validator(mode="before")
