@@ -27,6 +27,7 @@ aliases, anchors, tags, characters and keys from the document.
 
 from __future__ import annotations
 
+import os
 import types
 import typing
 from typing import Any
@@ -91,7 +92,9 @@ def describe_os_error(exc: OSError) -> str:
     text = f"[Errno {exc.errno}] {exc.strerror}" if exc.errno is not None else exc.strerror
     names = [name for name in (exc.filename, exc.filename2) if name is not None]
     if names:
-        text += ": " + " -> ".join(f"'{display_path(name)}'" for name in names)
+        # A bytes name would print as its repr; decode it as the OS would.
+        shown = (display_path(os.fsdecode(n) if isinstance(n, bytes) else n) for n in names)
+        text += ": " + " -> ".join(f"'{name}'" for name in shown)
     return redact_text(text)
 
 

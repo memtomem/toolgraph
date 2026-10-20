@@ -329,3 +329,15 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
 )
 def test_an_os_error_reads_as_python_prints_it(exc):
     assert describe_error(exc) == str(exc)
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        FileNotFoundError(2, "No such file or directory", f"/srv/{TABBED}".encode()),
+        OSError(18, "Invalid cross-device link", "/srv/a", None, f"/srv/{NBSP}".encode()),
+    ],
+)
+def test_a_bytes_file_name_is_decoded_before_it_is_shown(exc):
+    _assert_hidden(describe_error(exc))
+    assert PATH_WITHHELD in describe_error(exc)

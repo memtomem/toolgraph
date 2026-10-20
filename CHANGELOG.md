@@ -148,8 +148,11 @@ All notable changes to Toolgraph are documented here.
   when the process has none print each record's message through the
   credential scrubber, and each exception in its chain as one line,
   `<Type>: <message>`, scrubbed the same way, with a validation error's
-  message rebuilt as in #221. Other text in a message, such as a tool name
-  that is not credential-shaped, is still shown. Handlers a program
+  message rebuilt as in #221. A value the message or an exception prints
+  with `repr` (`%r`, a `KeyError` key), which escapes a tab or a no-break
+  space out of the scrubber's sight, is checked as it was before formatting,
+  and a credential-shaped one withholds the line. Other text in a message,
+  such as a tool name that is not credential-shaped, is still shown. Handlers a program
   configured itself, before or after importing Toolgraph, and uvicorn's own
   loggers under `serve --http` (#226), are not filtered.
 - MCP tool-call errors for a bad request no longer quote the request (#206).
