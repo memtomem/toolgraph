@@ -20,11 +20,13 @@ import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from pydantic import ValidationError
 
 from toolgraph import log_safety
 from toolgraph.config import RuntimeConfigurationError
+from toolgraph.error_text import describe_error
 from toolgraph.errors import ContractError
 from toolgraph.graph import queries, selector
 from toolgraph.graph.driver import (
@@ -156,6 +158,7 @@ class _ToolgraphMCP(MCPServer):
                 # a second line of defence here, not the reason this is safe.
                 if isinstance(exc.__cause__, ContractError):
                     raise ToolError(redact_text(exc.__cause__)) from exc
+                self._raise_caller_error(name, exc)
                 raise
             payload: dict[str, Any] = {
                 "error_kind": "backend_unavailable",
@@ -167,6 +170,27 @@ class _ToolgraphMCP(MCPServer):
                 structured_content=payload,
                 is_error=True,
             )
+
+    def _raise_caller_error(self, name: str, exc: ToolError) -> None:
+        """Re-raise the SDK's reply to a bad request without the request in it.
+
+        The SDK answers an unknown tool with ``Unknown tool: <name>`` as sent,
+        and invalid arguments with pydantic's text, which quotes every input
+        value. The name goes through ``redact_text``, as a ContractError's
+        text does, so a typo stays readable. The arguments' error is rebuilt
+        from the tool's argument model (``describe_error``) and keeps the
+        ``ValidationError`` as its cause, so the SDK still logs the rejected
+        field names. A crash (``UnexpectedToolError``) is left alone: an
+        invalid return value raises one with a ``ValidationError`` cause too.
+        """
+        if isinstance(exc, UnexpectedToolError):
+            return
+        tool = self._tool_manager.get_tool(name)
+        if tool is None and exc.__cause__ is None:
+            raise ToolError(redact_text(f"Unknown tool: {name}")) from None
+        if tool is not None and isinstance(exc.__cause__, ValidationError):
+            text = describe_error(exc.__cause__, tool.fn_metadata.arg_model)
+            raise ToolError(f"Error executing tool {name}: {text}") from exc.__cause__
 
     @staticmethod
     def _misconfigured(name: str, exc: BackendConfigurationError) -> CallToolResult:

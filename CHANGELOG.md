@@ -152,6 +152,17 @@ All notable changes to Toolgraph are documented here.
   that is not credential-shaped, is still shown. Handlers a program
   configured itself, before or after importing Toolgraph, and uvicorn's own
   loggers under `serve --http` (#226), are not filtered.
+- MCP tool-call errors for a bad request no longer quote the request (#206).
+  Before, the MCP SDK answered an unknown tool with `Unknown tool: <name>` as
+  sent, and invalid arguments with pydantic's text, which carried every
+  input value (`input_value={'token': ...}`). The tool name now goes through
+  the credential scrubber (`Unknown tool: nope` is unchanged), and invalid
+  arguments read `Error executing tool <name>: 1 validation error for
+  <name>Arguments: agent: expected a string [type=string_type]`, with field
+  names and fixed messages as in #221. A tool that crashes keeps the SDK's
+  generic `Error executing tool <name>`. Errors for resources and prompts,
+  which Toolgraph does not register, and the HTTP transport's reply to a
+  malformed JSON-RPC body still come from the SDK as they are.
 
 ## 0.3.0 - 2026-10-19
 

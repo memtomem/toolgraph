@@ -17,6 +17,7 @@ from neo4j.exceptions import (
     ServiceUnavailable,
     SessionExpired,
 )
+from pydantic import ValidationError
 
 from toolgraph import config
 from toolgraph.errors import ContractError
@@ -28,6 +29,7 @@ from toolgraph.graph.driver import (
     ConfigurationCause,
     is_backend_unavailable,
 )
+from toolgraph.redaction import WITHHELD
 from toolgraph.server import app
 
 _BACKEND_PAYLOAD = {
@@ -830,3 +832,89 @@ async def test_uninitialized_ladybug_database_over_a_real_stdio_server(tmp_path)
     assert result.structured_content == _misconfigured(ConfigurationCause.SCHEMA_NOT_INITIALIZED)
     assert "schema_not_initialized" in log
     assert "Traceback" not in log
+
+
+# The SDK's replies to a bad request quote the request (#206): an unknown tool
+# by name, invalid arguments with every input value.
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        ("nope", "Unknown tool: nope"),
+        ("password=QXZQ", "Unknown tool: password=<redacted>"),
+        ("?%74oken=QXZQ", WITHHELD),
+    ],
+)
+async def test_unknown_tool_reply_is_redacted(name, text):
+    result = await _wire_call(name, {})
+
+    assert result.is_error is True
+    assert result.content[0].text == text
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "text"),
+    [
+        (
+            "check_access",
+            {"agent": {"token": "QXZQ"}, "tool": "s::t"},
+            "1 validation error for check_accessArguments: "
+            "agent: expected a string [type=string_type]",
+        ),
+        (
+            "check_access",
+            {"agnt": "password=QXZQ"},
+            "2 validation errors for check_accessArguments: "
+            "agent: field required [type=missing]; tool: field required [type=missing]",
+        ),
+        (
+            "rank_features",
+            {"agent": "a", "candidates": "password=QXZQ"},
+            "1 validation error for rank_featuresArguments: "
+            "candidates: expected a list [type=list_type]",
+        ),
+    ],
+)
+async def test_invalid_arguments_reply_names_fields_not_values(name, arguments, text):
+    result = await _wire_call(name, arguments)
+
+    assert result.is_error is True
+    assert result.content[0].text == f"Error executing tool {name}: {text}"
+
+
+async def test_invalid_arguments_still_log_the_rejected_field_names(caplog):
+    with caplog.at_level(logging.INFO, logger="mcp.server.mcpserver.server"):
+        await _wire_call("check_access", {"agent": {"token": "QXZQ"}, "tool": "s::t"})
+
+    assert "Tool 'check_access' rejected arguments: ['agent']" in caplog.messages
+
+
+async def test_an_invalid_return_value_stays_a_crash(caplog):
+    """An invalid return value reaches the server as an UnexpectedToolError
+    whose cause is a ValidationError: a crash, not the caller's mistake. It
+    keeps the SDK's mask on the wire and its crash log with the exception."""
+    server = app._ToolgraphMCP("probe")
+
+    @server.tool()
+    def names() -> list[str]:
+        return [123]
+
+    handler = server._lowlevel_server.get_request_handler("tools/call").handler
+    with caplog.at_level(logging.INFO, logger="mcp.server.mcpserver.server"):
+        result = await handler(None, CallToolRequestParams(name="names", arguments={}))
+
+    assert result.content[0].text == "Error executing tool names"
+    [record] = caplog.records
+    assert record.levelno == logging.ERROR
+    assert record.getMessage() == "Tool 'names' raised an unexpected exception"
+    assert isinstance(record.exc_info[1].__cause__, ValidationError)
+
+
+def test_every_tool_validates_arguments_with_a_model_without_mappings():
+    """The rebuilt argument error depends on the SDK's argument model, and on no
+    tool taking a mapping, whose keys a location would carry."""
+    for tool in asyncio.run(app.mcp.list_tools()):
+        model = app.mcp._tool_manager.get_tool(tool.name).fn_metadata.arg_model
+        for field in model.model_fields.values():
+            assert "dict" not in repr(field.annotation).lower(), (tool.name, field)
