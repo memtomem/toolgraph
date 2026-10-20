@@ -35,7 +35,7 @@ import yaml
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
-from toolgraph.redaction import redact_text
+from toolgraph.redaction import display_path, redact_text
 from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
@@ -77,7 +77,22 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
         return describe_validation_error(exc, model)
     if isinstance(exc, yaml.MarkedYAMLError):
         return describe_yaml_error(exc)
+    if isinstance(exc, OSError) and exc.strerror:
+        return describe_os_error(exc)
     return redact_text(exc)
+
+
+def describe_os_error(exc: OSError) -> str:
+    """Python's ``[Errno N] reason: 'file'``, each file name shown through ``display_path``.
+
+    ``str(OSError)`` writes a file name with ``repr``, which escapes a tab or
+    a no-break space (`\\t`, `\\xa0`) into a form the scrubber cannot read.
+    """
+    text = f"[Errno {exc.errno}] {exc.strerror}" if exc.errno is not None else exc.strerror
+    names = [name for name in (exc.filename, exc.filename2) if name is not None]
+    if names:
+        text += ": " + " -> ".join(f"'{display_path(name)}'" for name in names)
+    return redact_text(text)
 
 
 def describe_yaml_error(exc: yaml.MarkedYAMLError) -> str:

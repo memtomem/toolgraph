@@ -244,6 +244,7 @@ def _hide_quoted_userinfo(text: str) -> str:
 
 
 WITHHELD = "details withheld (they contain credential-shaped data)"
+PATH_WITHHELD = "<path withheld: credential-shaped>"
 # A placeholder written in the input is shown as `\u2039redacted...`, so it can
 # never pass for one a scrubber inserted.
 _INPUT_PLACEHOLDER = re.compile(r"(?i)<(?=redacted)")
@@ -274,6 +275,17 @@ def redact_text(value: object) -> str:
     if is_credential_shaped(_INSERTED.sub(" ", text)):
         return WITHHELD
     return text
+
+
+def display_path(path: object) -> str:
+    """*path* as text for a message, or ``PATH_WITHHELD`` if it is credential-shaped.
+
+    A path is shown whole or not at all: scrubbing part of it would print a
+    path that does not exist. Replacing only the path keeps the rest of the
+    message, which ``redact_text`` over the whole line would withhold too.
+    """
+    text = str(path)
+    return text if redact_text(text) == text else PATH_WITHHELD
 
 
 def redact_credentials(text: str) -> str:

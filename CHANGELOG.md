@@ -163,6 +163,28 @@ All notable changes to Toolgraph are documented here.
   generic `Error executing tool <name>`. Errors for resources and prompts,
   which Toolgraph does not register, and the HTTP transport's reply to a
   malformed JSON-RPC body still come from the SDK as they are.
+- CLI usage errors and printed paths no longer show credential-shaped input
+  (#206). Before, Click's and Typer's own usage errors quoted what was typed
+  (`No such command '<arg>'`, `'<value>' is not a valid float`), as did
+  Toolgraph's (`unknown profile '<value>'`), and lines such as
+  `Invalid servers config at <path>` and the `--config` error printed the
+  path as given. A usage error is now withheld whole when any token on the
+  command line is credential-shaped, since Click and Typer print a typed
+  value escaped (`\x09`, `\xa0`) or quoted, a form the scrubber cannot
+  read; otherwise its message goes through the credential scrubber. Lines in
+  which Toolgraph prints a path it was given or created (`init`, `check`,
+  `crawl`, `ingest-manifest`, `example init`, `policy propose --output`, and
+  the runtime-config errors) show a credential-shaped path as
+  `<path withheld: credential-shaped>` and keep the rest of the line, and
+  an error from the operating system prints its file names the same way
+  (`[Errno 2] No such file or directory: '<path>'`) instead of quoting them
+  with `repr`, which escaped a tab out of the scrubber's sight. A typo reads
+  as before (`No such command 'chek'. Did you mean 'check'?`); a value the
+  scrubber treats as an assignment, such as `token:v2`, is still masked
+  (`'token=<redacted>`). The `"output"` path in the JSON receipts of `policy compile`,
+  `policy review-plan`, `policy impact --output`, `preflight` and
+  `control-preflight` is left as given: it names the file the caller asked
+  for.
 
 ## 0.3.0 - 2026-10-19
 
