@@ -20,6 +20,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
+from toolgraph.error_text import render_one
+from toolgraph.errors import ValueFreeError
 from toolgraph.redaction import is_credential_shaped, is_credential_shaped_identity
 
 if os.name == "nt":  # exercised on Windows CI/users
@@ -60,9 +62,9 @@ def _normalized_reviewer(value: str) -> str:
         or "\r" in reviewer
         or "\0" in reviewer
     ):
-        raise ValueError("reviewer must be a non-empty single line of at most 256 characters")
+        raise ValueFreeError("reviewer must be a non-empty single line of at most 256 characters")
     if is_credential_shaped(reviewer):
-        raise ValueError("reviewer must not contain credentials")
+        raise ValueFreeError("reviewer must not contain credentials")
     return reviewer
 
 
@@ -71,10 +73,10 @@ def _normalized_note(value: str | None) -> str | None:
         return None
     note = value.strip()
     if not note or len(note) > 500 or "\n" in note or "\r" in note or "\0" in note:
-        raise ValueError("note must be a non-empty single line of at most 500 characters")
+        raise ValueFreeError("note must be a non-empty single line of at most 500 characters")
     if is_credential_shaped(note):
         # `token: rotated weekly` cannot be told from `token: abc123`.
-        raise ValueError(
+        raise ValueFreeError(
             "note must not contain credentials; rephrase any credential name followed by ':' or '='"
         )
     return note
@@ -95,7 +97,7 @@ class ReviewCandidate(BaseModel):
     @classmethod
     def _identity_is_credential_free(cls, value: str) -> str:
         if is_credential_shaped_identity(value):
-            raise ValueError("must not contain credentials")
+            raise ValueFreeError("must not contain credentials")
         return value
 
 
@@ -140,7 +142,7 @@ class AnnotationEvent(BaseModel):
     def _reviewer_is_safe_metadata(cls, value: str) -> str:
         normalized = _normalized_reviewer(value)
         if normalized != value:
-            raise ValueError("must not contain leading or trailing whitespace")
+            raise ValueFreeError("must not contain leading or trailing whitespace")
         return value
 
     @field_validator("note")
@@ -148,7 +150,7 @@ class AnnotationEvent(BaseModel):
     def _note_is_safe_metadata(cls, value: str | None) -> str | None:
         normalized = _normalized_note(value)
         if normalized != value:
-            raise ValueError("must not contain leading or trailing whitespace")
+            raise ValueFreeError("must not contain leading or trailing whitespace")
         return value
 
     @field_validator("candidate_id")
@@ -157,9 +159,9 @@ class AnnotationEvent(BaseModel):
         try:
             parsed = uuid.UUID(value)
         except ValueError as exc:
-            raise ValueError("must be a UUID") from exc
+            raise ValueFreeError("must be a UUID") from exc
         if str(parsed) != value:
-            raise ValueError("must use canonical lowercase UUID form")
+            raise ValueFreeError("must use canonical lowercase UUID form")
         return value
 
     @field_validator("recorded_at")
@@ -168,11 +170,11 @@ class AnnotationEvent(BaseModel):
         try:
             parsed = datetime.fromisoformat(value)
         except ValueError as exc:
-            raise ValueError("must be an ISO-8601 timestamp") from exc
+            raise ValueFreeError("must be an ISO-8601 timestamp") from exc
         if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("must include a timezone")
+            raise ValueFreeError("must include a timezone")
         if parsed.utcoffset().total_seconds() != 0:
-            raise ValueError("must be UTC")
+            raise ValueFreeError("must be UTC")
         return value
 
 
@@ -196,10 +198,11 @@ class LoadedReviewReport(BaseModel):
     candidates: tuple[ReviewCandidate, ...]
 
 
-def _safe_validation_error(kind: str, exc: ValidationError) -> ReviewCandidateError:
-    first = exc.errors(include_input=False)[0]
-    location = ".".join(str(part) for part in first.get("loc", ())) or kind
-    return ReviewCandidateError(f"invalid {kind} at {location}: {first['msg']}")
+def _safe_validation_error(
+    kind: str, exc: ValidationError, model: type[BaseModel]
+) -> ReviewCandidateError:
+    location, message = render_one(exc.errors(include_input=False, include_url=False)[0], model)
+    return ReviewCandidateError(f"invalid {kind} at {location or kind}: {message}")
 
 
 # Reports and sidecars are operator-provided files; nothing else in this
@@ -256,7 +259,9 @@ def load_report(path: str | Path) -> LoadedReviewReport:
     try:
         report = TracegraphReviewReport.model_validate_json(raw)
     except ValidationError as exc:
-        raise _safe_validation_error("review-candidate report", exc) from exc
+        raise _safe_validation_error(
+            "review-candidate report", exc, TracegraphReviewReport
+        ) from exc
 
     candidates = sorted(report.candidates, key=_candidate_tuple)
     ids = [candidate_id(candidate) for candidate in candidates]
@@ -301,7 +306,7 @@ def _load_annotations(path: Path, report: LoadedReviewReport) -> AnnotationRepor
     try:
         annotations = AnnotationReport.model_validate_json(raw)
     except ValidationError as exc:
-        raise _safe_validation_error("review annotations", exc) from exc
+        raise _safe_validation_error("review annotations", exc, AnnotationReport) from exc
     if annotations.source.source_report_digest != report.source_report_digest:
         raise ReviewCandidateError("review annotations are bound to a different source report")
     return annotations

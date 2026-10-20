@@ -7,8 +7,9 @@ from collections import Counter
 from pathlib import Path
 
 from toolgraph.crawler.client import CatalogBudget, crawl_server
+from toolgraph.error_text import describe_error
 from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
-from toolgraph.redaction import endpoint_label, redact_text
+from toolgraph.redaction import endpoint_label
 from toolgraph.yaml_loader import load_yaml_mapping
 
 
@@ -49,7 +50,7 @@ def _describe(exc: BaseException) -> str:
     """
     if isinstance(exc, BaseExceptionGroup):
         return "; ".join(_describe(leaf) for leaf in exc.exceptions)
-    return f"{type(exc).__name__}: {redact_text(exc)}"
+    return f"{type(exc).__name__}: {describe_error(exc)}"
 
 
 async def _crawl_one(

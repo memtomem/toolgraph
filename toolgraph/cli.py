@@ -14,6 +14,7 @@ from typing import NoReturn
 
 import typer
 import yaml
+from pydantic import BaseModel, ValidationError
 
 from toolgraph import __version__, config
 from toolgraph.artifact_safety import redact
@@ -37,10 +38,12 @@ from toolgraph.crawler.crawl import (
     load_servers_config,
     spec_label,
 )
+from toolgraph.error_text import describe_error
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.health import run_doctor
 from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
 from toolgraph.manifest.parser import load_governance
+from toolgraph.models import Governance, ServersConfig
 from toolgraph.policy_bundle import PolicyBundleError, build_policy_bundle
 from toolgraph.policy_impact import (
     build_policy_impact,
@@ -94,9 +97,12 @@ app.add_typer(policy_app, name="policy")
 app.add_typer(example_app, name="example")
 
 
-def _fail(exc: BaseException) -> NoReturn:
-    """Report *exc* on stderr with credentials scrubbed, and exit 1."""
-    typer.echo(f"ERROR: {redact_text(exc)}", err=True)
+def _fail(exc: BaseException, model: type[BaseModel] | None = None) -> NoReturn:
+    """Report *exc* on stderr with credentials scrubbed, and exit 1.
+
+    Pass ``model`` only when *exc* comes from validating that model.
+    """
+    typer.echo(f"ERROR: {describe_error(exc, model)}", err=True)
     raise typer.Exit(code=1) from exc
 
 
@@ -338,7 +344,9 @@ def crawl(
     try:
         specs = load_servers_config(path)
     except Exception as exc:  # config errors share one CLI contract
-        typer.echo(f"Invalid servers config at {path}: {redact_text(exc)}", err=True)
+        typer.echo(
+            f"Invalid servers config at {path}: {describe_error(exc, ServersConfig)}", err=True
+        )
         raise typer.Exit(code=1) from None
     dupes = duplicate_name_overrides(specs)
     if dupes:
@@ -425,7 +433,9 @@ def ingest_manifest(
     try:
         gov = load_governance(path)
     except Exception as exc:  # config errors share one CLI contract
-        typer.echo(f"Invalid governance config at {path}: {redact_text(exc)}", err=True)
+        typer.echo(
+            f"Invalid governance config at {path}: {describe_error(exc, Governance)}", err=True
+        )
         raise typer.Exit(code=1) from None
     if dry_run:
         report = dry_run_ingest(gov, strict_drift=strict_drift)
@@ -912,8 +922,14 @@ def policy_impact(
             or (output.exists() and governance.exists() and output.samefile(governance))
         ):
             raise ValueError("report output must not overwrite the input manifest")
+        gov = load_governance(governance)
+    except ValidationError as exc:
+        _fail(exc, Governance)
+    except (RuntimeError, OSError, ValueError, yaml.YAMLError) as exc:
+        _fail(exc)
+    try:
         report = build_policy_impact(
-            load_governance(governance),
+            gov,
             agent=agent,
             candidates=candidates,
             profile=profile,
