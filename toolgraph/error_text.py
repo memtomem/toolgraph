@@ -78,26 +78,34 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
         return describe_validation_error(exc, model)
     if isinstance(exc, yaml.MarkedYAMLError):
         return describe_yaml_error(exc)
-    if isinstance(exc, OSError) and (
-        exc.strerror or exc.filename is not None or exc.filename2 is not None
-    ):
+    if isinstance(exc, OSError) and exc.filename is not None:
         return describe_os_error(exc)
     return redact_text(exc)
 
 
 def describe_os_error(exc: OSError) -> str:
-    """Python's ``[Errno N] reason: 'file'``, each file name shown through ``display_path``.
+    """``str(exc)``, with each file name first replaced by its ``display_path`` form.
 
     ``str(OSError)`` writes a file name with ``repr``, which escapes a tab or
     a no-break space (`\\t`, `\\xa0`) into a form the scrubber cannot read.
+    Python formats the copy, so every other part reads exactly as it would.
     """
-    text = f"[Errno {exc.errno}] {exc.strerror}" if exc.errno is not None else exc.strerror
-    names = [name for name in (exc.filename, exc.filename2) if name is not None]
-    if names:
-        # A bytes name would print as its repr; decode it as the OS would.
-        shown = (display_path(os.fsdecode(n) if isinstance(n, bytes) else n) for n in names)
-        text += ": " + " -> ".join(f"'{name}'" for name in shown)
-    return redact_text(text)
+    copy = OSError(
+        exc.errno,
+        exc.strerror,
+        _shown_name(exc.filename),
+        None,
+        None if exc.filename2 is None else _shown_name(exc.filename2),
+    )
+    return redact_text(copy)
+
+
+def _shown_name(name: Any) -> Any:
+    # A bytes name would print as its repr; decode it as the OS would. A file
+    # descriptor (an int) is left as it is.
+    if isinstance(name, bytes):
+        name = os.fsdecode(name)
+    return display_path(name) if isinstance(name, str | os.PathLike) else name
 
 
 def describe_yaml_error(exc: yaml.MarkedYAMLError) -> str:

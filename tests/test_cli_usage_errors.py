@@ -332,6 +332,10 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
         PermissionError(13, "Permission denied"),
         OSError(2, None, "/srv/servers.yaml"),
         OSError(2, "", "/srv/servers.yaml"),
+        OSError(None, None, "/srv/servers.yaml"),
+        OSError(None, "", "/srv/servers.yaml"),
+        OSError(9, "Bad file descriptor", 3),
+        OSError("no errno"),
     ],
 )
 def test_an_os_error_reads_as_python_prints_it(exc):
@@ -345,8 +349,9 @@ def test_an_os_error_reads_as_python_prints_it(exc):
         OSError(18, "Invalid cross-device link", "/srv/a", None, f"/srv/{NBSP}".encode()),
         OSError(2, None, f"/srv/{TABBED}"),
         OSError(2, "", f"/srv/{TABBED}"),
+        OSError(None, None, f"/srv/{TABBED}"),
     ],
 )
-def test_a_bytes_file_name_is_decoded_before_it_is_shown(exc):
+def test_a_credential_shaped_file_name_is_withheld(exc):
     _assert_hidden(describe_error(exc))
     assert PATH_WITHHELD in describe_error(exc)
