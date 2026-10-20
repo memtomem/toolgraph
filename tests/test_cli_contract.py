@@ -505,20 +505,25 @@ def test_manifest_text_warnings_are_redacted(monkeypatch, tmp_path, dry_run):
 
 
 @pytest.mark.parametrize(
-    "document",
+    ("document", "detail"),
     [
-        "agents: [existing]\n'?%74oken=SECRET': 1\n'?%74oken=SECRET': 2\n",
-        "agents: [existing]\n'?%74oken=SECRET': 1\n",
+        (
+            "agents: [existing]\n'?%74oken=SECRET': 1\n'?%74oken=SECRET': 2\n",
+            "details withheld (they contain credential-shaped data)",
+        ),
+        (
+            "agents: [existing]\n'?%74oken=SECRET': 1\n",
+            "1 validation error for Governance: <key>: unknown field [type=extra_forbidden]",
+        ),
     ],
     ids=["duplicate-key", "unknown-key"],
 )
-def test_invalid_governance_error_never_quotes_a_credential_key(tmp_path, document):
+def test_invalid_governance_error_never_quotes_a_credential_key(tmp_path, document, detail):
     path = tmp_path / "governance.yaml"
     path.write_text(document)
 
     result = CliRunner().invoke(app, ["ingest-manifest", "--governance", str(path)])
 
     assert result.exit_code == 1
-    assert "Invalid governance config" in result.output
+    assert result.output.strip().endswith(f"governance.yaml: {detail}")
     assert "SECRET" not in result.output
-    assert "details withheld (they contain credential-shaped data)" in result.output

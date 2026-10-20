@@ -24,3 +24,18 @@ class ContractError(ValueError):
     It subclasses ValueError so existing ``except ValueError`` callers and the
     CLI's error handling keep working unchanged.
     """
+
+
+class ValueFreeError(ValueError):
+    """A validation failure whose message never contains the value it rejects.
+
+    The message is fixed text, optionally naming a field with a code-defined
+    label ("tool name must not contain credential-shaped data"). Never format
+    input into it. A chained cause may carry the input: ``str()`` of this
+    exception does not include it.
+
+    Raised inside pydantic validators, it is how ``error_text`` tells a
+    message it may print from one that may quote the input: pydantic keeps
+    the exception in the error's ``ctx["error"]``, and only this type is
+    printed as written.
+    """

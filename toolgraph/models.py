@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+from toolgraph.errors import ValueFreeError
 from toolgraph.redaction import is_credential_shaped_identity
 from toolgraph.uris import is_resource_ref
 
@@ -24,7 +25,7 @@ def _no_key_delimiter(kind: str, value: str) -> str:
     # (server="a", tool="b::c") and (server="a::b", tool="c") MERGE the same
     # node — and the ecosystem bundle schema requires exactly one delimiter.
     if "::" in value:
-        raise ValueError(f"{kind} must not contain '::' (the tool-key delimiter)")
+        raise ValueFreeError(f"{kind} must not contain '::' (the tool-key delimiter)")
     return value
 
 
@@ -33,7 +34,7 @@ def refuse_credential_identity(kind: str, value: str) -> str:
     # reach every query and artifact that names it. The message names the
     # field only, and every model that calls this hides its input in errors.
     if is_credential_shaped_identity(value):
-        raise ValueError(f"{kind} must not contain credential-shaped data")
+        raise ValueFreeError(f"{kind} must not contain credential-shaped data")
     return value
 
 

@@ -110,6 +110,23 @@ All notable changes to Toolgraph are documented here.
   holds whitespace (`neo4j://u v:"p w"@host`) still passes in prose and in
   error messages, where it reads as a URL followed by text; identities
   refuse it.
+- Pydantic validation errors no longer print mapping keys, unknown field
+  names or input values (#221). Before, an invalid `servers.yaml` or
+  governance manifest (`crawl`, `ingest-manifest`, `policy impact`,
+  `policy propose`), an invalid review-candidate sidecar, and a server whose
+  `tools/list` reply the MCP SDK rejects printed the error location with
+  every key on the way, and the SDK's errors also printed the input; only the
+  credential shapes the scrubber recognizes were hidden, so
+  `governed_by: {"postgres://u:prefix QXZQ@h/x": ...}` showed `QXZQ@h/x` and
+  an `env` key showed as written. These errors are now one line, such as
+  `1 validation error for ServersConfig: servers.0.env.<key>: expected a
+  string [type=string_type]`: field names, list indexes and union member
+  names that match the schema are kept, any other key is `<key>`, and the
+  message is fixed text chosen by error type. A field's own refusal, such as
+  `agent must not contain credential-shaped data`, is kept as written.
+  Where Toolgraph cannot tell which model failed (`policy propose`, a
+  rejected server reply) no location is printed. YAML parse errors are
+  unchanged (#223).
 
 ## 0.3.0 - 2026-10-19
 
