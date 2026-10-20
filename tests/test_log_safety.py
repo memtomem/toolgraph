@@ -309,6 +309,54 @@ def test_install_adds_one_filter():
     assert sum(isinstance(f, log_safety.RedactingFilter) for f in handler.filters) == 1
 
 
+def _filtered(handler: logging.Handler) -> bool:
+    return any(isinstance(f, log_safety.RedactingFilter) for f in handler.filters)
+
+
+def test_handlers_configured_on_an_empty_root_are_filtered(monkeypatch):
+    root = logging.getLogger()
+    added = logging.StreamHandler(io.StringIO())
+    monkeypatch.setattr(root, "handlers", [])
+
+    with log_safety.filtering_root_handlers_if_unconfigured():
+        root.addHandler(added)
+
+    assert _filtered(added)
+
+
+def test_nothing_is_filtered_when_the_root_already_had_a_handler(monkeypatch):
+    """A handler the program swaps in meanwhile is the program's too."""
+    root = logging.getLogger()
+    existing = logging.StreamHandler(io.StringIO())
+    replacement = logging.StreamHandler(io.StringIO())
+    monkeypatch.setattr(root, "handlers", [existing])
+
+    with log_safety.filtering_root_handlers_if_unconfigured():
+        root.removeHandler(existing)
+        root.addHandler(replacement)
+
+    assert (_filtered(existing), _filtered(replacement)) == (False, False)
+
+
+def test_a_program_that_configured_logging_first_keeps_its_formatter():
+    """A host formatter naming an ``extra`` attribute would fail on a filtered
+    record, and the host's own log line would be lost."""
+    program = textwrap.dedent(
+        """
+        import logging, sys
+        logging.basicConfig(stream=sys.stdout, format="%(request_id)s %(message)s")
+        import toolgraph.server.app
+        logging.getLogger("host").warning("m", extra={"request_id": "r2"})
+        """
+    )
+
+    proc = subprocess.run(
+        [sys.executable, "-c", program], capture_output=True, text=True, check=False, timeout=120
+    )
+
+    assert (proc.returncode, proc.stdout, proc.stderr) == (0, "r2 m\n", "")
+
+
 def test_no_last_resort_handler_is_not_an_error(monkeypatch):
     monkeypatch.setattr(logging, "lastResort", None)
 

@@ -189,11 +189,12 @@ class _ToolgraphMCP(MCPServer):
         )
 
 
-mcp = _ToolgraphMCP("toolgraph")
-# MCPServer's constructor configures the root handlers (basicConfig); filter
-# them so neither the SDK's records nor Toolgraph's carry input or exception
-# text to the server log.
-log_safety.install_on_root_handlers()
+# MCPServer's constructor configures the root handlers (basicConfig) when the
+# process has none; filter those so neither the SDK's records nor Toolgraph's
+# carry input or exception text to the server log. A program that configured
+# logging first keeps its own handlers as they are.
+with log_safety.filtering_root_handlers_if_unconfigured():
+    mcp = _ToolgraphMCP("toolgraph")
 
 _with_generation = queries.with_graph_state
 

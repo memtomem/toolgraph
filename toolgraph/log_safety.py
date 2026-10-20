@@ -23,6 +23,8 @@ nothing guarantees it, and the exception chain is what an operator reads.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from toolgraph.error_text import describe_error
 from toolgraph.redaction import redact_text
@@ -135,10 +137,20 @@ def install(handler: logging.Handler) -> None:
         handler.addFilter(RedactingFilter())
 
 
-def install_on_root_handlers() -> None:
-    """Filter every handler the root logger has now."""
-    for handler in logging.getLogger().handlers:
-        install(handler)
+@contextmanager
+def filtering_root_handlers_if_unconfigured() -> Iterator[None]:
+    """Filter the root handlers the block configures, if there were none.
+
+    When the root logger already had a handler, the program owns logging
+    and nothing is filtered: its formatters may name attributes (``extra``)
+    that a filtered record no longer carries. ``basicConfig`` likewise acts
+    only on a root logger without handlers.
+    """
+    configured = bool(logging.getLogger().handlers)
+    yield
+    if not configured:
+        for handler in logging.getLogger().handlers:
+            install(handler)
 
 
 def install_on_last_resort() -> None:

@@ -144,14 +144,14 @@ All notable changes to Toolgraph are documented here.
   (`input_value=...`), a tool that crashed under `serve` logged its
   exception message and traceback, and the SDK logged an unknown tool name
   as sent. Now the CLI's fallback output (Python's last-resort handler, used
-  when no handler is configured) and the server's root handlers, as they
-  are once the server module is imported, print each record's message
-  through the credential scrubber, and each exception in its chain as one
-  line, `<Type>: <message>`, scrubbed the same way, with a validation
-  error's message rebuilt as in #221. Other text in a message, such as a
-  tool name that is not credential-shaped, is still shown. Handlers added
-  after that point, and uvicorn's own loggers under `serve --http` (#226),
-  are not filtered.
+  when no handler is configured) and the handlers the server configures
+  when the process has none print each record's message through the
+  credential scrubber, and each exception in its chain as one line,
+  `<Type>: <message>`, scrubbed the same way, with a validation error's
+  message rebuilt as in #221. Other text in a message, such as a tool name
+  that is not credential-shaped, is still shown. Handlers a program
+  configured itself, before or after importing Toolgraph, and uvicorn's own
+  loggers under `serve --http` (#226), are not filtered.
 
 ## 0.3.0 - 2026-10-19
 
