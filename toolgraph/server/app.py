@@ -23,6 +23,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 
+from toolgraph import log_safety
 from toolgraph.config import RuntimeConfigurationError
 from toolgraph.errors import ContractError
 from toolgraph.graph import queries, selector
@@ -188,7 +189,12 @@ class _ToolgraphMCP(MCPServer):
         )
 
 
-mcp = _ToolgraphMCP("toolgraph")
+# MCPServer's constructor configures the root handlers (basicConfig) when the
+# process has none; filter those so neither the SDK's records nor Toolgraph's
+# carry input or exception text to the server log. A program that configured
+# logging first keeps its own handlers as they are.
+with log_safety.filtering_root_handlers_if_unconfigured():
+    mcp = _ToolgraphMCP("toolgraph")
 
 _with_generation = queries.with_graph_state
 

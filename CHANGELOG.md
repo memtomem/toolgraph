@@ -138,6 +138,20 @@ All notable changes to Toolgraph are documented here.
   Library callers still get PyYAML's error when it marks a line and column
   (a `MarkedYAMLError`); the other failures raise
   `toolgraph.yaml_loader.YAMLContentError`, a `ValueError`.
+- Log output hides credential-shaped values and no longer prints tracebacks
+  (#206). Before, a crawled server whose reply failed JSON-RPC validation
+  made `crawl` print the MCP SDK's traceback with the reply's values
+  (`input_value=...`), a tool that crashed under `serve` logged its
+  exception message and traceback, and the SDK logged an unknown tool name
+  as sent. Now the CLI's fallback output (Python's last-resort handler, used
+  when no handler is configured) and the handlers the server configures
+  when the process has none print each record's message through the
+  credential scrubber, and each exception in its chain as one line,
+  `<Type>: <message>`, scrubbed the same way, with a validation error's
+  message rebuilt as in #221. Other text in a message, such as a tool name
+  that is not credential-shaped, is still shown. Handlers a program
+  configured itself, before or after importing Toolgraph, and uvicorn's own
+  loggers under `serve --http` (#226), are not filtered.
 
 ## 0.3.0 - 2026-10-19
 

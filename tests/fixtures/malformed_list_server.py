@@ -3,6 +3,7 @@
     python malformed_list_server.py hint     # an annotation holds a string
     python malformed_list_server.py schema   # an inputSchema property key holds a URI
     python malformed_list_server.py noname   # a tool has no name and an extra key
+    python malformed_list_server.py envelope # every reply's "jsonrpc" holds a URI
 
 The SDK's models do not hide their input in errors, and each reply plants a
 credential URI where the error would quote it or carry it in the location.
@@ -19,10 +20,12 @@ TOOLS = {
     ],
     "schema": [{"name": "t", "inputSchema": {"type": "object", "properties": {PLANTED: 5}}}],
     "noname": [{"inputSchema": {"type": "object"}, PLANTED: 1}],
+    "envelope": [],
 }
 
 if __name__ == "__main__":
     tools = TOOLS[sys.argv[1]]
+    version = PLANTED if sys.argv[1] == "envelope" else "2.0"
     for line in sys.stdin:
         message = json.loads(line)
         if "id" not in message:
@@ -38,6 +41,6 @@ if __name__ == "__main__":
         else:
             result = {}
         sys.stdout.write(
-            json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}) + "\n"
+            json.dumps({"jsonrpc": version, "id": message["id"], "result": result}) + "\n"
         )
         sys.stdout.flush()
