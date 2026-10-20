@@ -36,7 +36,12 @@ string value, additive ones included, goes through the shared refusal rule
 credential, API key or authorization name, and `Bearer` values, in the raw text
 and after one percent-decoding pass. Single-colon identities such as
 `agent-token:blue` stay valid, and the error names where the value sits, never
-the refused key or value.
+the refused key or value. *Amended 2026-10-20 (#215):* identity fields (`run_id`,
+producer name and version, principal ids, node ids and node principals, edge
+endpoints, candidate tools) and every key additionally get the identity rule,
+`toolgraph.redaction.is_credential_shaped_identity`, which also refuses any `://`
+with an `@` after it, raw or once percent-decoded; string values of additive fields
+keep the shared rule above.
 
 The structural linter reports topology and bound findings. All principal/tool
 evaluations run inside one `with_graph_state(..., strict=True)` bracket. The

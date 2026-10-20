@@ -131,6 +131,21 @@ def _control_plan_value(value):
     load_control_plan(control_plan_raw(document))
 
 
+def _control_plan_run_id(value):
+    document = control_plan_document()
+    document["run_id"] = value
+    load_control_plan(control_plan_raw(document))
+
+
+def _control_plan_principal(value):
+    document = control_plan_document()
+    old = document["principals"][0]["id"]
+    document["principals"][0]["id"] = value
+    for node in document["nodes"]:
+        node["principals"] = [value if p == old else p for p in node["principals"]]
+    load_control_plan(control_plan_raw(document))
+
+
 def _control_plan_key(value):
     document = control_plan_document()
     document["producer"][value] = "bounded"
@@ -167,7 +182,9 @@ SURFACES = {
     "policy propose instance_id": (lambda _: _propose_instance_id, False, True, True),
     "policy propose export agent": (lambda _: _export_row_agent, True, True, True),
     "control plan string": (lambda _: _control_plan_value, True, True, False),
-    "control plan key": (lambda _: _control_plan_key, True, False, False),
+    "control plan key": (lambda _: _control_plan_key, True, False, True),
+    "control plan run_id": (lambda _: _control_plan_run_id, False, True, True),
+    "control plan principal id": (lambda _: _control_plan_principal, False, True, True),
     "review note": (lambda _: normalize_note, True, True, False),
     "review reviewer": (lambda _: normalize_reviewer, True, True, False),
     "review candidate run_id": (lambda f: _review_candidate("run_id", f), False, True, True),
