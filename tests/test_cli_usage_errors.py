@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,10 @@ TABBED = "password\t=QXZQ"
 # ... and other whitespace as `\xa0` or `\u2000` (a repr).
 NBSP = "password\u00a0=QXZQ"
 EN_QUAD = "password\u2000=QXZQ"
+
+
+class _OwnOSError(OSError):
+    """An OSError subclass: Python keeps it as it is for any errno."""
 
 
 def _run(args: list[str]):
@@ -336,9 +342,25 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
         OSError(None, "", "/srv/servers.yaml"),
         OSError(9, "Bad file descriptor", 3),
         OSError("no errno"),
+        _OwnOSError(errno.EAGAIN, "busy", 3),
+        _OwnOSError(errno.EAGAIN, "busy", 10**100),
+        OSError(2, "No such file or directory", Path("/srv/servers.yaml")),
+        OSError(2, "No such file or directory", b"/srv/servers.yaml"),
     ],
 )
 def test_an_os_error_reads_as_python_prints_it(exc):
+    """An ordinary file name, of any type, reads exactly as Python prints it.
+
+    A copy built with the name as a constructor argument made an ``EAGAIN``
+    error a ``BlockingIOError``, which reads an integer there as
+    ``characters_written``: the name went missing, or the copy raised."""
+    assert describe_error(exc) == str(exc)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="winerror exists on Windows only")
+def test_a_windows_error_keeps_its_code():
+    exc = OSError(0, "The system cannot find the path specified", "/srv/a", 3)
+
     assert describe_error(exc) == str(exc)
 
 
@@ -350,6 +372,7 @@ def test_an_os_error_reads_as_python_prints_it(exc):
         OSError(2, None, f"/srv/{TABBED}"),
         OSError(2, "", f"/srv/{TABBED}"),
         OSError(None, None, f"/srv/{TABBED}"),
+        OSError(2, "No such file or directory", Path(f"/srv/{TABBED}")),
     ],
 )
 def test_a_credential_shaped_file_name_is_withheld(exc):
