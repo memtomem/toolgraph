@@ -56,15 +56,18 @@ All notable changes to Toolgraph are documented here.
 
 - The governance manifest and the crawler refuse a credential-shaped identity
   at input, with the same identity rule (#217): an agent, policy id, tool ref
-  or `granted_by`, a `governed_by` policy or tool-ref key, a `servers.yaml`
-  server name, and the server and tool names a server reports. Before, such a
+  or `granted_by`, a `governed_by` policy or tool-ref key, a server's name
+  (its `servers.yaml` name, else the name it reports) and the tool names it
+  reports. Before, such a
   value was stored and printed by `check-access`, `unsafe-tools`,
   `blast-radius`, `unbacked-edges`, `audit-report` and `eligible-tools`. The
   error names the field, never the value. A manifest is rejected whole
   (`ingest-manifest`, `policy propose` and `policy impact` exit 1), and so
-  is a `servers.yaml`, before any server is contacted; a server
-  that reports such a name fails its own crawl, and the rest of the fleet
-  still loads. Resource URIs are not identities and are not checked. A graph
+  is a `servers.yaml`, before any server is contacted. A server without a
+  `servers.yaml` name that reports such a name, or any server that reports
+  such a tool name, fails its own crawl, and the rest of the fleet still
+  loads; a server's own reported name is never stored when `servers.yaml`
+  names it. Resource URIs are not identities and are not checked. A graph
   keeps the values it stored earlier until they are re-ingested or reset.
 
 ### Fixed

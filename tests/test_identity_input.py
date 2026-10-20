@@ -23,6 +23,7 @@ from toolgraph.graph import loader, schema
 from toolgraph.manifest.ingest import dry_run_ingest, ingest_governance
 from toolgraph.manifest.parser import load_governance
 from toolgraph.models import CrawlResult, Governance, ServerSpec, ToolRecord
+from toolgraph.policy_impact import build_policy_impact
 from toolgraph.redaction import redact_text
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "credential_named_server.py")
@@ -192,6 +193,40 @@ def test_crawl_fails_only_the_server_that_reports_a_credential_shaped_name(which
     assert len(failures) == 1
     assert "must not contain credential-shaped data" in failures[0][1]
     _assert_hidden(failures[0][1])
+
+
+def test_a_servers_yaml_name_replaces_the_name_a_server_reports():
+    # The graph stores the configured name, so the reported one is never kept.
+    named = ServerSpec(
+        name="named", transport="stdio", command=sys.executable, args=[FIXTURE, "server"]
+    )
+
+    results, failures = crawl_all([named], timeout=60)
+
+    assert failures == []
+    assert [r.server_name for r in results] == ["named"]
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Governance.model_construct(agents=[PLANTED[0]]),
+        lambda: Governance.model_construct(
+            governed_by={"neo4j://u:QX ZQ@host/r": [{"policy": 42}]}
+        ),
+    ],
+    ids=["planted-list", "mapping-key"],
+)
+def test_policy_impact_revalidates_before_opening_the_graph(backend_graph, build):
+    # A configured graph, so a missing check would get past the boundary rather
+    # than stop at "no backend configured".
+    schema.init_schema()
+    with pytest.raises(ValueError) as raised:
+        build_policy_impact(build(), agent="bot", candidates=["srv::t"])
+
+    assert str(raised.value) == (
+        "Governance does not validate; build it with Governance.model_validate to see why"
+    )
 
 
 def test_servers_yaml_with_a_credential_shaped_name_is_rejected_whole(tmp_path, monkeypatch):
