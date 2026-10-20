@@ -19,6 +19,10 @@ input:
 
 A caller passes ``model`` only for a ``model.model_validate`` call in the same
 ``try``: an error title is not evidence of which model raised it.
+
+A YAML error with a position is rendered as that position and a fixed text by
+error class: PyYAML's own text quotes the source line, and its messages name
+aliases, anchors, tags, characters and keys from the document.
 """
 
 from __future__ import annotations
@@ -27,10 +31,12 @@ import types
 import typing
 from typing import Any
 
+import yaml
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
 from toolgraph.redaction import redact_text
+from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
 
@@ -69,7 +75,28 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
     """Printable text for ``exc``; ``model`` is the one validated, if known."""
     if isinstance(exc, ValidationError):
         return describe_validation_error(exc, model)
+    if isinstance(exc, yaml.MarkedYAMLError):
+        return describe_yaml_error(exc)
     return redact_text(exc)
+
+
+def describe_yaml_error(exc: yaml.MarkedYAMLError) -> str:
+    """``invalid YAML at line L, column C: <what failed>``, nothing from the document."""
+    mark = exc.problem_mark or exc.context_mark
+    where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else ""
+    return f"invalid YAML{where}: {_yaml_failure(exc)}"
+
+
+def _yaml_failure(exc: yaml.MarkedYAMLError) -> str:
+    if isinstance(exc, yaml.scanner.ScannerError):
+        return "could not be scanned"
+    if isinstance(exc, yaml.parser.ParserError):
+        return "could not be parsed"
+    if isinstance(exc, yaml.composer.ComposerError):
+        return "alias, anchor or document error"
+    if isinstance(exc, yaml.constructor.ConstructorError):
+        return "duplicate key" if exc.problem == DUPLICATE_KEY else "could not be constructed"
+    return "could not be read"
 
 
 def describe_validation_error(exc: ValidationError, model: type[BaseModel] | None = None) -> str:

@@ -125,8 +125,19 @@ All notable changes to Toolgraph are documented here.
   message is fixed text chosen by error type. A field's own refusal, such as
   `agent must not contain credential-shaped data`, is kept as written.
   Where Toolgraph cannot tell which model failed (`policy propose`, a
-  rejected server reply) no location is printed. YAML parse errors are
-  unchanged (#223).
+  rejected server reply) no location is printed.
+- A config file that is not valid YAML is reported as `invalid YAML at line L,
+  column C: <what failed>`, such as `could not be parsed` or `duplicate key`
+  (#223). Before, the message quoted the source line, and names from the
+  document: a duplicate key, an alias, anchor or tag, a character. A value
+  PyYAML could not convert was reported with the value (`!!int x`,
+  `!!float x`, `!!bool x`), or stopped `policy impact` and `policy propose`
+  with a traceback (`!!bool x`, `!!timestamp x`, an empty `!!int`); now it is
+  `invalid YAML: a value could not be read`. Invalid UTF-8 and a control
+  character name only their position.
+  Library callers still get PyYAML's error when it marks a line and column
+  (a `MarkedYAMLError`); the other failures raise
+  `toolgraph.yaml_loader.YAMLContentError`, a `ValueError`.
 
 ## 0.3.0 - 2026-10-19
 

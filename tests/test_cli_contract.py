@@ -412,8 +412,9 @@ def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(backend_gra
     result = CliRunner().invoke(app, ["ingest-manifest", "--governance", str(path)])
 
     assert result.exit_code == 1
-    assert "Invalid governance config" in result.output
-    assert "duplicate key 'agents'" in result.output
+    assert result.output.strip().endswith(
+        "governance.yaml: invalid YAML at line 2, column 1: duplicate key"
+    )
     assert "Traceback" not in result.output
     with driver.session() as current:
         after = current.run("MATCH (n) RETURN count(n) AS count").single()["count"]
@@ -509,7 +510,7 @@ def test_manifest_text_warnings_are_redacted(monkeypatch, tmp_path, dry_run):
     [
         (
             "agents: [existing]\n'?%74oken=SECRET': 1\n'?%74oken=SECRET': 2\n",
-            "details withheld (they contain credential-shaped data)",
+            "invalid YAML at line 3, column 1: duplicate key",
         ),
         (
             "agents: [existing]\n'?%74oken=SECRET': 1\n",
