@@ -249,8 +249,10 @@ All notable changes to Toolgraph are documented here.
   (`1https://password : x`, which was masked). A value that starts inside
   the URL and continues past a quote, `<`, `>` or a tab
   (`http://h/x?token=abc"def` shows `"def`, and with an input placeholder
-  `http://h/token=abc<redacted>x` shows `http://h>x`), and `.../password :x`
-  with no space after the `:` are not caught.
+  `http://h/token=abc<redacted>x` shows `http://h>x`), is not caught, nor
+  are forms only the scrubber reads as an assignment: `.../password :x`,
+  `.../password:[a, x]`, `.../authorization=Basic x` and
+  `.../proxy_authorization=Basic x` (#241).
 - A command that writes a file or a review annotation no longer prints a
   traceback when the durability warning is escalated to an error (#129).
   The warning (`ArtifactDurabilityWarning`, or
