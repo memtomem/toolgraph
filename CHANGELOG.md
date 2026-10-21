@@ -2,7 +2,88 @@
 
 All notable changes to Toolgraph are documented here.
 
-## Unreleased
+## 0.4.0 - 2026-10-21
+
+Fifth alpha. Read **Upgrading from 0.3.0** below before installing: it lists
+eight changes an existing setup, script or embedding program can notice.
+Most setups need no change, because the new refusals reject only identities
+and notes that hold credential-shaped data. What most often notices is
+tooling that reads Toolgraph's text: evidence paths, error lines and log
+output are shown differently, and more often withheld whole.
+
+### Upgrading from 0.3.0
+
+- A governance manifest or `servers.yaml` holding a credential-shaped
+  identity is refused at input (#217): an agent, policy id, tool ref or
+  `granted_by`, a `governed_by` policy or tool-ref key, or a server's name.
+  The manifest is rejected whole, so `ingest-manifest`, `policy propose` and
+  `policy impact` exit 1, and so is a `servers.yaml`, before any server is
+  contacted. A crawled server that reports such a tool name, or such a name
+  when `servers.yaml` gives it none, fails its own crawl; the rest of the
+  fleet still loads. The error names the field, never the value. Rename the
+  identity. A graph keeps the values it stored earlier until they are
+  re-ingested or reset.
+- Identities refuse any URI with an `@` after its `://`, raw or as `%40`
+  (#210, #215, #216), where 0.3.0 refused only a `user:password@` it could
+  bound: agent ids, tool keys, run ids, candidates and graph instance ids in
+  preflight, policy bundles, review plans, `policy impact` and `policy
+  propose`, the run ids and tool keys of a Tracegraph review report, and a
+  control plan's identities and keys. `policy propose` refuses to emit a
+  proposal whose note would list a live-graph tool key holding userinfo.
+- Review notes, reviewer names and control plans refuse a URI with a quote
+  in its userinfo and an `@` after it (#210), such as
+  `neo4j://u:"p w"@host`, which 0.3.0 accepted. A quoted URL followed by an
+  address in the same text, `"https://h" mail a@b`, is refused too.
+- Artifact evidence shows resource URIs differently (#212). A consumer that
+  matches evidence text should expect `https://<redacted-uri>` when an `@`
+  follows a URI's authority (`https://registry/@scope/pkg`), and
+  `<redacted-uri>` for a percent-encoded scheme. A resource that cannot be
+  parsed is now hidden instead of stopping the command, `export:///sink`
+  keeps its three slashes, and the paths of `check-access`, `unsafe-tools`,
+  `blast-radius`, `audit-report` and the matching MCP tools show resources
+  and policy ids redacted. The raw `resource` and `policy` row values are
+  unchanged. See the first bullets under Changed.
+- Diagnostics read differently, and more of them are withheld whole (#206,
+  #221, #223, #229, #232, #236). Validation errors are one line with fixed
+  text and `<key>` for keys outside the schema; YAML errors read `invalid
+  YAML at line L, column C: <what failed>`; MCP tool-call errors for a bad
+  request no longer quote it; a CLI usage error is withheld whole when a
+  token on the command line, or the tokens joined by spaces, is
+  credential-shaped; and a printed path that is
+  credential-shaped reads `<path withheld: credential-shaped>`. Messages
+  holding an escaped credential, or a URL whose path ends in a credential
+  name with text after it, are withheld: `Error accessing
+  https://host/token: connection refused` now reads `details withheld (they
+  contain credential-shaped data)`. Tooling
+  that matches stderr or MCP error text should expect these forms; the
+  entries under Fixed give each one.
+- Logging changes for programs that embed Toolgraph (#206). Importing
+  `toolgraph.server.app` into a process with no root log handler filters
+  the root handlers the MCP SDK then creates, and running the Typer app
+  in-process filters `logging.lastResort` for the rest of the process once a
+  command reaches the root callback (root `--help`, `--version` and an
+  unknown command do not). Every record through a
+  filtered handler, the program's own included, is rebuilt: its message is
+  scrubbed (`password=<redacted>`), each exception in its chain is shown as
+  `<Type>: <message>` without a traceback, and `extra` attributes and `stack_info` are dropped,
+  so a formatter that names an `extra` field fails with `Formatting field
+  not found in record`. Configure logging before importing
+  `toolgraph.server.app`, or replace the handlers it filtered. Handlers a
+  program configured itself are not touched.
+- Library callers: `ingest_governance`, `dry_run_ingest` and
+  `load_crawl_result` re-validate the model they are given, and a model
+  built with `model_construct()` or changed after validation that no longer
+  validates raises `ValueError: <Model> does not validate; build it with
+  <Model>.model_validate to see why` before the graph is opened.
+  `build_policy_impact` already re-validated, and now raises that error
+  instead of pydantic's. A YAML failure that PyYAML does not mark with a line
+  and column raises `toolgraph.yaml_loader.YAMLContentError`, a `ValueError`
+  (#223); marked failures still raise PyYAML's `MarkedYAMLError`.
+- A durability warning escalated with `-W error` ends a command with one
+  `ERROR:` line and exit 1, without a traceback or a JSON receipt (#129).
+  `init` keeps the database it created, where 0.3.0 deleted it and kept the
+  `config.json` naming it. The annotation warning's text now ends `do not
+  retry: a retry appends a second event`.
 
 ### Changed
 
@@ -146,8 +227,8 @@ All notable changes to Toolgraph are documented here.
   as sent. Now the CLI's fallback output (Python's last-resort handler, used
   when no handler is configured) and the handlers the server configures
   when the process has none print each record's message through the
-  credential scrubber, and each exception in its chain as one line,
-  `<Type>: <message>`, scrubbed the same way, with a validation error's
+  credential scrubber, and each exception in its chain as
+  `<Type>: <message>` without its traceback, scrubbed the same way, with a validation error's
   message rebuilt as in #221. A value the message or an exception prints
   with `repr` (`%r`, a `KeyError` key), which escapes a tab or a no-break
   space out of the scrubber's sight, is checked as it was before formatting,
@@ -171,10 +252,12 @@ All notable changes to Toolgraph are documented here.
   (`No such command '<arg>'`, `'<value>' is not a valid float`), as did
   Toolgraph's (`unknown profile '<value>'`), and lines such as
   `Invalid servers config at <path>` and the `--config` error printed the
-  path as given. A usage error is now withheld whole when any token on the
-  command line is credential-shaped, since Click and Typer print a typed
-  value escaped (`\x09`, `\xa0`) or quoted, a form the scrubber cannot
-  read; otherwise its message goes through the credential scrubber. Lines in
+  path as given. A usage error is now withheld whole when a token on the
+  command line is credential-shaped, or the tokens joined by spaces are
+  (`password =hunter2` typed as two arguments), checked as typed, before
+  Click or Typer quotes or escapes them (`\x09`, `\xa0`) in the message;
+  otherwise its
+  message goes through the credential scrubber. Lines in
   which Toolgraph prints a path it was given or created (`init`, `check`,
   `crawl`, `ingest-manifest`, `example init`, `policy propose --output`, and
   the runtime-config errors) show a credential-shaped path as

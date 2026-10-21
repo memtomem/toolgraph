@@ -68,7 +68,9 @@ executing inside the privileged job. Pass values through `env:`.
    setting that disagrees with the config file instead of letting the
    environment win; `0.3.0` follows `0.2.0` because Toolgraph no longer picks
    Neo4j when nothing names a backend, and the Neo4j driver is now an extra
-   (ADR-0017). Callers pinned to an earlier version keep working; they are
+   (ADR-0017); `0.4.0` follows `0.3.0` because governance manifests,
+   `servers.yaml` and control plans now refuse credential-shaped identities
+   that 0.3.0 accepted. Callers pinned to an earlier version keep working; they are
    not silently upgraded.
 2. Run the full local release gate:
 
