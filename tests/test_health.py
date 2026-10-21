@@ -105,8 +105,10 @@ def test_cli_doctor(backend_graph):
     assert len(parsed["checks"]) >= 3
 
 
-@pytest.mark.parametrize("phase", ["inspection", "settings", "connectivity", "schema", "state"])
-def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
+PHASES = ["inspection", "settings", "connectivity", "schema", "state"]
+
+
+def _doctor_failing_at(monkeypatch, phase: str, error: Exception):
     info = {
         "path": "probe.json",
         "exists": True,
@@ -132,7 +134,6 @@ def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
 
     monkeypatch.setattr(driver, "acquire_readonly_session", lambda: nullcontext(None))
     monkeypatch.setattr(queries, "graph_state", lambda *_: queries.GraphState("probe", 1))
-    error = RuntimeError("bolt://user:synthetic-password@localhost:7687 token=synthetic-token")
     targets = {
         "inspection": (config, "check_config_health"),
         "settings": (config, "__getattr__"),
@@ -148,10 +149,28 @@ def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
     with patch.object(*targets[phase], side_effect=error):
         report = run_doctor()
     assert not report.healthy
-    for text in (report.summary_text(), json.dumps(report.to_dict())):
+    return report.summary_text(), json.dumps(report.to_dict())
+
+
+@pytest.mark.parametrize("phase", PHASES)
+def test_doctor_redacts_all_exception_reports(monkeypatch, phase):
+    error = RuntimeError("bolt://user:synthetic-password@localhost:7687 token=synthetic-token")
+    for text in _doctor_failing_at(monkeypatch, phase, error):
         assert "synthetic-password" not in text
         assert "synthetic-token" not in text
         assert "<redacted>" in text
+
+
+@pytest.mark.parametrize("phase", PHASES)
+def test_doctor_reports_an_int_error_without_its_value(monkeypatch, phase):
+    """``int()`` cuts the repr at 200 characters with no closing quote (#236)."""
+    try:
+        int("password\xa0=QXZQ" + "x" * 250)
+    except ValueError as exc:
+        error = exc
+    for text in _doctor_failing_at(monkeypatch, phase, error):
+        assert "QXZQ" not in text
+        assert "invalid literal for int() with base 10 (value not shown)" in text
 
 
 def test_doctor_invalid_config_in_fresh_process(tmp_path):

@@ -23,16 +23,25 @@ A caller passes ``model`` only for a ``model.model_validate`` call in the same
 A YAML error with a position is rendered as that position and a fixed text by
 error class: PyYAML's own text quotes the source line, and its messages name
 aliases, anchors, tags, characters and keys from the document.
+
+Two more errors are rendered from their producer's fixed text, because their
+message holds a shortened repr of the input, which the scrubber cannot read
+back as a literal: ``int()`` prints at most 200 characters of the repr, so a
+longer one loses its closing quote, and the MCP SDK reports a reply it could not parse with the
+pydantic error text, which shortens ``input_value`` in the middle.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import types
 import typing
 from typing import Any
 
 import yaml
+from mcp.shared.exceptions import MCPError
+from mcp_types import PARSE_ERROR
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
@@ -40,6 +49,9 @@ from toolgraph.redaction import PATH_WITHHELD, display_path, redact_text
 from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
+UNPARSED_REPLY = "the server's reply could not be parsed (JSON-RPC parse error)"
+
+_INT_LITERAL = re.compile(r"invalid literal for int\(\) with base (\d+): ")
 
 _FIXED_MESSAGES = {
     "missing": "field required",
@@ -86,7 +98,25 @@ def describe_error(exc: BaseException, model: type[BaseModel] | None = None) -> 
         and type(exc).__str__ is OSError.__str__
     ):
         return describe_os_error(exc)
+    if base := _int_literal_base(exc):
+        return f"invalid literal for int() with base {base} (value not shown)"
+    # By code, not by the SDK's wording: a server's own parse error loses its
+    # text too.
+    if isinstance(exc, MCPError) and exc.code == PARSE_ERROR:
+        return UNPARSED_REPLY
     return redact_text(exc)
+
+
+def _int_literal_base(exc: BaseException) -> str | None:
+    """The base named by ``int()``'s error for a string it could not read.
+
+    CPython formats it as ``invalid literal for int() with base %d: %.200R``
+    for str and bytes alike, and raises exactly ``ValueError``.
+    """
+    if type(exc) is not ValueError or len(exc.args) != 1 or not isinstance(exc.args[0], str):
+        return None
+    match = _INT_LITERAL.match(exc.args[0])
+    return match.group(1) if match else None
 
 
 def describe_os_error(exc: OSError) -> str:

@@ -209,9 +209,29 @@ All notable changes to Toolgraph are documented here.
   shown. A message that holds an escaped literal and also a credential the
   scrubber would mask is withheld instead of masked. Not read: a literal
   printed through `repr` twice, one right after an odd run of backslashes,
-  and one cut without its closing quote, as `int()` and other C code print
-  a value whose repr is longer than 200 characters (#236). Artifact and
-  evidence text, which is stored rather than printed, is not affected.
+  and one cut without its closing quote, as `int()` prints a value whose
+  repr is longer than 200 characters; the `int()` error itself is now
+  rendered without its value (#236, below). Artifact and evidence text,
+  which is stored rather than printed, is not affected.
+- An `int()` error and a reply the MCP SDK could not parse no longer show
+  a credential from the value they quote (#236, #239). Both print a
+  shortened repr the scrubber cannot read back: `int()` cuts it at 200
+  characters with no closing quote, and the SDK copies pydantic's error, which
+  shortens `input_value` in the middle and can split an escape such as
+  `\x01` or drop the quote that decided repr's quote character. A
+  streamable-http server answering a crawl with a JSON string showed
+  `password<TAB>=secret` in the `[error]` line, and an `int()` error
+  chained under a withheld one showed it in a log record. Now a
+  `ValueError` whose only argument is `int()`'s text prints
+  `invalid literal for int() with base N (value not shown)`, and an MCP
+  error with the JSON-RPC parse error code (-32700), including one a server
+  sent itself, prints `the server's reply could not be parsed (JSON-RPC
+  parse error)`, wherever Toolgraph renders an exception: crawl failures,
+  log records (where an exception whose arguments are credential-shaped is
+  still withheld whole, as before) and every exception `doctor` reports,
+  which now renders exceptions like the other commands. Not covered: an
+  `int()` error raised as a `ValueError` subclass (a `str` subclass whose
+  `__repr__` raises one), and `re.Match` reprs (`%.50R`).
 - A command that writes a file or a review annotation no longer prints a
   traceback when the durability warning is escalated to an error (#129).
   The warning (`ArtifactDurabilityWarning`, or
