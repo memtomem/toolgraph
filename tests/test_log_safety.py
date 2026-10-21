@@ -11,6 +11,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import httpx2
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -140,6 +141,21 @@ def _chain_lines(exc: BaseException) -> list[str]:
             log.exception("boom")
 
     return _logged(emit)
+
+
+def test_a_chained_int_error_is_shown_without_its_value():
+    """httpx2 withholds its own ``InvalidURL`` text, but the ``int()`` error it
+    was raised during stays chained, with the repr cut at 200 characters (#236)."""
+    try:
+        httpx2.URL("https://h:password\xa0=QXZQ" + "x" * 250)
+    except httpx2.InvalidURL as exc:
+        lines = _chain_lines(exc)
+
+    assert lines == [
+        "boom",
+        f"InvalidURL: {WITHHELD}",
+        "ValueError: invalid literal for int() with base 10 (value not shown)",
+    ]
 
 
 def test_each_chain_link_is_one_redacted_line_and_no_traceback():

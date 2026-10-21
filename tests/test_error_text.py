@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import http.server
 import json
 import sys
+import threading
 from pathlib import Path
 
 import pytest
+from mcp.shared.exceptions import MCPError
+from mcp_types import INVALID_REQUEST, PARSE_ERROR
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from typer.testing import CliRunner
 
 from toolgraph import cli
 from toolgraph.crawler.crawl import _describe, crawl_all
-from toolgraph.error_text import describe_error, describe_validation_error
+from toolgraph.error_text import UNPARSED_REPLY, describe_error, describe_validation_error
 from toolgraph.errors import ValueFreeError
 from toolgraph.models import Governance, ServersConfig, ServerSpec
 from toolgraph.review_candidates import (
@@ -390,3 +394,122 @@ def test_sidecar_validator_message_is_kept(tmp_path):
     assert (
         str(raised.value) == "invalid review annotations at events.0.candidate_id: must be a UUID"
     )
+
+
+# --- shortened reprs (#236) -----------------------------------------------
+
+
+def _int_error(value: str | bytes, base: int = 10) -> ValueError:
+    with pytest.raises(ValueError) as raised:
+        int(value, base)
+    return raised.value
+
+
+@pytest.mark.parametrize(
+    ("value", "base"),
+    [
+        ("password\t=QXZQ" + "x" * 250, 10),
+        (b"password\t=QXZQ" + b"x" * 250, 10),
+        ("password\xa0=QXZQ", 10),
+        ("password\t=QXZQ", 16),
+    ],
+    ids=["str-cut", "bytes-cut", "short", "base-16"],
+)
+def test_an_int_error_is_shown_without_its_value(value, base):
+    exc = _int_error(value, base)
+    assert "QXZQ" in str(exc)
+
+    assert describe_error(exc) == f"invalid literal for int() with base {base} (value not shown)"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ValueError("password=QXZQ"),
+        ValueError("invalid literal for int() with base 10: 'password=QXZQ'", "second"),
+        type("Custom", (ValueError,), {})(
+            "invalid literal for int() with base 10: 'password=QXZQ'"
+        ),
+    ],
+    ids=["other-text", "two-args", "subclass"],
+)
+def test_other_value_errors_go_to_the_scrubber(exc):
+    assert describe_error(exc) != "invalid literal for int() with base 10 (value not shown)"
+    _assert_hidden(describe_error(exc))
+
+
+def test_an_mcp_parse_error_is_shown_as_fixed_text():
+    exc = MCPError(PARSE_ERROR, "Failed to parse JSON response: input_value='password\\t=QXZQ'")
+
+    assert describe_error(exc) == UNPARSED_REPLY
+
+
+def test_an_mcp_error_with_another_code_goes_to_the_scrubber():
+    assert describe_error(MCPError(INVALID_REQUEST, "password=QXZQ")) == "password=<redacted>"
+
+
+# A JSON string where a JSON-RPC message belongs. The SDK copies the pydantic
+# error into an MCPError, and pydantic shortens input_value to 25 + "..." + 24
+# repr characters: the cut can split an escape, or drop the quote that made
+# repr choose its quote character.
+UNPARSABLE_REPLIES = {
+    **{
+        f"split-escape-{n}": "password\t=QXZQ" + "y" * n + "\x01" + "z" * 80
+        for n in (5, 6, 7, 8, 9)
+    },
+    "lost-quote": "password\t=QXZQ" + "a" * 40 + "'" + "b" * 80,
+    "whole-escape": "password\t=QXZQ" + "z" * 80,
+}
+
+
+class _JSONStringServer(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers["content-length"]))
+        self.server.posts += 1
+        body = json.dumps(self.server.reply).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_DELETE(self):
+        self.send_response(200)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def json_string_server(monkeypatch):
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JSONStringServer)
+    server.posts = 0
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=10)
+
+
+@pytest.mark.parametrize("reply", UNPARSABLE_REPLIES.values(), ids=UNPARSABLE_REPLIES.keys())
+def test_an_unparsable_http_reply_fails_without_its_content(json_string_server, reply):
+    json_string_server.reply = reply
+    url = f"http://127.0.0.1:{json_string_server.server_port}/mcp"
+    spec = ServerSpec(name="unparsable", transport="streamable-http", url=url)
+
+    results, failures = crawl_all([spec], timeout=30)
+
+    assert results == []
+    [(failed, error)] = failures
+    assert failed is spec
+    assert json_string_server.posts >= 1
+    assert error == f"MCPError: {UNPARSED_REPLY}"

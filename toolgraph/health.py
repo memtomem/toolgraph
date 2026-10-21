@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from toolgraph import config
+from toolgraph.error_text import describe_error
 from toolgraph.graph import driver, queries, schema
 from toolgraph.redaction import redact_text
 
@@ -48,7 +49,7 @@ def run_doctor() -> DoctorReport:
     try:
         cfg_info = config.check_config_health()
     except Exception as exc:
-        error = redact_text(exc)
+        error = describe_error(exc)
         return DoctorReport(
             healthy=False,
             checks=[
@@ -113,7 +114,7 @@ def run_doctor() -> DoctorReport:
     try:
         backend_name = redact_text(config.settings.backend)
     except Exception as exc:
-        redacted_err = redact_text(exc)
+        redacted_err = describe_error(exc)
         checks[-1] = DoctorCheck(
             name="Configuration",
             status="FAIL",
@@ -134,7 +135,7 @@ def run_doctor() -> DoctorReport:
             )
         )
     except Exception as exc:
-        redacted_err = redact_text(exc)
+        redacted_err = describe_error(exc)
         checks.append(
             DoctorCheck(
                 name="Connectivity",
@@ -177,7 +178,7 @@ def run_doctor() -> DoctorReport:
             )
             overall_healthy = False
     except Exception as exc:
-        redacted_err = redact_text(exc)
+        redacted_err = describe_error(exc)
         checks.append(
             DoctorCheck(
                 name="Schema Integrity",
@@ -216,7 +217,7 @@ def run_doctor() -> DoctorReport:
                 )
             )
     except Exception as exc:
-        redacted_err = redact_text(exc)
+        redacted_err = describe_error(exc)
         checks.append(
             DoctorCheck(
                 name="Graph State",
