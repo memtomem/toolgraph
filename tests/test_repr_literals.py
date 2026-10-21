@@ -110,6 +110,34 @@ def test_a_scrubbable_credential_beside_a_read_back_literal_withholds_the_messag
     assert redact_text("got 'ab' and password=QXZQ") == "got 'ab' and password=<redacted>"
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        # A quote opened and never closed, then backslash text.
+        "can't read C:\\nBearer\\notes.json",
+        "got 'safe' C:\\nBearer\\notes.json",
+    ],
+)
+def test_text_after_an_unpaired_quote_is_not_read(text):
+    assert redact_text(text) == text
+
+
+def test_a_literal_cut_without_its_closing_quote_is_not_read():
+    """A documented limit: ``int()`` prints at most 200 characters of the repr
+    and no closing quote, so there is no literal to read back."""
+    text = _error(int, "password\t=QXZQ" + "x" * 250)
+    assert not text.endswith("'")
+
+    assert redact_text(text) == text
+
+
+def test_a_literal_printed_through_repr_twice_is_not_read():
+    """A documented limit: only one level of repr is read back."""
+    text = repr(repr("password\t=QXZQ"))
+
+    assert redact_text(text) == text
+
+
 def test_a_literal_after_an_odd_backslash_run_is_not_read():
     """A documented limit: an escaped quote never starts a literal."""
     text = "C:\\" + repr("password\t=QXZQ")

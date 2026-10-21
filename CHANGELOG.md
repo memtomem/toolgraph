@@ -207,8 +207,10 @@ All notable changes to Toolgraph are documented here.
   `'password=<redacted>`). Ordinary text is unchanged: a path is read only
   when quoted as `repr` would quote it, so `C:\bearer\notes.json` is still
   shown. A message that holds an escaped literal and also a credential the
-  scrubber would mask is withheld instead of masked. Not read: a literal printed through `repr`
-  twice, and one right after an odd run of backslashes. Artifact and
+  scrubber would mask is withheld instead of masked. Not read: a literal
+  printed through `repr` twice, one right after an odd run of backslashes,
+  and one cut without its closing quote, as `int()` and other C code print
+  a value whose repr is longer than 200 characters (#236). Artifact and
   evidence text, which is stored rather than printed, is not affected.
 - A command that writes a file or a review annotation no longer prints a
   traceback when the durability warning is escalated to an error (#129).
