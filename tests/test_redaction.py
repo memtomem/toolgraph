@@ -154,6 +154,8 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "a://" + ":" * 150_000 + "@",
         'a://"' + ":" * 150_000 + "@",
         "a://u?" * 40_000 + "@",
+        "http://h/password " * 50_000,
+        "http://h/" + "token" * 200_000,
     ],
     ids=[
         "letters",
@@ -168,6 +170,8 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "password-colons",
         "quoted-user-colons",
         "query-users",
+        "uri-final-names",
+        "uri-name-run",
     ],
 )
 def test_redaction_stays_linear_on_adversarial_text(text):
@@ -240,3 +244,109 @@ def test_only_the_exact_inserted_placeholders_count_as_inserted():
     assert _INSERTED.fullmatch("bearer <redacted>")
     assert not _INSERTED.search("<REDACTED-URI>")
     assert not _INSERTED.search("token=<Redacted>")
+
+
+# A credential name at the end of a URI, its value after the URI's end. The
+# URI rewrite would take the name and leave the value (#232).
+NAME_AT_URI_END = [
+    "fetch http://h/password =QXZQ",
+    "fetch http://h/password\t=QXZQ",
+    "fetch http://h/password= QXZQ",
+    "see http://h/api_key = QXZQ",
+    "see http://h/x?token =QXZQ",
+    "see http://h/Token =QXZQ",
+    "see http://h/x?a=1&access_token =QXZQ",
+    "see http://h/db_password: QXZQ",
+    "see http://h/secret' = 'QXZQ'",
+    "see http://h/credential = QXZQ",
+    "see neo4j://h/password : QXZQ",
+    "see http://h/authorization: QXZQ",
+    "see http://h/authorization: Basic QXZQ",
+    "http://h/authorization:Basic QXZQ",
+    "http://h/authorization:Token QXZQ",
+    "http://h/authorization:Digest QXZQ",
+    "http://h/authorization:Basic\r\nQXZQ",
+    "see http://h/bearer QXZQ",
+    "http://xbearer/bearer QXZQ",
+    # A bracketed value that starts inside the URI runs past it.
+    "http://h/token=[a, QXZQ] end",
+    # A name inside another match's value, or after an earlier match.
+    "http://h/secret=abc&password =QXZQ",
+    "token=http://h/password =QXZQ",
+    "password=x<redacted-uri>http://h/password =QXZQ",
+    "token=http://password/password =QXZQ",
+    "http://token=password/password =QXZQ",
+    "Authorization:http://password/password =QXZQ",
+    "TOKEN=HTTP://PASSWORD/PASSWORD\xa0=QXZQ",
+    "token=http://password/password\r\n=QXZQ",
+    "[token=http://password/password =QXZQ]",
+    # Names that share letters: `secre|t|oken`.
+    "see http://h/secretoken =QXZQ",
+]
+
+
+@pytest.mark.parametrize("text", NAME_AT_URI_END)
+def test_a_name_at_a_uri_end_withholds_its_value(text):
+    assert redact_text(text) == WITHHELD
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The text cannot tell a prose colon after a URL from an assignment,
+        # and a name in the host position goes with the URI rewrite too.
+        "Request failed for https://host/password: 404 Not Found",
+        "Error accessing https://host/token: connection refused",
+        "{'https://host/token': 'Connection refused'}",
+        "GET https://h/oauth/bearer returned 404",
+        "Client error for url 'https://h/token='",
+        "GET https://h/password={id} returned 404",
+        "see https://h/token= here",
+        "Error accessing https://token: connection refused",
+        "1https://password : HUNTER2",
+        "+https://secret = HUNTER2",
+        "1https://Bearer HUNTER2",
+        "123://password : HUNTER2",
+        "+++://secret = HUNTER2",
+        ".-1://Bearer HUNTER2",
+    ],
+)
+def test_a_url_ending_in_a_name_before_text_is_withheld(text):
+    assert redact_text(text) == WITHHELD
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("fetch http://h/password=QXZQ", "fetch http://h"),
+        ("see http://h/password reset page", "see http://h reset page"),
+        ("see http://h/token. = not an assignment", "see http://h = not an assignment"),
+        ("see http://[::1]:8080/token here", "see http://[::1]:8080 here"),
+        ("see [docs](https://h/token) here", "see [docs](https://h here"),
+        ("https://user:secret@host/input?token=", "https://host"),
+        (
+            "Client error for url 'https://host/mcp?token=abc'",
+            "Client error for url 'https://host'",
+        ),
+    ],
+)
+def test_a_name_whose_value_stays_inside_the_uri_is_scrubbed(text, expected):
+    assert redact_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        # Documented limits: a plain value that starts inside the URI and goes
+        # on past a character a URI cannot hold, and a ':' with no space after
+        # it, which the refusal rule reads as part of a name (`get_token:v2`).
+        ('got http://h/x?token=abc"def', 'got http://h"def'),
+        ("http://h/token=abc<QXZQ>", "http://h<QXZQ>"),
+        ("http://h/token=abc\tQXZQ", "http://h\tQXZQ"),
+        # An input placeholder is shown changed, and `>` ends the URI.
+        ("http://h/token=abc<redacted>QXZQ", "http://h>QXZQ"),
+        ("see http://h/password :QXZQ", "see http://h :QXZQ"),
+    ],
+)
+def test_a_value_continuing_past_a_uri_is_not_caught(text, shown):
+    assert redact_text(text) == shown

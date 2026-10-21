@@ -246,6 +246,49 @@ def _hide_quoted_userinfo(text: str) -> str:
     return text[:start] + "<redacted-uri>"
 
 
+# A URI ends at whitespace or a quote, so a credential name at the end of one
+# (`https://h/password =x`, `https://h/x?token: x`, `https://h/bearer x`)
+# would go with the URI rewrite and leave its value readable. The search is
+# zero-width, so names that share letters (`secretoken`) are each tried.
+_NAME_START = re.compile(rf"(?i)(?=(?:{CREDENTIAL_KEYWORDS}|authorization|bearer))")
+_NAME_RULES = (_REFUSED_ASSIGNMENT, _REFUSED_AUTHORIZATION, _BEARER)
+_NON_SPACE = re.compile(r"\S")
+
+
+def _assigns_past(text: str, uri_end: int, match: re.Match[str]) -> bool:
+    # Whether rewriting a URI that ends at `uri_end` would hide the name
+    # `match` starts with but not what it assigns.
+    end = match.end()
+    if match.re is not _REFUSED_ASSIGNMENT:
+        # Authorization and Bearer matches hold the credential itself.
+        return end > uri_end
+    if end < uri_end:
+        # A bracketed value runs to the end of the text.
+        return text[end] in "[{"
+    # `?token=` with nothing after it assigns nothing.
+    return _NON_SPACE.search(text, end) is not None
+
+
+def _assignment_crosses_uri(text: str) -> bool:
+    """True when a credential name inside a URI assigns a value past its end."""
+    # Names are found in text order, so one pointer walks the URIs once.
+    uris = _URI.finditer(text)
+    uri = next(uris, None)
+    for name in _NAME_START.finditer(text):
+        at = name.start()
+        while uri is not None and uri.end() <= at:
+            uri = next(uris, None)
+        if uri is None:
+            return False
+        if at < uri.start():
+            continue
+        for rule in _NAME_RULES:
+            match = rule.match(text, at)
+            if match and _assigns_past(text, uri.end(), match):
+                return True
+    return False
+
+
 # `repr`, `ascii`, `%r`, a container's `str()` and many library errors
 # (`int('…')`) print a tab or a no-break space as an escape (`\t`, `\xa0`), so
 # `password<TAB>=value` no longer reads as an assignment. Such output is a
@@ -354,10 +397,13 @@ def redact_text(value: object) -> str:
     prints it (`'password\\t=x'`) is withheld when that literal, read back,
     is credential-shaped, alone or in place in the message, and when it holds
     more than ``_MAX_LITERALS`` such literals. Both checks read the message
-    as given, before anything rewrites it. After scrubbing, the text without
-    the placeholders the scrubbers inserted is checked with the refusal rule,
-    and withheld if it is still credential-shaped. A placeholder the input
-    itself carries is shown as `\u2039redacted`.
+    as given, before anything rewrites it. A message where a credential name
+    inside a URI assigns a value after the URI's end (`https://h/password =x`)
+    is withheld too: rewriting the URI to its origin would remove the name
+    and leave the value. After scrubbing, the text without the placeholders
+    the scrubbers inserted is checked with the refusal rule, and withheld if
+    it is still credential-shaped. A placeholder the input itself carries is
+    shown as `\u2039redacted`.
     """
     raw = str(value)
     decoded = unquote(raw)
@@ -366,6 +412,8 @@ def redact_text(value: object) -> str:
     if _repr_reads_as_credential(raw):
         return WITHHELD
     text = _hide_quoted_userinfo(_INPUT_PLACEHOLDER.sub("\u2039", raw))
+    if _assignment_crosses_uri(text):
+        return WITHHELD
     text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
     text = redact_credentials(text)
     if is_credential_shaped(_INSERTED.sub(" ", text)):
