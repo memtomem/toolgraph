@@ -418,6 +418,18 @@ async def test_contract_error_keeps_existing_unstructured_error(monkeypatch):
     assert "unknown profile" in result.content[0].text
 
 
+async def test_a_contract_error_quoting_a_repr_escaped_credential_is_withheld(backend_graph):
+    """``profile_error`` prints the profile with ``repr``, which escapes the tab."""
+    result = await _wire_call(
+        "eligible_tools",
+        {"agent": "agent", "candidates": [], "profile": "password\t=QXZQ"},
+    )
+
+    assert result.is_error is True
+    assert WITHHELD in result.content[0].text
+    assert "QXZQ" not in result.content[0].text
+
+
 @pytest.mark.parametrize(
     "exc",
     [

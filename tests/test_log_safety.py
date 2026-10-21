@@ -81,6 +81,32 @@ def test_an_exception_argument_repr_escapes_is_withheld(value):
     assert _chain_lines(KeyError(value)) == ["boom", f"KeyError: {WITHHELD}"]
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        b"password\t=QXZQ",
+        "password =QXZQ".encode(),
+        ["password =QXZQ".encode()],
+        [None] * 1_000 + ["password =QXZQ".encode()],
+    ],
+    ids=["ascii-bytes", "utf8-bytes", "list-of-bytes", "long-list"],
+)
+def test_a_non_string_argument_is_read_back_from_its_repr(value):
+    """The check before formatting sees only strings; the message reads back."""
+    lines = _logged(lambda log: log.info("Tool %r failed", value))
+
+    assert lines == [WITHHELD]
+
+
+def test_a_library_error_quoting_bytes_is_withheld():
+    try:
+        float("password =QXZQ".encode())
+    except ValueError as exc:
+        error = exc
+
+    assert _chain_lines(error) == ["boom", f"ValueError: {WITHHELD}"]
+
+
 def test_percent_encoded_credential_withholds_the_message():
     lines = _logged(lambda log: log.info("Tool %r failed", "?%74oken=QXZQ"))
 
