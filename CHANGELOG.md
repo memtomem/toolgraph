@@ -232,6 +232,25 @@ All notable changes to Toolgraph are documented here.
   which now renders exceptions like the other commands. Not covered: an
   `int()` error raised as a `ValueError` subclass (a `str` subclass whose
   `__repr__` raises one), and `re.Match` reprs (`%.50R`).
+- A credential name at the end of a URL no longer leaves its value readable
+  in a scrubbed message (#232). The scrubber rewrites each URL to its origin
+  before it masks credentials, and a URL ends at whitespace or a quote, so
+  `fetch http://h/password =secret` printed `fetch http://h =secret`; so did
+  a name in a query (`?token =x`), with a tab or `: ` after it,
+  `.../authorization: Basic x`, `.../bearer x`, and a bracketed value
+  starting in the URL (`.../token=[a, x]`). Such a message is now withheld
+  whole. The text cannot tell a prose colon from an assignment, so
+  diagnostics whose URL path ends in a credential name with text after it
+  are withheld too: `Error accessing https://host/token: connection
+  refused`, `GET https://h/oauth/bearer returned 404`, `Client error for url
+  'https://h/token='`, `GET https://h/password={id} returned 404`, a host
+  that is a credential name (`Error accessing https://token: connection
+  refused`), and a name in the host position of a malformed scheme
+  (`1https://password : x`, which was masked). A value that starts inside
+  the URL and continues past a quote, `<`, `>` or a tab
+  (`http://h/x?token=abc"def` shows `"def`, and with an input placeholder
+  `http://h/token=abc<redacted>x` shows `http://h>x`), and `.../password :x`
+  with no space after the `:` are not caught.
 - A command that writes a file or a review annotation no longer prints a
   traceback when the durability warning is escalated to an error (#129).
   The warning (`ArtifactDurabilityWarning`, or
