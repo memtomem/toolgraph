@@ -322,6 +322,9 @@ def _assignment_crosses_uri(text: str) -> bool:
     """
     if _crosses(text, (uri.span() for uri in _URI.finditer(text))):
         return True
+    if "%" not in text:
+        # Nothing to decode, and building the copy slows a URI-heavy text.
+        return False
     decoded, spans = _decoded_keeping_uris(text)
     return decoded != text and _crosses(decoded, spans)
 
