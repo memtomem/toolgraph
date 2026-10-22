@@ -97,8 +97,8 @@ _DURABILITY_WARNINGS = (ArtifactDurabilityWarning, ReviewCandidateDurabilityWarn
 def _credential_shaped_argument(args: list[str]) -> bool:
     """Whether any command-line token is credential-shaped (the refusal rule).
 
-    Checked on the tokens as typed: Click and Typer print a value escaped
-    (`\\x09`, `\\xa0`) or quoted, a form the scrubber does not read. The
+    Checked on the tokens as typed, before Click and Typer quote or escape
+    them (`\\x09`, `\\xa0`) in the message. The
     tokens joined by spaces are checked too: Click prints unexpected extra
     arguments that way, so `password` and `<TAB>=value` make one assignment.
     """

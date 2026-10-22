@@ -156,6 +156,10 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "a://u?" * 40_000 + "@",
         "http://h/password " * 50_000,
         "http://h/" + "token" * 200_000,
+        "http://h/" + "authorization:[" * 50_000,
+        "http://h/" + "authorization:x/" * 50_000,
+        "http://h/" + "authorization=basic/" * 50_000,
+        "http://h/%20pass%77ord " * 20_000,
     ],
     ids=[
         "letters",
@@ -172,6 +176,10 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "query-users",
         "uri-final-names",
         "uri-name-run",
+        "uri-bracket-run",
+        "uri-colon-run",
+        "uri-scheme-word-run",
+        "encoded-uri-names",
     ],
 )
 def test_redaction_stays_linear_on_adversarial_text(text):
@@ -282,6 +290,30 @@ NAME_AT_URI_END = [
     "[token=http://password/password =QXZQ]",
     # Names that share letters: `secre|t|oken`.
     "see http://h/secretoken =QXZQ",
+    # Forms the scrubbers read as an assignment and the refusal rule does
+    # not (#241).
+    "http://h/authorization=Basic QXZQ",
+    "http://h/Authorization=Token QXZQ",
+    "http://h/x?authorization=Basic QXZQ",
+    "http://h/proxy_authorization=Basic QXZQ",
+    "http://h/proxy-authorization=Basic QXZQ",
+    "see http://h/password :QXZQ",
+    "http://h/api_key :QXZQ",
+    "http://h/access-token :QXZQ",
+    "http://h/secret\t:QXZQ",
+    "http://h/password:[one, QXZQ]",
+    "http://h/credential:{one: QXZQ}",
+    # Percent-encoded names and delimiters, each URI where the rewrite finds
+    # it (#241).
+    "http://h/pass%77ord :QXZQ",
+    "http://h/pass%77ord:[one, QXZQ]",
+    "http://h/password%3A[one, QXZQ]",
+    "http://h/%20pass%77ord :QXZQ",
+    "http://h/%22pass%77ord :QXZQ",
+    "http://h/%20password%3A[one, QXZQ]",
+    "http://h/password %3AQXZQ",
+    "a%20http://h/password :QXZQ",
+    "http://h/x%3Fpassword :QXZQ",
 ]
 
 
@@ -301,6 +333,9 @@ def test_a_name_at_a_uri_end_withholds_its_value(text):
         "GET https://h/oauth/bearer returned 404",
         "Client error for url 'https://h/token='",
         "GET https://h/password={id} returned 404",
+        "GET https://h/password:[id] returned 404",
+        "GET https://h/v1/credential:[id] returned 404",
+        "GET https://h/authorization=Basic returned 404",
         "see https://h/token= here",
         "Error accessing https://token: connection refused",
         "1https://password : HUNTER2",
@@ -324,6 +359,8 @@ def test_a_url_ending_in_a_name_before_text_is_withheld(text):
         ("see http://[::1]:8080/token here", "see http://[::1]:8080 here"),
         ("see [docs](https://h/token) here", "see [docs](https://h here"),
         ("https://user:secret@host/input?token=", "https://host"),
+        # Decoded, the URI would end at the space, but the rewrite takes all of it.
+        ("http://h/password%20:QXZQ", "http://h"),
         (
             "Client error for url 'https://host/mcp?token=abc'",
             "Client error for url 'https://host'",
@@ -338,14 +375,22 @@ def test_a_name_whose_value_stays_inside_the_uri_is_scrubbed(text, expected):
     ("text", "shown"),
     [
         # Documented limits: a plain value that starts inside the URI and goes
-        # on past a character a URI cannot hold, and a ':' with no space after
-        # it, which the refusal rule reads as part of a name (`get_token:v2`).
+        # on past a character a URI cannot hold.
         ('got http://h/x?token=abc"def', 'got http://h"def'),
         ("http://h/token=abc<QXZQ>", "http://h<QXZQ>"),
         ("http://h/token=abc\tQXZQ", "http://h\tQXZQ"),
         # An input placeholder is shown changed, and `>` ends the URI.
         ("http://h/token=abc<redacted>QXZQ", "http://h>QXZQ"),
-        ("see http://h/password :QXZQ", "see http://h :QXZQ"),
+        # The scrubbers take a Digest scheme word as the whole value (#245).
+        (
+            "http://h/authorization=Digest username=alice,response=QXZQ",
+            "http://h username=alice,response=QXZQ",
+        ),
+        # An escape joined to a name only by decoding the whole text, an
+        # encoded name before the scheme, and a repr literal read back (#246).
+        ("http://h/password %3Aq9z://host", "http://h %3aq9z://host"),
+        ("%70assword://q9z", "%70assword://q9z"),
+        ("'http://h/password\\t':q9z", "'http://h':q9z"),
     ],
 )
 def test_a_value_continuing_past_a_uri_is_not_caught(text, shown):

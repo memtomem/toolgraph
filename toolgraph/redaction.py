@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import shlex
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from itertools import islice
 from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING
@@ -251,7 +251,14 @@ def _hide_quoted_userinfo(text: str) -> str:
 # would go with the URI rewrite and leave its value readable. The search is
 # zero-width, so names that share letters (`secretoken`) are each tried.
 _NAME_START = re.compile(rf"(?i)(?=(?:{CREDENTIAL_KEYWORDS}|authorization|bearer))")
-_NAME_RULES = (_REFUSED_ASSIGNMENT, _REFUSED_AUTHORIZATION, _BEARER)
+# What the scrubbers take as an assignment, up to where the value starts: the
+# first group of _SCRUB_VALUE after any name, and _AUTHORIZATION_SCRUB's
+# scheme word. Matching no value keeps each try bounded. The refusal patterns
+# accept fewer forms (`password :x`, `authorization=Basic x`), and every form
+# the scrubbers accept beyond them leaked here.
+_SCRUB_ASSIGNMENT = re.compile(rf"(?i)(?:{CREDENTIAL_KEYWORDS}|authorization)['\"]?\s*[:=]\s*")
+_SCRUB_SCHEME = re.compile(r"(?i)authorization['\"]?\s*[:=]\s*(?:bearer|basic|token)\s+")
+_NAME_RULES = (_SCRUB_ASSIGNMENT, _SCRUB_SCHEME, _REFUSED_AUTHORIZATION, _BEARER)
 _NON_SPACE = re.compile(r"\S")
 
 
@@ -259,7 +266,7 @@ def _assigns_past(text: str, uri_end: int, match: re.Match[str]) -> bool:
     # Whether rewriting a URI that ends at `uri_end` would hide the name
     # `match` starts with but not what it assigns.
     end = match.end()
-    if match.re is not _REFUSED_ASSIGNMENT:
+    if match.re is not _SCRUB_ASSIGNMENT and match.re is not _SCRUB_SCHEME:
         # Authorization and Bearer matches hold the credential itself.
         return end > uri_end
     if end < uri_end:
@@ -269,24 +276,54 @@ def _assigns_past(text: str, uri_end: int, match: re.Match[str]) -> bool:
     return _NON_SPACE.search(text, end) is not None
 
 
-def _assignment_crosses_uri(text: str) -> bool:
-    """True when a credential name inside a URI assigns a value past its end."""
-    # Names are found in text order, so one pointer walks the URIs once.
-    uris = _URI.finditer(text)
+def _crosses(text: str, spans: Iterable[tuple[int, int]]) -> bool:
+    # Names are found in text order, so one pointer walks the spans once.
+    uris = iter(spans)
     uri = next(uris, None)
     for name in _NAME_START.finditer(text):
         at = name.start()
-        while uri is not None and uri.end() <= at:
+        while uri is not None and uri[1] <= at:
             uri = next(uris, None)
         if uri is None:
             return False
-        if at < uri.start():
+        if at < uri[0]:
             continue
         for rule in _NAME_RULES:
             match = rule.match(text, at)
-            if match and _assigns_past(text, uri.end(), match):
+            if match and _assigns_past(text, uri[1], match):
                 return True
     return False
+
+
+def _decoded_keeping_uris(text: str) -> tuple[str, list[tuple[int, int]]]:
+    # Each URI and each gap between URIs is decoded on its own, so a URI keeps
+    # the bounds the rewrite will use: decoding the whole text would let a
+    # `%20` end a URI early and move a name out of it.
+    parts: list[str] = []
+    spans: list[tuple[int, int]] = []
+    length = consumed = 0
+    for uri in _URI.finditer(text):
+        gap = unquote(text[consumed : uri.start()])
+        value = unquote(uri.group(0))
+        start = length + len(gap)
+        parts += [gap, value]
+        spans.append((start, start + len(value)))
+        length = start + len(value)
+        consumed = uri.end()
+    parts.append(unquote(text[consumed:]))
+    return "".join(parts), spans
+
+
+def _assignment_crosses_uri(text: str) -> bool:
+    """True when a credential name inside a URI assigns a value past its end.
+
+    Checked on the text as given and on its percent-decoded form, with each
+    URI where the rewrite will find it.
+    """
+    if _crosses(text, (uri.span() for uri in _URI.finditer(text))):
+        return True
+    decoded, spans = _decoded_keeping_uris(text)
+    return decoded != text and _crosses(decoded, spans)
 
 
 # `repr`, `ascii`, `%r`, a container's `str()` and many library errors
@@ -398,12 +435,12 @@ def redact_text(value: object) -> str:
     is credential-shaped, alone or in place in the message, and when it holds
     more than ``_MAX_LITERALS`` such literals. Both checks read the message
     as given, before anything rewrites it. A message where a credential name
-    inside a URI assigns a value after the URI's end (`https://h/password =x`)
-    is withheld too: rewriting the URI to its origin would remove the name
-    and leave the value. After scrubbing, the text without the placeholders
-    the scrubbers inserted is checked with the refusal rule, and withheld if
-    it is still credential-shaped. A placeholder the input itself carries is
-    shown as `\u2039redacted`.
+    inside a URI, as given or percent-decoded, assigns a value after the
+    URI's end (`https://h/password :x`) is withheld too: rewriting the URI to
+    its origin would remove the name and leave the value. After scrubbing,
+    the text without the placeholders the scrubbers inserted is checked with
+    the refusal rule, and withheld if it is still credential-shaped. A
+    placeholder the input itself carries is shown as `\u2039redacted`.
     """
     raw = str(value)
     decoded = unquote(raw)
