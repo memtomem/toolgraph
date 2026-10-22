@@ -2,6 +2,31 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Fixed
+
+- A credential name at the end of a URL is caught in the forms the scrubber
+  reads as an assignment, not only those the refusal rule does (#241). 0.4.0
+  withheld `fetch http://h/password =secret` but printed
+  `http://h/authorization=Basic secret` as `http://h secret`, and likewise
+  `Authorization=Token`, `proxy_authorization=Basic`, `password :secret`,
+  `password:[a, secret]` and `credential:{a: secret}`. Such a message is now
+  withheld whole, and so is one where the name or its delimiter is
+  percent-encoded (`http://h/pass%77ord :secret`,
+  `http://h/password%3A[a, secret]`), judged against each URL where the
+  rewrite finds it. More diagnostics are withheld for the same reason: a URL
+  path ending in a credential name and a scheme word with text after it
+  (`GET https://h/authorization=Basic returned 404`), or a bracket opening
+  inside the URL after a `:` (`GET https://h/password:[id] returned 404`),
+  as one after `=` already was. Not caught: the parameters of a scheme word
+  the scrubber does not know, such as
+  `http://h/authorization=Digest username=alice,response=hunter2` (#245);
+  an encoded delimiter that joins the text after a URL to the start of
+  another one (`http://h/password %3Ahunter2://host`); an encoded name before
+  a URL's scheme (`%70assword://hunter2`); and a repr-escaped URL followed by
+  an assignment (`'http://h/password\t':hunter2`) (#246).
+
 ## 0.4.0 - 2026-10-21
 
 Fifth alpha. Read **Upgrading from 0.3.0** below before installing: it lists
