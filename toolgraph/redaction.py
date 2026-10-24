@@ -37,12 +37,13 @@ _AUTHORIZATION = re.compile(
     r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
     r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
 )
-# The scrubbing form: a quoted or bracketed value is hidden through the end of
-# the text, as for _SCRUB_VALUE below.
-_AUTHORIZATION_SCRUB = re.compile(
-    r"(?i)\bauthorization['\"]?\s*[:=]\s*"
-    r"(?:['\"\[{][\s\S]*|(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+)"
-)
+# The scrubbing form hides everything after the name through the end of the
+# text. Where an Authorization value ends cannot be told from prose: a scheme
+# may take a parameter list (`Digest username=a, response=x failed`), a value
+# may be malformed (`Basic user x`), and a header dump may hold another
+# Authorization header after it. No `\b`, so `proxy_authorization` and
+# `HTTP_AUTHORIZATION` count, as the credential names below do.
+_AUTHORIZATION_SCRUB = re.compile(r"(?i)authorization['\"]?\s*[:=]\s*\S[\s\S]*")
 # The names every credential detector treats as a secret when assigned. One
 # list, so a name refused in one place is refused in artifact identities,
 # review notes and control plans alike. Scrubbing (_CREDENTIAL below) keeps the
@@ -252,13 +253,15 @@ def _hide_quoted_userinfo(text: str) -> str:
 # zero-width, so names that share letters (`secretoken`) are each tried.
 _NAME_START = re.compile(rf"(?i)(?=(?:{CREDENTIAL_KEYWORDS}|authorization|bearer))")
 # What the scrubbers take as an assignment, up to where the value starts: the
-# first group of _SCRUB_VALUE after any name, and _AUTHORIZATION_SCRUB's
-# scheme word. Matching no value keeps each try bounded. The refusal patterns
-# accept fewer forms (`password :x`, `authorization=Basic x`), and every form
-# the scrubbers accept beyond them leaked here.
+# first group of _SCRUB_VALUE after any name. Matching no value keeps each try
+# bounded. The refusal patterns accept fewer forms (`password :x`,
+# `authorization=Basic x`), and every form the scrubbers accept beyond them
+# leaked here.
 _SCRUB_ASSIGNMENT = re.compile(rf"(?i)(?:{CREDENTIAL_KEYWORDS}|authorization)['\"]?\s*[:=]\s*")
-_SCRUB_SCHEME = re.compile(r"(?i)authorization['\"]?\s*[:=]\s*(?:bearer|basic|token)\s+")
-_NAME_RULES = (_SCRUB_ASSIGNMENT, _SCRUB_SCHEME, _REFUSED_AUTHORIZATION, _BEARER)
+# _AUTHORIZATION_SCRUB's value runs to the end of the text, so an Authorization
+# name inside a URI assigns past it whenever any text follows the URI.
+_AUTHORIZATION_NAME = re.compile(r"(?i)authorization['\"]?\s*[:=]")
+_NAME_RULES = (_SCRUB_ASSIGNMENT, _BEARER)
 _NON_SPACE = re.compile(r"\S")
 
 
@@ -266,8 +269,8 @@ def _assigns_past(text: str, uri_end: int, match: re.Match[str]) -> bool:
     # Whether rewriting a URI that ends at `uri_end` would hide the name
     # `match` starts with but not what it assigns.
     end = match.end()
-    if match.re is not _SCRUB_ASSIGNMENT and match.re is not _SCRUB_SCHEME:
-        # Authorization and Bearer matches hold the credential itself.
+    if match.re is _BEARER:
+        # A Bearer match holds the credential itself.
         return end > uri_end
     if end < uri_end:
         # A bracketed value runs to the end of the text.
@@ -277,9 +280,12 @@ def _assigns_past(text: str, uri_end: int, match: re.Match[str]) -> bool:
 
 
 def _crosses(text: str, spans: Iterable[tuple[int, int]]) -> bool:
-    # Names are found in text order, so one pointer walks the spans once.
+    # Names are found in text order, so one pointer walks the spans once. The
+    # end of the text without trailing whitespace is found once too: searching
+    # past each URI for every name would be quadratic.
     uris = iter(spans)
     uri = next(uris, None)
+    last = len(text.rstrip())
     for name in _NAME_START.finditer(text):
         at = name.start()
         while uri is not None and uri[1] <= at:
@@ -288,6 +294,8 @@ def _crosses(text: str, spans: Iterable[tuple[int, int]]) -> bool:
             return False
         if at < uri[0]:
             continue
+        if last > uri[1] and _AUTHORIZATION_NAME.match(text, at):
+            return True
         for rule in _NAME_RULES:
             match = rule.match(text, at)
             if match and _assigns_past(text, uri[1], match):
