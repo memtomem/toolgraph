@@ -31,13 +31,19 @@ def test_endpoint_labels_never_include_args_or_url_secrets():
 
 
 def test_error_redaction_removes_urls_and_credential_values():
+    # The Authorization header comes last: its value runs to the end of the
+    # text, so nothing after it would be left to check.
     message = (
         "failed https://alice:secret@example.test/mcp?token=abc "
-        "Authorization: Bearer sk-abc123 password=hunter2 "
-        "mcp://bob:pw@mcp.example.test/tools?token=def"
+        "password=hunter2 mcp://bob:pw@mcp.example.test/tools?token=def "
+        "Authorization: Bearer sk-abc123"
     )
 
     redacted = redact_text(message)
+    assert redacted == (
+        "failed https://example.test password=<redacted> mcp://mcp.example.test "
+        "Authorization=<redacted>"
+    )
     assert "alice" not in redacted
     assert "secret" not in redacted.lower().replace("<redacted>", "")
     assert "abc" not in redacted
@@ -160,6 +166,9 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "http://h/" + "authorization:x/" * 50_000,
         "http://h/" + "authorization=basic/" * 50_000,
         "http://h/%20pass%77ord " * 20_000,
+        "http://h/" + "authorization:x/" * 50_000 + " " * 50_000,
+        "http://h/" + "%61uthorization:x/" * 20_000 + " " * 20_000,
+        "proxy_authorization:x " * 50_000,
     ],
     ids=[
         "letters",
@@ -180,6 +189,9 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
         "uri-colon-run",
         "uri-scheme-word-run",
         "encoded-uri-names",
+        "uri-authorization-names-then-spaces",
+        "encoded-uri-authorization-names-then-spaces",
+        "prefixed-authorization-names",
     ],
 )
 def test_redaction_stays_linear_on_adversarial_text(text):
@@ -314,12 +326,93 @@ NAME_AT_URI_END = [
     "http://h/password %3AQXZQ",
     "a%20http://h/password :QXZQ",
     "http://h/x%3Fpassword :QXZQ",
+    # An Authorization value runs to the end of the text, whatever its scheme
+    # word, so any text after the URI is its value (#245).
+    "http://h/authorization=Digest username=alice,response=QXZQ",
+    "http://h/authorization=Digest+v1 response=QXZQ",
+    "GET https://h/x?authorization=Negotiate YIIQXZQ",
+    "http://h/" + "authorization:x/" * 3 + " QXZQ",
+    # Decoded, this is not credential-shaped, so only the decoded pass of the
+    # URI-end check withholds it.
+    "http://h/%61uthorization:x/ QXZQ",
 ]
 
 
 @pytest.mark.parametrize("text", NAME_AT_URI_END)
 def test_a_name_at_a_uri_end_withholds_its_value(text):
     assert redact_text(text) == WITHHELD
+
+
+# Where an Authorization value ends cannot be told from prose, so everything
+# after the name is hidden (#245): scheme parameters, a malformed value, a
+# second header, and a name with a prefix.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Authorization: Digest username=alice, response=QXZQ", "Authorization=<redacted>"),
+        (
+            'Authorization: Digest username="alice", realm="api", nonce="n1", response="QXZQ"',
+            "Authorization=<redacted>",
+        ),
+        ("Authorization: Digest username = alice, response = QXZQ", "Authorization=<redacted>"),
+        ("authorization=Digest username=alice,response=QXZQ", "Authorization=<redacted>"),
+        ("Authorization: Negotiate YIIQXZQ abc", "Authorization=<redacted>"),
+        (
+            "Authorization: AWS4-HMAC-SHA256 Credential=AK/x, Signature=QXZQ",
+            "Authorization=<redacted>",
+        ),
+        (
+            'Authorization: OAuth oauth_consumer_key="k", oauth_signature="QXZQ"',
+            "Authorization=<redacted>",
+        ),
+        (
+            "Authorization: SCRAM-SHA-256 r=nonce,s=salt,i=4096,c=biws,p=QXZQ",
+            "Authorization=<redacted>",
+        ),
+        ("Authorization: NTLM TlRMTVNTUAABAAAAB4IIog==QXZQ", "Authorization=<redacted>"),
+        (
+            'status 401: Authorization: Hawk id="d", mac="QXZQ" was rejected',
+            "status 401: Authorization=<redacted>",
+        ),
+        ("Authorization: Basic user QXZQ", "Authorization=<redacted>"),
+        ("Authorization: Digest.v1 response=QXZQ", "Authorization=<redacted>"),
+        ("Authorization: 1Digest response=QXZQ", "Authorization=<redacted>"),
+        ("Authorization:\nAuthorization: Digest response=QXZQ", "Authorization=<redacted>"),
+        ("Authorization: Bearer\nAuthorization: Digest response=QXZQ", "Authorization=<redacted>"),
+        (
+            "request failed\nAuthorization: Digest response=QXZQ\nHost: example.test",
+            "request failed\nAuthorization=<redacted>",
+        ),
+        ("proxy_authorization:QXZQ", "proxy_Authorization=<redacted>"),
+        ("HTTP_AUTHORIZATION:QXZQ", "HTTP_Authorization=<redacted>"),
+        ("xauthorization:QXZQ", "xAuthorization=<redacted>"),
+        ("proxy_authorization:[QXZQ]", "proxy_Authorization=<redacted>"),
+        ("proxy_authorization: Basic user QXZQ", "proxy_Authorization=<redacted>"),
+        ("{'HTTP_AUTHORIZATION': 'Digest response=QXZQ'}", "{'HTTP_Authorization=<redacted>"),
+    ],
+)
+def test_an_authorization_value_is_hidden_to_the_end_of_the_text(text, expected):
+    assert redact_text(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Accepted costs: the text after a value goes too (#245).
+        ("Authorization: Bearer abc; retrying in 5s", "Authorization=<redacted>"),
+        ("see Authorization=abc123 here", "see Authorization=<redacted>"),
+        ('Authorization: Basic "" retry', "Authorization=<redacted>"),
+        ("reauthorization:pending", "reAuthorization=<redacted>"),
+        ("GET https://h/authorization=abc returned 404", WITHHELD),
+        # Unchanged: no value, a Bearer word without the name, nothing after
+        # the URI.
+        ("Authorization:", "Authorization:"),
+        ("bearer QXZQ failed", "bearer <redacted> failed"),
+        ("http://h/authorization=abc", "http://h"),
+    ],
+)
+def test_text_after_an_authorization_value_is_not_shown(text, expected):
+    assert redact_text(text) == expected
 
 
 @pytest.mark.parametrize(
@@ -381,11 +474,6 @@ def test_a_name_whose_value_stays_inside_the_uri_is_scrubbed(text, expected):
         ("http://h/token=abc\tQXZQ", "http://h\tQXZQ"),
         # An input placeholder is shown changed, and `>` ends the URI.
         ("http://h/token=abc<redacted>QXZQ", "http://h>QXZQ"),
-        # The scrubbers take a Digest scheme word as the whole value (#245).
-        (
-            "http://h/authorization=Digest username=alice,response=QXZQ",
-            "http://h username=alice,response=QXZQ",
-        ),
         # An escape joined to a name only by decoding the whole text, an
         # encoded name before the scheme, and a repr literal read back (#246).
         ("http://h/password %3Aq9z://host", "http://h %3aq9z://host"),

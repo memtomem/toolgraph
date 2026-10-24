@@ -19,13 +19,26 @@ All notable changes to Toolgraph are documented here.
   path ending in a credential name and a scheme word with text after it
   (`GET https://h/authorization=Basic returned 404`), or a bracket opening
   inside the URL after a `:` (`GET https://h/password:[id] returned 404`),
-  as one after `=` already was. Not caught: the parameters of a scheme word
-  the scrubber does not know, such as
-  `http://h/authorization=Digest username=alice,response=hunter2` (#245);
-  an encoded delimiter that joins the text after a URL to the start of
-  another one (`http://h/password %3Ahunter2://host`); an encoded name before
-  a URL's scheme (`%70assword://hunter2`); and a repr-escaped URL followed by
-  an assignment (`'http://h/password\t':hunter2`) (#246).
+  as one after `=` already was. Not caught: an encoded delimiter that joins
+  the text after a URL to the start of another one
+  (`http://h/password %3Ahunter2://host`); an encoded name before a URL's
+  scheme (`%70assword://hunter2`); and a repr-escaped URL followed by an
+  assignment (`'http://h/password\t':hunter2`) (#246).
+- Diagnostics hide everything after an `Authorization` name, not only the
+  first word of its value (#245). 0.4.0 knew only the `Bearer`, `Basic` and
+  `Token` schemes and took any other scheme word as the whole value, so
+  `Authorization: Digest username=alice, response=hunter2` printed
+  `Authorization=<redacted> username=alice, response=hunter2`; Negotiate,
+  AWS4-HMAC-SHA256 `Signature=`, OAuth, SCRAM and Hawk parameters showed the
+  same way, and so did a URL ending in the name
+  (`http://h/authorization=Digest username=alice,response=hunter2` printed
+  `http://h username=alice,response=hunter2`; it is now withheld). A name with
+  a prefix is scrubbed too: `proxy_authorization:hunter2` and
+  `HTTP_AUTHORIZATION:hunter2` were printed as given. Where such a value ends
+  cannot be told from the text, so the rest of the message goes with it:
+  `Authorization: Bearer abc; retrying in 5s` now prints
+  `Authorization=<redacted>`, and a URL holding an Authorization name with
+  text after it is withheld (`GET https://h/authorization=abc returned 404`).
 
 ## 0.4.0 - 2026-10-21
 
