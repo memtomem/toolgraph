@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import time
 
 import pytest
@@ -145,60 +146,113 @@ def test_text_around_and_without_secrets_stays_readable(text, expected):
     assert redact_text(text) == expected
 
 
+def _process_time_step():
+    """The smallest increment process_time shows here: its effective resolution."""
+    step = None
+    for _ in range(5):
+        start = time.process_time()
+        while (now := time.process_time()) == start:
+            pass
+        step = now - start if step is None else min(step, now - start)
+    return step
+
+
+# A timed batch must spend at least this much CPU time, so that a coarse
+# clock (about 16 ms on Windows) quantizes it by 5 % at most.
+_TIMING_FLOOR = max(0.02, 20 * _process_time_step())
+
+# The input grows by this factor between the two measurements, which puts a
+# linear cost near 4 and a quadratic one near 16 times the smaller one.
+_SIZE_STEP = 4
+_QUADRATIC_RATIO_BOUND = 8
+
+
+def _batch_seconds(text, calls):
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        started = time.process_time()
+        for _ in range(calls):
+            redact_text(text)
+        return time.process_time() - started
+    finally:
+        if enabled:
+            gc.enable()
+
+
+def _cost_per_call(text, samples, *, enough=None):
+    """The lowest per-call CPU cost over up to `samples` batches above the floor.
+
+    Each batch doubles its call count until it spends `_TIMING_FLOOR`, starting
+    from the count the previous batch settled on. `enough` stops early once the
+    lowest cost so far satisfies it.
+    """
+    calls, lowest = 1, None
+    for _ in range(samples):
+        while (spent := _batch_seconds(text, calls)) < _TIMING_FLOOR:
+            calls *= 2
+        cost = spent / calls
+        lowest = cost if lowest is None else min(lowest, cost)
+        if enough is not None and enough(lowest):
+            break
+    return lowest
+
+
 @pytest.mark.parametrize(
-    "text",
+    ("build", "count"),
     [
-        "a" * 100_000,
-        "http://" + "a:" * 50_000,
-        "http://u:" + "@" * 100_000,
-        "x://'" * 20_000,
-        "+" * 100_000,
-        'password="' + "a" * 100_000,
-        "password=" * 20_000,
-        'Authorization: "' + "a" * 100_000,
-        'a://u:"' * 30_000 + "@",
-        "a://" + ":" * 150_000 + "@",
-        'a://"' + ":" * 150_000 + "@",
-        "a://u?" * 40_000 + "@",
-        "http://h/password " * 50_000,
-        "http://h/" + "token" * 200_000,
-        "http://h/" + "authorization:[" * 50_000,
-        "http://h/" + "authorization:x/" * 50_000,
-        "http://h/" + "authorization=basic/" * 50_000,
-        "http://h/%20pass%77ord " * 20_000,
-        "http://h/" + "authorization:x/" * 50_000 + " " * 50_000,
-        "http://h/" + "%61uthorization:x/" * 20_000 + " " * 20_000,
-        "proxy_authorization:x " * 50_000,
-    ],
-    ids=[
-        "letters",
-        "colons",
-        "ats",
-        "quoted-uris",
-        "scheme-run",
-        "quote",
-        "keywords",
-        "auth-quote",
-        "quoted-passwords",
-        "password-colons",
-        "quoted-user-colons",
-        "query-users",
-        "uri-final-names",
-        "uri-name-run",
-        "uri-bracket-run",
-        "uri-colon-run",
-        "uri-scheme-word-run",
-        "encoded-uri-names",
-        "uri-authorization-names-then-spaces",
-        "encoded-uri-authorization-names-then-spaces",
-        "prefixed-authorization-names",
+        pytest.param(lambda n: "a" * n, 100_000, id="letters"),
+        pytest.param(lambda n: "http://" + "a:" * n, 50_000, id="colons"),
+        pytest.param(lambda n: "http://u:" + "@" * n, 100_000, id="ats"),
+        pytest.param(lambda n: "x://'" * n, 20_000, id="quoted-uris"),
+        pytest.param(lambda n: "+" * n, 100_000, id="scheme-run"),
+        pytest.param(lambda n: 'password="' + "a" * n, 100_000, id="quote"),
+        pytest.param(lambda n: "password=" * n, 20_000, id="keywords"),
+        pytest.param(lambda n: 'Authorization: "' + "a" * n, 100_000, id="auth-quote"),
+        pytest.param(lambda n: 'a://u:"' * n + "@", 30_000, id="quoted-passwords"),
+        pytest.param(lambda n: "a://" + ":" * n + "@", 150_000, id="password-colons"),
+        pytest.param(lambda n: 'a://"' + ":" * n + "@", 150_000, id="quoted-user-colons"),
+        pytest.param(lambda n: "a://u?" * n + "@", 40_000, id="query-users"),
+        pytest.param(lambda n: "http://h/password " * n, 50_000, id="uri-final-names"),
+        pytest.param(lambda n: "http://h/" + "token" * n, 200_000, id="uri-name-run"),
+        pytest.param(lambda n: "http://h/" + "authorization:[" * n, 50_000, id="uri-bracket-run"),
+        pytest.param(lambda n: "http://h/" + "authorization:x/" * n, 50_000, id="uri-colon-run"),
+        pytest.param(
+            lambda n: "http://h/" + "authorization=basic/" * n, 50_000, id="uri-scheme-word-run"
+        ),
+        pytest.param(lambda n: "http://h/%20pass%77ord " * n, 20_000, id="encoded-uri-names"),
+        pytest.param(
+            lambda n: "http://h/" + "authorization:x/" * n + " " * n,
+            50_000,
+            id="uri-authorization-names-then-spaces",
+        ),
+        pytest.param(
+            lambda n: "http://h/" + "%61uthorization:x/" * n + " " * n,
+            20_000,
+            id="encoded-uri-authorization-names-then-spaces",
+        ),
+        pytest.param(
+            lambda n: "proxy_authorization:x " * n, 50_000, id="prefixed-authorization-names"
+        ),
     ],
 )
-def test_redaction_stays_linear_on_adversarial_text(text):
-    # A scheme pattern that restarts at every letter is quadratic here.
-    started = time.perf_counter()
-    redact_text(text)
-    assert time.perf_counter() - started < 0.5
+def test_redaction_stays_linear_on_adversarial_text(build, count):
+    # A scheme pattern that restarts at every letter, or a scan past each URI
+    # for every name, is quadratic here. The test compares the cost at two
+    # sizes rather than against a wall-clock limit, and counts CPU time, which
+    # makes it far less sensitive to a slow runner and to time spent waiting
+    # for a busy one. Contention can still shift the two measurements apart
+    # (cache, clock speed), which the bound's margin absorbs. It does not catch
+    # a cost that stays linear but grows; that is a benchmark's job.
+    small = _cost_per_call(build(count // _SIZE_STEP), 3)
+    full = _cost_per_call(
+        build(count), 3, enough=lambda lowest: lowest / small < _QUADRATIC_RATIO_BOUND
+    )
+    ratio = full / small
+    assert ratio < _QUADRATIC_RATIO_BOUND, (
+        f"{full:.4f}s per call at {count} repetitions, {small:.4f}s at"
+        f" {count // _SIZE_STEP}: {ratio:.1f} times for {_SIZE_STEP} times the input"
+    )
 
 
 @pytest.mark.parametrize(
