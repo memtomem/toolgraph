@@ -77,7 +77,7 @@ notebook = ["nbclient>=0.10", "ipykernel>=6"]
 # different bytes behind the same reviewed commit. `scripts/verify-artifacts.sh`
 # asserts the sdist rebuilds the wheel byte for byte, which only holds while
 # the backend is fixed. Bump deliberately, then rehearse.
-requires = ["hatchling==1.32.4"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
