@@ -73,9 +73,12 @@ def display_resource(value: str) -> str:
     one percent-decoded form; the output is never decoded.
     """
     end = value.find("://")
+    if end == -1 and "%" not in value:
+        return value
     # An encoded scheme separator before the first raw one (`neo4j%3A%2F%2F`)
     # marks a URI the checks below would not see.
-    if "://" in unquote(value if end == -1 else value[:end]):
+    prefix = value if end == -1 else value[:end]
+    if "%" in prefix and "://" in unquote(prefix):
         return _HIDDEN
     if end == -1:
         return value
@@ -93,12 +96,13 @@ def display_resource(value: str) -> str:
     quote = _QUOTE.search(uri, end + 3 - first)
     if quote is not None and uri.rfind("@") > quote.start():
         return hidden
-    decoded = unquote(uri)
-    if decoded.count("@") > uri.count("@"):
+    decoded = unquote(uri) if "%" in uri else uri
+    if decoded != uri and decoded.count("@") > uri.count("@"):
         return hidden
     try:
         parts = urlsplit(uri)
-        if any("@" in part for form in (parts, urlsplit(decoded)) for part in form[2:]):
+        forms = (parts,) if decoded == uri else (parts, urlsplit(decoded))
+        if any("@" in part for form in forms for part in form[2:]):
             return hidden
     except ValueError:
         return hidden
@@ -129,7 +133,7 @@ def _redact_text(text: str) -> str:
         while True:
             scheme = _SCHEME.search(word, position)
             head = word[position:] if scheme is None else word[position : scheme.start()]
-            if unquote(head).count("://") > head.count("://"):
+            if "%" in head and unquote(head).count("://") > head.count("://"):
                 return "".join(shown) + text[done : base + position] + _HIDDEN
             if scheme is None:
                 # A scheme with no letter (`+++://secret=x`) is left alone, so
@@ -166,10 +170,12 @@ _RESOURCE_LIST_KEYS = frozenset(
 def _redact_string(value: str, *, whole: bool) -> str:
     # A string that is one URI from its start (raw or decoded, whitespace
     # around it aside) is one value too, wherever it sits.
+    if "://" not in value and "%" not in value:
+        return value
     stripped = value.strip()
     if whole or (
         not any(char.isspace() for char in stripped)
-        and (_SCHEME.match(stripped) or _SCHEME.match(unquote(stripped)))
+        and (_SCHEME.match(stripped) or ("%" in stripped and _SCHEME.match(unquote(stripped))))
     ):
         return display_resource(value)
     return _redact_text(value)
