@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from toolgraph import config
 from toolgraph.models import TOOL_HINT_FIELDS
+from toolgraph.redaction import display_path
 
 if TYPE_CHECKING:
     from neo4j import Driver, Session
@@ -349,7 +350,7 @@ def _not_a_database(path: Path) -> BackendConfigurationError:
     # Not retryable: waiting does not turn a foreign or corrupt file into a
     # database, so this must not read as an outage.
     return BackendConfigurationError(
-        f"BACKEND_CORRUPT: {path} is not a valid Ladybug database file; "
+        f"BACKEND_CORRUPT: {display_path(path)} is not a valid Ladybug database file; "
         "check file integrity and format",
         cause=ConfigurationCause.BACKEND_CORRUPT,
     )
@@ -357,7 +358,8 @@ def _not_a_database(path: Path) -> BackendConfigurationError:
 
 def _missing_database(path: Path) -> BackendUnavailableError:
     return BackendUnavailableError(
-        f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist or is not a file"
+        f"BACKEND_UNAVAILABLE: Ladybug database {display_path(path)} "
+        "does not exist or is not a file"
     )
 
 
@@ -381,7 +383,7 @@ def _open_ladybug_database(path: Path, *, create: bool) -> Any:
         message = str(exc)
         if "lock" in message.lower() or "another process" in message.lower():
             raise BackendLockedError(
-                f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
+                f"BACKEND_LOCKED: Ladybug database {display_path(path)} already has an owner"
             ) from exc
         if _NOT_A_DATABASE in message:
             raise _not_a_database(path) from exc
@@ -535,11 +537,12 @@ def acquire_readonly_session() -> Iterator[Session | LadybugSession]:
             except RuntimeError as exc:
                 if "lock" in str(exc).lower() or "another process" in str(exc).lower():
                     raise BackendLockedError(
-                        f"BACKEND_LOCKED: Ladybug database {path} already has an owner"
+                        f"BACKEND_LOCKED: Ladybug database {display_path(path)} "
+                        "already has an owner"
                     ) from exc
                 if not path.is_file():
                     raise BackendUnavailableError(
-                        f"BACKEND_UNAVAILABLE: Ladybug database {path} does not exist"
+                        f"BACKEND_UNAVAILABLE: Ladybug database {display_path(path)} does not exist"
                     ) from exc
                 if _NOT_A_DATABASE in str(exc):
                     raise _not_a_database(path) from exc

@@ -7,6 +7,8 @@ from typing import Any
 
 import yaml
 
+from toolgraph.redaction import display_path
+
 
 class UniqueKeySafeLoader(yaml.SafeLoader):
     """SafeLoader variant that rejects duplicate mapping keys at any depth."""
@@ -73,7 +75,9 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
     with path.open("rb") as handle:
         raw = handle.read(MAX_YAML_BYTES + 1)
     if len(raw) > MAX_YAML_BYTES:
-        raise ValueError(f"refusing to load {path}: exceeds the {MAX_YAML_BYTES}-byte limit")
+        raise ValueError(
+            f"refusing to load {display_path(path)}: exceeds the {MAX_YAML_BYTES}-byte limit"
+        )
     try:
         loader = UniqueKeySafeLoader(raw.decode("utf-8"))
         try:
@@ -93,5 +97,5 @@ def load_yaml_mapping(path: Path) -> dict[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, dict):
-        raise ValueError(f"expected a YAML mapping at document root: {path}")
+        raise ValueError(f"expected a YAML mapping at document root: {display_path(path)}")
     return value

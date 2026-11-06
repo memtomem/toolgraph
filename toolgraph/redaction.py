@@ -172,8 +172,29 @@ def _inspected(text: str) -> tuple[str, ...]:
     # One percent-decoding pass, for inspection only: the value itself is
     # never rewritten. `+` stays literal, and a doubly encoded key such as
     # `%2574oken` is not decoded a second time.
+    if "%" not in text:
+        return (text,)
     decoded = unquote(text)
     return (text,) if decoded == text else (text, decoded)
+
+
+def _form_is_credential_shaped(form: str) -> bool:
+    has_colon = ":" in form
+    has_equals = "=" in form
+    if has_colon and "://" in form and (at := form.rfind("@")) != -1:
+        if CREDENTIAL_URI.search(form):
+            return True
+        if ("'" in form or '"' in form) and any(
+            pattern.search(form, 0, at) for pattern in _QUOTED_USERINFO
+        ):
+            return True
+    if has_equals and CREDENTIAL_QUERY.search(form):
+        return True
+    if (has_colon or has_equals) and _REFUSED_ASSIGNMENT.search(form):
+        return True
+    if has_colon and _REFUSED_AUTHORIZATION.search(form):
+        return True
+    return bool(_BEARER.search(form))
 
 
 def is_credential_shaped(text: str) -> bool:
@@ -193,15 +214,7 @@ def is_credential_shaped(text: str) -> bool:
     userinfo whose unquoted part holds whitespace (``neo4j://u v:"p w"@h``
     reads as a URL followed by text), so only identities refuse that.
     """
-    return any(
-        CREDENTIAL_URI.search(form)
-        or any(pattern.search(form, 0, form.rfind("@")) for pattern in _QUOTED_USERINFO)
-        or CREDENTIAL_QUERY.search(form)
-        or _REFUSED_ASSIGNMENT.search(form)
-        or _REFUSED_AUTHORIZATION.search(form)
-        or _BEARER.search(form)
-        for form in _inspected(text)
-    )
+    return any(_form_is_credential_shaped(form) for form in _inspected(text))
 
 
 def is_credential_shaped_identity(text: str) -> bool:
@@ -224,6 +237,8 @@ def _uri_origin_keeping_prefix(value: str) -> str:
     # stay as they are, so a credential name the URI's host position holds
     # (`1https://password : x`) is still there for credential scrubbing. A
     # scheme without a letter (`123://`) is not a URI and is left alone.
+    if value[0].isalpha():
+        return _diagnostic_uri_origin(value)
     scheme = value[: value.index("://")]
     first = next((i for i, char in enumerate(scheme) if char.isalpha()), None)
     if first is None:
@@ -237,7 +252,11 @@ def _hide_quoted_userinfo(text: str) -> str:
     # wherever the refusal rule refuses one. The hidden span starts at the
     # beginning of the whitespace-delimited token: cutting at a nested scheme
     # (`https://user:x://"pw"@host`) would leave a prefix that reads as a URI.
+    if "'" not in text and '"' not in text:
+        return text
     end = text.rfind("@")
+    if end == -1:
+        return text
     matches = [match for pattern in _QUOTED_USERINFO if (match := pattern.search(text, 0, end))]
     if not matches:
         return text
@@ -285,8 +304,10 @@ def _crosses(text: str, spans: Iterable[tuple[int, int]]) -> bool:
     # past each URI for every name would be quadratic.
     uris = iter(spans)
     uri = next(uris, None)
+    if uri is None:
+        return False
     last = len(text.rstrip())
-    for name in _NAME_START.finditer(text):
+    for name in _NAME_START.finditer(text, uri[0]):
         at = name.start()
         while uri is not None and uri[1] <= at:
             uri = next(uris, None)
@@ -294,11 +315,16 @@ def _crosses(text: str, spans: Iterable[tuple[int, int]]) -> bool:
             return False
         if at < uri[0]:
             continue
-        if last > uri[1] and _AUTHORIZATION_NAME.match(text, at):
-            return True
-        for rule in _NAME_RULES:
-            match = rule.match(text, at)
+        if text[at] in "bB":
+            match = _BEARER.match(text, at)
             if match and _assigns_past(text, uri[1], match):
+                return True
+        else:
+            match = _SCRUB_ASSIGNMENT.match(text, at)
+            if match and (
+                (last > uri[1] and text[at] in "aA" and _AUTHORIZATION_NAME.match(text, at))
+                or _assigns_past(text, uri[1], match)
+            ):
                 return True
     return False
 
@@ -328,6 +354,8 @@ def _assignment_crosses_uri(text: str) -> bool:
     Checked on the text as given and on its percent-decoded form, with each
     URI where the rewrite will find it.
     """
+    if "://" not in text:
+        return False
     if _crosses(text, (uri.span() for uri in _URI.finditer(text))):
         return True
     if "%" not in text:
@@ -347,6 +375,7 @@ def _assignment_crosses_uri(text: str) -> bool:
 # quote. The repeat is possessive: the two branches never overlap, so giving
 # characters back could not find another match, and a backtracking repeat
 # keeps state for every character (about 180 MiB for a 1 MB literal).
+_QUOTE_CHAR = re.compile(r"""['"]""")
 _LITERAL = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\\n])*+)\1""")
 # The escapes repr and ascii print. A candidate holding any other backslash
 # sequence is not their output and never reaches the parser, which would
@@ -398,8 +427,9 @@ def _repr_literals(text: str) -> Iterator[list[tuple[int, int, str]]]:
     an odd run of backslashes (`C:\\` followed by repr output) is therefore
     not read.
     """
-    for index, char in enumerate(text):
-        if char not in "'\"" or _escaped(text, index):
+    for quote in _QUOTE_CHAR.finditer(text):
+        index = quote.start()
+        if _escaped(text, index):
             continue
         match = _LITERAL.match(text, index)
         if not match or "\\" not in match[2]:
@@ -414,11 +444,14 @@ def _repr_reads_as_credential(text: str) -> bool:
     # Counted first, so a text over the limit costs one scan and no checks.
     # Each form is then built and checked on its own: holding them all would
     # copy the whole text twice per reading.
-    if sum(1 for _ in islice(_repr_literals(text), _MAX_LITERALS + 1)) > _MAX_LITERALS:
+    if "\\" not in text:
+        return False
+    literals = list(islice(_repr_literals(text), _MAX_LITERALS + 1))
+    if len(literals) > _MAX_LITERALS:
         return True
     return any(
         is_credential_shaped(value) or is_credential_shaped(text[:start] + value + text[end:])
-        for readings in _repr_literals(text)
+        for readings in literals
         for start, end, value in readings
     )
 
@@ -454,17 +487,21 @@ def redact_text(value: object) -> str:
     placeholder the input itself carries is shown as `\u2039redacted`.
     """
     raw = str(value)
-    decoded = unquote(raw)
-    if decoded != raw and is_credential_shaped(decoded):
+    if "%" in raw:
+        decoded = unquote(raw)
+        if decoded != raw and is_credential_shaped(decoded):
+            return WITHHELD
+    if "\\" in raw and _repr_reads_as_credential(raw):
         return WITHHELD
-    if _repr_reads_as_credential(raw):
-        return WITHHELD
-    text = _hide_quoted_userinfo(_INPUT_PLACEHOLDER.sub("\u2039", raw))
-    if _assignment_crosses_uri(text):
-        return WITHHELD
-    text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
+    text = _INPUT_PLACEHOLDER.sub("\u2039", raw) if "<" in raw else raw
+    if "://" in text:
+        text = _hide_quoted_userinfo(text)
+        if _assignment_crosses_uri(text):
+            return WITHHELD
+        text = _URI.sub(lambda match: _uri_origin_keeping_prefix(match.group(0)), text)
     text = redact_credentials(text)
-    if is_credential_shaped(_INSERTED.sub(" ", text)):
+    without_inserted = _INSERTED.sub(" ", text) if "<redacted" in text else text
+    if is_credential_shaped(without_inserted):
         return WITHHELD
     return text
 

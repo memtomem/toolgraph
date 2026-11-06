@@ -381,3 +381,41 @@ def test_a_windows_error_keeps_its_code():
 def test_a_credential_shaped_file_name_is_withheld(exc):
     _assert_hidden(describe_error(exc))
     assert PATH_WITHHELD in describe_error(exc)
+
+
+@pytest.mark.parametrize("marker", [PLAIN, ENCODED, TABBED])
+def test_yaml_and_export_and_health_and_driver_paths_withhold_only_the_path(
+    tmp_path, monkeypatch, fresh_settings, marker
+):
+    from toolgraph import config, policy_propose, yaml_loader
+    from toolgraph.graph import driver
+
+    folder = tmp_path / marker
+    folder.mkdir()
+
+    yaml_path = folder / "config.yaml"
+    yaml_path.write_text("- not-a-mapping\n", encoding="utf-8")
+    with pytest.raises(ValueError) as yaml_exc:
+        yaml_loader.load_yaml_mapping(yaml_path)
+    assert str(yaml_exc.value) == f"expected a YAML mapping at document root: {PATH_WITHHELD}"
+    _assert_hidden(str(yaml_exc.value))
+
+    export_path = folder / "observed.jsonl"
+    export_path.write_text('{"envelope": 1}\n', encoding="utf-8")
+    with pytest.raises(policy_propose.ProvenanceError) as exp_exc:
+        policy_propose.load_export(export_path)
+    assert str(exp_exc.value) == f"{PATH_WITHHELD}:1: envelope must be a JSON object"
+    _assert_hidden(str(exp_exc.value))
+
+    monkeypatch.setenv("TOOLGRAPH_CONFIG", str(folder / "missing.json"))
+    health = config.check_config_health()
+    assert health["path"] == PATH_WITHHELD
+    assert health["detail"] == f"configuration file not found at {PATH_WITHHELD}"
+    _assert_hidden(json.dumps(health))
+
+    corrupt_err = driver._not_a_database(folder / "graph.lbug")
+    missing_err = driver._missing_database(folder / "graph.lbug")
+    assert PATH_WITHHELD in str(corrupt_err)
+    assert PATH_WITHHELD in str(missing_err)
+    _assert_hidden(describe_error(corrupt_err))
+    _assert_hidden(describe_error(missing_err))

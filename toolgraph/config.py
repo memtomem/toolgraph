@@ -33,16 +33,17 @@ def runtime_config_path() -> Path:
 def check_config_health() -> dict[str, Any]:
     """Inspect active configuration file existence, schema validity, and permissions."""
     path = runtime_config_path()
+    shown_path = display_path(path)
     exists = path.is_file()
     if not exists:
         return {
-            "path": str(path),
+            "path": shown_path,
             "exists": False,
             "valid_json": False,
             "permissions_ok": None,
             "permissions": None,
             "healthy": False,
-            "detail": f"configuration file not found at {path}",
+            "detail": f"configuration file not found at {shown_path}",
             "backend_source": backend_source(),
         }
 
@@ -64,7 +65,7 @@ def check_config_health() -> dict[str, Any]:
 
     healthy = exists and valid_json and (permissions_ok is not False)
     return {
-        "path": str(path),
+        "path": shown_path,
         "exists": exists,
         "valid_json": valid_json,
         "permissions_ok": permissions_ok,
