@@ -16,7 +16,12 @@ from toolgraph.artifact_safety import validate_identity
 from toolgraph.graph import driver, queries, selector
 from toolgraph.graph.selector import PROFILES
 from toolgraph.manifest.parser import Governance, governance_digest, load_governance
-from toolgraph.redaction import is_credential_shaped, is_credential_shaped_identity, redact_text
+from toolgraph.redaction import (
+    display_path,
+    is_credential_shaped,
+    is_credential_shaped_identity,
+    redact_text,
+)
 
 
 class PolicyProposeError(Exception):
@@ -273,11 +278,12 @@ MAX_EXPORT_BYTES = 50_000_000
 
 def load_export(path: Path) -> tuple[dict | None, list[dict]]:
     # One open descriptor: a stat-then-read pair is a TOCTOU.
+    shown_path = display_path(path)
     with path.open("rb") as handle:
         raw = handle.read(MAX_EXPORT_BYTES + 1)
     if len(raw) > MAX_EXPORT_BYTES:
         raise PolicyProposeError(
-            f"refusing to load {path}: exceeds the {MAX_EXPORT_BYTES}-byte limit"
+            f"refusing to load {shown_path}: exceeds the {MAX_EXPORT_BYTES}-byte limit"
         )
     lines = raw.decode("utf-8").splitlines()
     envelope: dict | None = None
@@ -292,10 +298,10 @@ def load_export(path: Path) -> tuple[dict | None, list[dict]]:
                 first = None
             if isinstance(first, dict) and ENVELOPE_KEY in first:
                 if not isinstance(first[ENVELOPE_KEY], dict):
-                    raise ProvenanceError(f"{path}:{lineno}: envelope must be a JSON object")
+                    raise ProvenanceError(f"{shown_path}:{lineno}: envelope must be a JSON object")
                 if set(first) != {ENVELOPE_KEY}:
                     raise ProvenanceError(
-                        f"{path}:{lineno}: the envelope line carries only "
+                        f"{shown_path}:{lineno}: the envelope line carries only "
                         f"{ENVELOPE_KEY!r}; observation fields belong on their own rows"
                     )
                 envelope = first[ENVELOPE_KEY]
@@ -307,9 +313,10 @@ def load_export(path: Path) -> tuple[dict | None, list[dict]]:
 def _load_rows(path: Path, lines: list[tuple[int, str]]) -> list[dict]:
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
+    shown_path = display_path(path)
     for lineno, raw in lines:
         line = raw.strip()
-        where = f"{path}:{lineno}"
+        where = f"{shown_path}:{lineno}"
         try:
             row = json.loads(line)
         except json.JSONDecodeError as exc:
@@ -698,7 +705,7 @@ def run_propose(
             "Re-export with an envelope line:\n"
             '  {"envelope": {"governance_digest": "<64 hex>", "graph_generation": 0, '
             '"profile": "strict", "window_start": "...", "window_end": "..."}}\n'
-            f"The digest for {governance_path} right now is {expected_digest}.\n"
+            f"The digest for {display_path(governance_path)} right now is {expected_digest}.\n"
             "Or pass --unverified-provenance to proceed without envelope verification."
         )
 
