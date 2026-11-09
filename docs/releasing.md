@@ -70,7 +70,12 @@ executing inside the privileged job. Pass values through `env:`.
    Neo4j when nothing names a backend, and the Neo4j driver is now an extra
    (ADR-0017); `0.4.0` follows `0.3.0` because governance manifests,
    `servers.yaml` and control plans now refuse credential-shaped identities
-   that 0.3.0 accepted. Callers pinned to an earlier version keep working; they are
+   that 0.3.0 accepted. `0.4.1` follows `0.4.0` as a patch by a maintainer
+   decision that diagnostic text, and values that exist only to display it,
+   are not a caller contract: it changes how credential-shaped data shows in
+   error messages and in the undocumented `check_config_health()` value behind
+   `doctor`, which a caller reading that value can notice, and refuses nothing
+   0.4.0 accepted. Callers pinned to an earlier version keep working; they are
    not silently upgraded.
 2. Run the full local release gate:
 

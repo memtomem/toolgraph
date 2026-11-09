@@ -2,7 +2,43 @@
 
 All notable changes to Toolgraph are documented here.
 
-## Unreleased
+## 0.4.1 - 2026-11-09
+
+Sixth alpha, a patch release: diagnostics only. Nothing that 0.4.0 accepted
+is refused, and no command, flag, default, function signature or JSON key
+changes. Read **Upgrading from 0.4.0** below if a script or tool matches
+Toolgraph's error text, or reads the configuration path it reports: more of
+it is hidden or withheld whole.
+
+### Upgrading from 0.4.0
+
+- Diagnostics hide more, and more of them are withheld whole (#241, #245,
+  #262). An `Authorization` value is hidden to the end of the message
+  (`Authorization: Bearer abc; retrying in 5s` now reads
+  `Authorization=<redacted>`). A message whose URL ends in a credential name
+  that assigns a value after it is withheld, in each form the scrubber reads
+  as an assignment (`GET https://h/authorization=Basic returned 404`). A
+  credential-shaped path in a YAML, `policy propose` export, `doctor` or
+  Ladybug backend error reads `<path withheld: credential-shaped>`, and so
+  does the configuration `path` in `doctor --json`, where 0.4.0 showed a
+  partly scrubbed path or withheld the line.
+  `toolgraph.config.check_config_health()` returns that display value in
+  `path` and `detail` too, where 0.4.0 returned the path as given. Tooling
+  that matches stderr, MCP error text or `doctor` output should expect these
+  forms; the entries under Fixed give each one.
+
+### Changed
+
+- Scrubbing a diagnostic is faster (#263), with the same output as before
+  that change: a check that needs a `%`, a backslash, a quote or `://` is
+  skipped when the message holds none, and each repr literal is parsed once
+  instead of twice. Against 0.4.0, measured locally (CPU time, best of three),
+  19 of the 21 adversarial inputs in `tests/test_redaction.py` run at least
+  1.4 times faster and a short plain message about 4.5 times; the two
+  percent-encoded URL inputs run about 12% slower, the cost of the decoded
+  check #241 added.
+- Distributions are built with `hatchling` 1.33.0 (was 1.32.4); the sdist
+  pins it in `[build-system] requires`.
 
 ### Fixed
 
