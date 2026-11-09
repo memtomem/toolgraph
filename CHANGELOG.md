@@ -39,6 +39,18 @@ All notable changes to Toolgraph are documented here.
   `Authorization: Bearer abc; retrying in 5s` now prints
   `Authorization=<redacted>`, and a URL holding an Authorization name with
   text after it is withheld (`GET https://h/authorization=abc returned 404`).
+- More error lines show a credential-shaped path as
+  `<path withheld: credential-shaped>` and keep the rest of the line (#262):
+  a YAML file over the size limit or without a mapping at its root, a
+  `policy propose` export over the size limit or with a bad envelope or row,
+  the manifest digest hint for an export without an envelope, `doctor`'s
+  configuration check, and the `BACKEND_CORRUPT`, `BACKEND_UNAVAILABLE` and
+  `BACKEND_LOCKED` errors for a Ladybug database. 0.4.0 scrubbed these paths
+  along with the line, so a directory named `password=x` printed a path that
+  does not exist (`expected a YAML mapping at document root:
+  /tmp/password=<redacted>`; an export error lost its `:1:` line number with
+  it), and a percent-encoded name (`/tmp/?%74oken=x`) withheld the whole
+  line, error code included.
 
 ## 0.4.0 - 2026-10-21
 
