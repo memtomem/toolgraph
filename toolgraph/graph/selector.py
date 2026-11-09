@@ -25,6 +25,7 @@ from toolgraph.errors import ContractError
 from toolgraph.graph.driver import read_session
 from toolgraph.graph.queries import _deny_evidence_batch, agent_exists, resolve_tool_refs
 from toolgraph.models import TOOL_HINT_FIELDS
+from toolgraph.redaction import VALUE_WITHHELD, redact_text
 
 # Hard-filter rule sets (ADR-0005). Reasons are checked in _REASON_PRECEDENCE
 # order; the first applicable reason that the profile rejects wins. These are
@@ -65,7 +66,14 @@ def profile_error(profile: object) -> str | None:
     """
     if isinstance(profile, str) and profile in PROFILES:
         return None
-    return f"unknown profile {profile!r} — expected one of {sorted(PROFILES)}"
+    expected = f" — expected one of {sorted(PROFILES)}"
+    message = f"unknown profile {profile!r}{expected}"
+    # Callers scrub this message. When that would cost its fixed text (the
+    # message withheld whole, or a scrubbed value running on past its quote,
+    # as `password:` does), the value goes instead, so the valid profiles stay.
+    if not redact_text(message).endswith(expected):
+        return f"unknown profile {VALUE_WITHHELD}{expected}"
+    return message
 
 
 DEFAULT_PROFILE = "strict"

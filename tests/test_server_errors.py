@@ -29,7 +29,7 @@ from toolgraph.graph.driver import (
     ConfigurationCause,
     is_backend_unavailable,
 )
-from toolgraph.redaction import WITHHELD
+from toolgraph.redaction import VALUE_WITHHELD
 from toolgraph.server import app
 
 _BACKEND_PAYLOAD = {
@@ -426,8 +426,40 @@ async def test_a_contract_error_quoting_a_repr_escaped_credential_is_withheld(ba
     )
 
     assert result.is_error is True
-    assert WITHHELD in result.content[0].text
-    assert "QXZQ" not in result.content[0].text
+    assert result.content[0].text == f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"
+
+
+EXPECTED_PROFILES = " — expected one of ['explore', 'review', 'strict']"
+
+
+@pytest.mark.parametrize(
+    ("profile", "text"),
+    [
+        ("production", f"unknown profile 'production'{EXPECTED_PROFILES}"),
+        # Scrubbed without touching the fixed text: shown scrubbed, as before.
+        ("password=QXZQ", f"unknown profile 'password=<redacted>{EXPECTED_PROFILES}"),
+        ("https://example.com/docs", f"unknown profile 'https://example.com'{EXPECTED_PROFILES}"),
+        ("<redacted>", f"unknown profile '‹redacted>'{EXPECTED_PROFILES}"),
+        # The scrubbed value ran on through the fixed text (#266).
+        ("password:", f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"),
+        ('password="', f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"),
+        # Withheld whole.
+        ("?%74oken=QXZQ", f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"),
+        # Withheld only in the message: the value alone passes the scrubber.
+        ("ſecret\n%3A", f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"),
+        # Withheld for holding more than _MAX_LITERALS repr literals, none of
+        # them credential-shaped: why the marker names no reason.
+        ("'a\\tb' " * 33, f"unknown profile {VALUE_WITHHELD}{EXPECTED_PROFILES}"),
+    ],
+)
+async def test_an_unknown_profile_reply_keeps_the_valid_profiles(backend_graph, profile, text):
+    result = await _wire_call(
+        "eligible_tools", {"agent": "agent", "candidates": [], "profile": profile}
+    )
+
+    assert result.is_error is True
+    assert result.content[0].text == text
+    assert "QXZQ" not in text
 
 
 @pytest.mark.parametrize(
@@ -855,7 +887,11 @@ async def test_uninitialized_ladybug_database_over_a_real_stdio_server(tmp_path)
     [
         ("nope", "Unknown tool: nope"),
         ("password=QXZQ", "Unknown tool: password=<redacted>"),
-        ("?%74oken=QXZQ", WITHHELD),
+        ("https://example.com/docs", "Unknown tool: https://example.com"),
+        # Withheld whole, the reply would not say which error it is (#266).
+        ("?%74oken=QXZQ", f"Unknown tool: {VALUE_WITHHELD}"),
+        ("srv::?%74oken=QXZQ", f"Unknown tool: {VALUE_WITHHELD}"),
+        ("'password\\t=QXZQ'", f"Unknown tool: {VALUE_WITHHELD}"),
     ],
 )
 async def test_unknown_tool_reply_is_redacted(name, text):
@@ -863,6 +899,7 @@ async def test_unknown_tool_reply_is_redacted(name, text):
 
     assert result.is_error is True
     assert result.content[0].text == text
+    assert "QXZQ" not in text
 
 
 @pytest.mark.parametrize(

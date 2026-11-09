@@ -31,7 +31,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from toolgraph.redaction import WITHHELD
+from toolgraph.redaction import VALUE_WITHHELD, WITHHELD
 
 REPO = "repo:///work"
 SECRETS = "file:///secrets.env"
@@ -319,6 +319,23 @@ def test_unknown_profile_raises(backend_graph):
 def test_profile_error_names_the_valid_profiles(profile):
     problem = selector.profile_error(profile)
     assert problem is not None and "expected one of ['explore', 'review', 'strict']" in problem
+
+
+@pytest.mark.parametrize(
+    ("profile", "problem"),
+    [
+        ("production", "unknown profile 'production'"),
+        # Its caller scrubs it; the fixed text survives, so the value stays.
+        ("password=QXZQ", "unknown profile 'password=QXZQ'"),
+        ("password:", f"unknown profile {VALUE_WITHHELD}"),
+        ("?%74oken=QXZQ", f"unknown profile {VALUE_WITHHELD}"),
+        ("ſecret\n%3A", f"unknown profile {VALUE_WITHHELD}"),
+    ],
+)
+def test_profile_error_drops_a_value_that_would_cost_the_valid_profiles(profile, problem):
+    """#266: scrubbing must never take the list of valid profiles with it."""
+    expected = " — expected one of ['explore', 'review', 'strict']"
+    assert selector.profile_error(profile) == problem + expected
 
 
 def test_schema_profile_enums_match_the_selector():
