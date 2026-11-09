@@ -8,6 +8,7 @@ import re
 import sys
 from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
@@ -415,7 +416,90 @@ def test_yaml_and_export_and_health_and_driver_paths_withhold_only_the_path(
 
     corrupt_err = driver._not_a_database(folder / "graph.lbug")
     missing_err = driver._missing_database(folder / "graph.lbug")
-    assert PATH_WITHHELD in str(corrupt_err)
-    assert PATH_WITHHELD in str(missing_err)
-    _assert_hidden(describe_error(corrupt_err))
-    _assert_hidden(describe_error(missing_err))
+    assert describe_error(corrupt_err) == (
+        f"BACKEND_CORRUPT: {PATH_WITHHELD} is not a valid Ladybug database file; "
+        "check file integrity and format"
+    )
+    assert describe_error(missing_err) == (
+        f"BACKEND_UNAVAILABLE: Ladybug database {PATH_WITHHELD} does not exist or is not a file"
+    )
+
+
+def _ladybug_raising(message: str, *, before=lambda: None):
+    """A stand-in `ladybug` module whose every open raises RuntimeError(message)."""
+
+    def database(*args, **kwargs):
+        before()
+        raise RuntimeError(message)
+
+    return SimpleNamespace(Database=database)
+
+
+@pytest.mark.parametrize("marker", [PLAIN, ENCODED, TABBED])
+def test_limit_row_digest_and_open_errors_withhold_only_the_path(
+    tmp_path, monkeypatch, fresh_settings, marker
+):
+    from toolgraph import config, policy_propose, yaml_loader
+    from toolgraph.graph import driver
+    from toolgraph.manifest.parser import governance_digest, load_governance
+
+    folder = tmp_path / marker
+    folder.mkdir()
+
+    governance = folder / "governance.yaml"
+    governance.write_text(
+        "agents: [ops-agent]\n"
+        "grants:\n"
+        "  - {agent: ops-agent, tool: filesystem::read_file, granted_by: security-team}\n",
+        encoding="utf-8",
+    )
+    bare = folder / "bare.jsonl"
+    bare.write_text(
+        json.dumps({"agent": "ops-agent", "decision": "eligible", "tool_key": "a::b"}) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(policy_propose.ProvenanceError) as raised:
+        policy_propose.run_propose(governance, bare)
+    digest = governance_digest(load_governance(governance))
+    hints = [line for line in str(raised.value).splitlines() if line.startswith("The digest")]
+    assert hints == [f"The digest for {PATH_WITHHELD} right now is {digest}."]
+    _assert_hidden(str(raised.value))
+
+    not_json = folder / "not-json.jsonl"
+    not_json.write_text("{\n", encoding="utf-8")
+    with pytest.raises(ValueError) as raised:
+        policy_propose.load_export(not_json)
+    assert str(raised.value) == (
+        f"{PATH_WITHHELD}:1: not valid JSON (Expecting property name enclosed in double quotes)"
+    )
+    _assert_hidden(str(raised.value))
+
+    monkeypatch.setattr(policy_propose, "MAX_EXPORT_BYTES", 4)
+    with pytest.raises(policy_propose.PolicyProposeError) as raised:
+        policy_propose.load_export(bare)
+    assert str(raised.value) == f"refusing to load {PATH_WITHHELD}: exceeds the 4-byte limit"
+
+    monkeypatch.setattr(yaml_loader, "MAX_YAML_BYTES", 4)
+    with pytest.raises(ValueError) as raised:
+        yaml_loader.load_yaml_mapping(governance)
+    assert str(raised.value) == f"refusing to load {PATH_WITHHELD}: exceeds the 4-byte limit"
+
+    database = folder / "graph.lbug"
+    database.write_bytes(b"")
+    locked = f"BACKEND_LOCKED: Ladybug database {PATH_WITHHELD} already has an owner"
+    config.settings = config.Settings(backend="ladybug", db_path=database)
+    monkeypatch.setattr(driver, "_ladybug_database", None)
+    monkeypatch.setitem(sys.modules, "ladybug", _ladybug_raising("Could not set lock on file"))
+    with pytest.raises(driver.BackendLockedError) as raised:
+        driver._open_ladybug_database(database, create=False)
+    assert describe_error(raised.value) == locked
+    with pytest.raises(driver.BackendLockedError) as raised, driver.acquire_readonly_session():
+        pass
+    assert describe_error(raised.value) == locked
+
+    monkeypatch.setitem(sys.modules, "ladybug", _ladybug_raising("IO", before=database.unlink))
+    with pytest.raises(driver.BackendUnavailableError) as raised, driver.acquire_readonly_session():
+        pass
+    assert describe_error(raised.value) == (
+        f"BACKEND_UNAVAILABLE: Ladybug database {PATH_WITHHELD} does not exist"
+    )
