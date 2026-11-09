@@ -142,7 +142,11 @@ def test_an_ordinary_config_path_is_shown(path, fresh_settings):
     result = _run(["--config", path, "check"])
 
     assert result.exit_code == 2
-    assert path in _flat(result.output)
+    # A relative path is named joined to the working directory, and the error
+    # box wraps that line at any character, so the comparison ignores the
+    # whitespace a wrap inserts. The paths themselves hold none.
+    assert "".join(path.split()) == path
+    assert path in "".join(_flat(result.output).split())
 
 
 INVALID_SERVERS = "servers:\n  - name: 1\n    bogus: x\n"
