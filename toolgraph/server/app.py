@@ -36,7 +36,7 @@ from toolgraph.graph.driver import (
     backend_name,
     is_backend_unavailable,
 )
-from toolgraph.redaction import redact_text
+from toolgraph.redaction import VALUE_WITHHELD, WITHHELD, redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +187,11 @@ class _ToolgraphMCP(MCPServer):
             return
         tool = self._tool_manager.get_tool(name)
         if tool is None and exc.__cause__ is None:
-            raise ToolError(redact_text(f"Unknown tool: {name}")) from None
+            # Withheld whole, the reply would not even say which error it is.
+            shown = redact_text(f"Unknown tool: {name}")
+            if shown == WITHHELD:
+                shown = f"Unknown tool: {VALUE_WITHHELD}"
+            raise ToolError(shown) from None
         if tool is not None and isinstance(exc.__cause__, ValidationError):
             text = describe_error(exc.__cause__, tool.fn_metadata.arg_model)
             raise ToolError(f"Error executing tool {name}: {text}") from exc.__cause__

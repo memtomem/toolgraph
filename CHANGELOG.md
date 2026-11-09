@@ -2,6 +2,28 @@
 
 All notable changes to Toolgraph are documented here.
 
+## Unreleased
+
+### Fixed
+
+- Two error replies no longer lose their fixed text when the caller's value
+  is hidden (#266). An MCP call to an unknown tool whose name is withheld
+  answers `Unknown tool: <value withheld>`, where 0.4.1 answered only
+  `details withheld (they contain credential-shaped data)`. An unknown
+  profile over MCP answers `unknown profile <value withheld> — expected one
+  of ['explore', 'review', 'strict']` when the value would be withheld, or
+  when scrubbing it would run on through the list of valid profiles: 0.4.1
+  printed `unknown profile 'password=<redacted>` for `password:` and dropped
+  the list. The CLI's `--profile` error does the same, except that a
+  credential-shaped token on the command line still withholds the whole
+  usage error, as since 0.4.0 (`--profile '?%74oken=x'`, `--profile
+  'password="'`). A value the
+  scrubber shortens without touching that text keeps its scrubbed form
+  (`Unknown tool: password=<redacted>`, `unknown profile
+  'https://example.com' — expected one of [...]`). The marker names no
+  reason, because a reply is also withheld for holding too many repr
+  literals.
+
 ## 0.4.1 - 2026-11-09
 
 Sixth alpha, a patch release: diagnostics only. Nothing that 0.4.0 accepted

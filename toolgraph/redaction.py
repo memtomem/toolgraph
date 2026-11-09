@@ -458,6 +458,12 @@ def _repr_reads_as_credential(text: str) -> bool:
 
 WITHHELD = "details withheld (they contain credential-shaped data)"
 PATH_WITHHELD = "<path withheld: credential-shaped>"
+# A caller's value in an error reply whose fixed text the scrubber would
+# otherwise lose: the reply withheld whole, or a scrubbed value consuming the
+# fixed text after it. A value scrubbed without touching that text keeps its
+# scrubbed form. It names no reason: a reply is also withheld for holding more
+# than _MAX_LITERALS repr literals, which says nothing about credentials.
+VALUE_WITHHELD = "<value withheld>"
 # A placeholder written in the input is shown as `\u2039redacted...`, so it can
 # never pass for one a scrubber inserted.
 _INPUT_PLACEHOLDER = re.compile(r"(?i)<(?=redacted)")

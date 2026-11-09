@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from toolgraph.cli import app
 from toolgraph.error_text import describe_error
-from toolgraph.redaction import PATH_WITHHELD, WITHHELD, display_path
+from toolgraph.redaction import PATH_WITHHELD, VALUE_WITHHELD, WITHHELD, display_path
 
 ENCODED = "?%74oken=QXZQ"
 PLAIN = "password=QXZQ"
@@ -123,6 +123,20 @@ def test_ordinary_usage_errors_are_unchanged(args, shown):
 
     assert result.exit_code == 2
     assert shown in _flat(result.output)
+
+
+def test_an_unknown_profile_keeps_the_valid_profiles_when_its_value_goes():
+    """#266: `password:` passes the argv check, but its scrub would run through
+    the list of valid profiles; the value goes instead, the list stays."""
+    result = _run(["eligible-tools", "a", "b", "--profile", "password:"])
+
+    assert result.exit_code == 2
+    shown = (
+        f"Invalid value: unknown profile {VALUE_WITHHELD} "
+        "— expected one of ['explore', 'review', 'strict']"
+    )
+    # The error box may wrap this line anywhere (#250); the message ends it.
+    assert "".join(_flat(result.output).split()).endswith("".join(shown.split()))
 
 
 def test_a_usage_error_with_a_credential_shaped_token_is_withheld_whole(tmp_path, fresh_settings):
