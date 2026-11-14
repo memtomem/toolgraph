@@ -23,6 +23,20 @@ All notable changes to Toolgraph are documented here.
   'https://example.com' — expected one of [...]`). The marker names no
   reason, because a reply is also withheld for holding too many repr
   literals.
+- A re-crawl removes a resource its server stopped advertising when nothing
+  else holds it: no other server provides it, no manifest reads, writes or
+  governs it. It used to stay in the graph, so `blast-radius` answered
+  `found: true` with nothing impacted until the next manifest ingest, against
+  ADR-0001 (fleet retirement and ingest already removed such resources).
+- On the embedded Ladybug backend, `orphan-policies` and `unmapped-tools
+  --all` (and the matching MCP tools and `audit-report` sections) printed
+  `null` for an empty `resources_governed`, `tools_governed_directly` or
+  `granted_to` list; Neo4j printed `[]`. Both print `[]` now, and each list is
+  sorted.
+- `eligible-tools` / `eligible_tools` lists each tool once. Two candidates
+  naming one tool (a repeat, or a bare name and its qualified key) used to
+  list it twice in `eligible`, and in a preflight artifact. Rejected rows
+  still follow the candidates one by one.
 
 ## 0.4.1 - 2026-11-09
 

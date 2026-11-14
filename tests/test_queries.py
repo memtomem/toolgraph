@@ -298,3 +298,60 @@ def test_policy_blast_includes_ungranted_tool(backend_graph):
     )
     impacted = queries.blast_radius("deny")["impacted"]
     assert any(r["tool"] == "leak" and r["agent"] is None for r in impacted)
+
+
+def _seed_audit_lists_with_nothing_to_collect() -> None:
+    load_crawl("s", ["loose", "held"], [CSV, "file:///a.csv"])
+    report = ingest_governance(
+        Governance(
+            agents=["zed", "amy"],
+            policies=[
+                Policy(id="on-resource", effect="DENY"),
+                Policy(id="on-tool", effect="DENY"),
+            ],
+            # Authored out of order, so the lists below show they are sorted.
+            grants=[
+                AccessGrant(agent="zed", tool="s::held"),
+                AccessGrant(agent="amy", tool="s::held"),
+            ],
+            governed_by={
+                CSV: ["on-resource"],
+                "file:///a.csv": ["on-resource"],
+                "s::loose": ["on-tool"],
+            },
+        )
+    )
+    assert report.warnings == []
+
+
+def test_audit_lists_are_empty_lists_on_every_backend(backend_graph):
+    # An OPTIONAL MATCH with no row: Neo4j's collect gives [], Ladybug's gave
+    # None. The expected rows are written out whole, so both backends must
+    # produce exactly them.
+    _seed_audit_lists_with_nothing_to_collect()
+
+    orphans = [
+        {
+            "policy": "on-resource",
+            "effect": "DENY",
+            "scope": None,
+            "resources_governed": sorted(["file:///a.csv", CSV]),
+            "tools_governed_directly": [],
+        },
+        {
+            "policy": "on-tool",
+            "effect": "DENY",
+            "scope": None,
+            "resources_governed": [],
+            "tools_governed_directly": ["s::loose"],
+        },
+    ]
+    unmapped = [
+        {"tool_key": "s::held", "tool": "held", "server": "s", "granted_to": ["amy", "zed"]},
+        {"tool_key": "s::loose", "tool": "loose", "server": "s", "granted_to": []},
+    ]
+    assert queries.orphan_policies() == orphans
+    assert queries.unmapped_tools(only_granted=False) == unmapped
+    report = queries.audit_report()
+    assert report["findings"]["orphan_policies"] == orphans
+    assert report["findings"]["unmapped_tools"] == unmapped[:1]

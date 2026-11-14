@@ -144,16 +144,29 @@ def _merge_crawl(tx: ManagedTransaction, result: CrawlResult) -> list[str]:
     ).single()
     orphaned = (rec["orphaned"] if rec else None) or []
 
-    # PROVIDES: drop edges to resources no longer advertised; keep the (shared,
-    # possibly governed) Resource node itself.
-    tx.run(
+    # PROVIDES: drop edges to resources no longer advertised.
+    rec = tx.run(
         """
         MATCH (s:MCPServer {name:$name})-[p:PROVIDES]->(old:Resource)
         WHERE NOT old.uri IN $uris
         DELETE p
+        RETURN collect(DISTINCT old.uri) AS dropped
         """,
         name=result.server_name,
         uris=[r["uri"] for r in resources],
+    ).single()
+    dropped = (rec["dropped"] if rec else None) or []
+    # ADR-0001 resource rule (the degree-0 filter ingest Phase 2 and fleet
+    # retirement use): a resource this server stopped advertising that no
+    # other server provides and nothing authored references would otherwise
+    # stay "found" with nothing impacted. Shared or governed ones keep edges.
+    tx.run(
+        """
+        MATCH (r:Resource) WHERE r.uri IN $uris
+          AND NOT EXISTS { MATCH (r)--() }
+        DELETE r
+        """,
+        uris=dropped,
     )
 
     # ADR-0004: same transaction as the mutation, so a reader can never see
