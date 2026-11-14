@@ -44,3 +44,7 @@ if __name__ == "__main__":
             json.dumps({"jsonrpc": version, "id": message["id"], "result": result}) + "\n"
         )
         sys.stdout.flush()
+        if sys.argv[1] == "envelope":
+            # The client drops the reply and would wait out its timeout for
+            # another; closing the stream ends the crawl once it has logged.
+            break

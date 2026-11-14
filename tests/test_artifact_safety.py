@@ -513,9 +513,18 @@ def test_artifact_commands_hide_a_resource_password(backend_graph, tmp_path, res
 def _dry_run(tmp_path, governance: dict):
     path = tmp_path / "governance.yaml"
     path.write_text(yaml.safe_dump(governance, allow_unicode=True))
-    return CliRunner().invoke(
-        cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
-    )
+    # A URI that cannot be canonicalized is stored verbatim, with a warning;
+    # outside pytest that warning prints to stderr, so its text must not carry
+    # the password either.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = CliRunner().invoke(
+            cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
+        )
+    for warning in caught:
+        for marker in _MARKERS:
+            assert marker not in str(warning.message), (warning.category, marker)
+    return result
 
 
 @pytest.mark.parametrize("resource", _UNPARSEABLE + _PASSWORD_SHAPES)

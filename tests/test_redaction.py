@@ -157,6 +157,10 @@ def _process_time_step():
     return step
 
 
+# The ratio below is for linearity checks whose normal cost comes near a fixed
+# wall-clock limit: one at 0.5 s failed CI at 0.505 s. A check that normally
+# takes a tenth of its limit or less keeps the simpler `< 0.5`.
+
 # A timed batch must spend at least this much CPU time, so that a coarse
 # clock (about 16 ms on Windows) quantizes it by 5 % at most.
 _TIMING_FLOOR = max(0.02, 20 * _process_time_step())

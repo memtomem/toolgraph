@@ -16,7 +16,6 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from tests._helpers import CLICK_SPLITS_STREAMS
 from toolgraph import cli
 from toolgraph.graph import loader, selector
 from toolgraph.manifest.ingest import ingest_governance
@@ -433,9 +432,8 @@ def test_cli_selector_commands_fail_loud_on_unknown_agent(backend_graph):
     ):
         result = runner.invoke(cli.app, cmd)
         assert result.exit_code == 1, cmd
-        if CLICK_SPLITS_STREAMS:
-            assert "AGENT_NOT_FOUND" in result.stderr
-            assert result.stdout == ""
+        assert "AGENT_NOT_FOUND" in result.stderr
+        assert result.stdout == ""
 
 
 def test_cli_unknown_agent_with_a_repr_escaped_credential_is_withheld(backend_graph):
@@ -455,8 +453,7 @@ def test_cli_rejects_unknown_profile(backend_graph):
         cli.app, ["eligible-tools", "planner", "alpha::git_status", "--profile", "prod"]
     )
     assert result.exit_code == 2
-    if CLICK_SPLITS_STREAMS:
-        assert "unknown profile" in result.stderr
+    assert "unknown profile" in result.stderr
 
 
 def test_rank_features_refuses_oversized_candidate_batches():

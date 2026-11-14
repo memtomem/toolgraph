@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 import pytest
+import typer.rich_utils
 from testcontainers.neo4j import Neo4jContainer
 
 from tests._helpers import NEO4J_EXPECT_VERSION_ENV, expected_neo4j_version, neo4j_server_version
@@ -16,6 +17,15 @@ from toolgraph.graph import driver, schema
 NEO4J_IMAGE = os.environ.get("TOOLGRAPH_TEST_NEO4J_IMAGE", "neo4j:5.26-community")
 TEST_PASSWORD = "testpass"
 NO_DOCKER_ENV = "TOOLGRAPH_TEST_NO_DOCKER"
+
+# Typer colors usage errors and boxes when GITHUB_ACTIONS is set, so a CLI
+# test that passed locally used to fail only on CI. Take the CI path here too.
+# Typer reads the variable once, at import, so the in-process setting is
+# assigned; the variable is for subprocesses. `_TYPER_FORCE_DISABLE_TERMINAL`
+# still turns both off together.
+if not os.environ.get("_TYPER_FORCE_DISABLE_TERMINAL"):
+    os.environ.setdefault("GITHUB_ACTIONS", "true")
+    typer.rich_utils.FORCE_TERMINAL = True
 
 
 def pytest_collection_modifyitems(items):

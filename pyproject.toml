@@ -119,8 +119,17 @@ exclude = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = ["--strict-markers"]
+xfail_strict = true
 markers = [
     "neo4j: starts the Neo4j testcontainer (needs Docker); deselect with -m 'not neo4j'",
+]
+# Toolgraph's own warnings fail a test that does not expect them; third-party
+# deprecations stay warnings, so a dependency bump cannot turn CI red on its own.
+filterwarnings = [
+    "error::toolgraph.uris.ResourceUriNormalizationWarning",
+    "error::toolgraph.artifacts.ArtifactDurabilityWarning",
+    "error::toolgraph.review_candidates.ReviewCandidateDurabilityWarning",
 ]
 
 [tool.ruff]

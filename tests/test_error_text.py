@@ -490,7 +490,8 @@ def json_string_server(monkeypatch):
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _JSONStringServer)
     server.posts = 0
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    # shutdown() waits for the loop's next poll, 0.5 s by default.
+    thread = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
     thread.start()
     try:
         yield server

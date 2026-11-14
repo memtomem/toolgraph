@@ -20,7 +20,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from tests._helpers import CLICK_SPLITS_STREAMS, CSV, flat_output, seed_basic, usage_error_text
+from tests._helpers import CSV, flat_output, seed_basic, usage_error_text
 from toolgraph import __version__, cli
 from toolgraph.cli import app
 from toolgraph.graph import driver, loader
@@ -216,18 +216,11 @@ def test_unsafe_tools_unknown_agent_keeps_stdout_json_pure(violating):
     runner = CliRunner()
     result = runner.invoke(cli.app, ["unsafe-tools", "planer"])
     assert result.exit_code == 1
-    if CLICK_SPLITS_STREAMS:
-        assert result.stdout.strip() == ""
-        assert "AGENT_NOT_FOUND" in result.stderr
-    else:
-        # Old click folds stderr into output — purity is unassertable; the
-        # diagnostic itself must still appear.
-        assert "AGENT_NOT_FOUND" in result.output
+    assert result.stdout.strip() == ""
+    assert "AGENT_NOT_FOUND" in result.stderr
 
 
 def test_unsafe_tools_known_agent_stdout_is_json_only(violating):
-    if not CLICK_SPLITS_STREAMS:
-        pytest.skip("click < 8.2 mixes stderr into stdout")
     runner = CliRunner()
     result = runner.invoke(cli.app, ["unsafe-tools", "planner"])
     assert result.exit_code == 0
