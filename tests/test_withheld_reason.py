@@ -1,7 +1,7 @@
 """A whole text withheld for its repr-literal count says so, not "credential-shaped" (#269).
 
 More than ``_MAX_LITERALS`` read-back literals are withheld without being
-read: a cost bound, not a finding. The expected strings are written out here
+checked: a cost bound, not a finding. The expected strings are written out here
 rather than taken from the module's constants, so a constant changed by
 mistake fails these tests too.
 """
@@ -53,7 +53,7 @@ def test_a_harmless_literal_is_not_credential_shaped():
     [
         ("cannot parse " + _literals(TAB, 33), LITERALS),
         ("cannot parse " + _literals(TAB, 32), "cannot parse " + _literals(TAB, 32)),
-        # Withheld unread: the label names the limit, which is still true.
+        # Withheld unchecked: the label names the limit, which is still true.
         ("password=x " + _literals(TAB, 33), LITERALS),
         # The percent-decoded check runs first and keeps its own label.
         ("?%74oken=QXZQ " + _literals(TAB, 33), CREDENTIAL),

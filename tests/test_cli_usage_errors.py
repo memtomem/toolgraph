@@ -207,7 +207,7 @@ def test_governance_config_error_withholds_the_path(tmp_path):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="a backslash separates path parts there")
 def test_a_config_path_over_the_literal_limit_names_that_reason(tmp_path):
-    """Not "credential-shaped": none of the 33 literals was read (#269)."""
+    """Not "credential-shaped": none of the 33 literals was checked (#269)."""
     path = tmp_path.joinpath(*["'a\\tb'"] * 33) / "governance.yaml"
     path.parent.mkdir(parents=True)
     path.write_text("bogus: x\n", encoding="utf-8")

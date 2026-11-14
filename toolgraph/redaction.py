@@ -444,7 +444,8 @@ def _repr_withheld(text: str) -> str | None:
     """The marker *text* is withheld under for its repr literals, or None.
 
     ``LITERALS_WITHHELD`` when it holds more than ``_MAX_LITERALS`` of them,
-    unread; ``WITHHELD`` when one, read back, is credential-shaped.
+    counted but not checked; ``WITHHELD`` when one, read back, is
+    credential-shaped.
     """
     # Counted first, so a text over the limit costs one scan and no checks.
     # Each form is then built and checked on its own: holding them all would
@@ -464,7 +465,7 @@ def _repr_withheld(text: str) -> str | None:
 
 
 # Each check that withholds a whole text names its reason. A text holding more
-# than _MAX_LITERALS repr literals is withheld without reading them: a cost
+# than _MAX_LITERALS repr literals is withheld without checking them: a cost
 # bound, not a finding, so it gets its own text instead of the credential one.
 WITHHELD = "details withheld (they contain credential-shaped data)"
 PATH_WITHHELD = "<path withheld: credential-shaped>"
@@ -496,7 +497,7 @@ def redact_text(value: object) -> str:
     prints it (`'password\\t=x'`) is withheld when that literal, read back,
     is credential-shaped, alone or in place in the message. It is replaced by
     ``LITERALS_WITHHELD`` instead when it holds more than ``_MAX_LITERALS``
-    such literals, which are then not read. Both checks read the message
+    such literals, which are then not checked. Both checks read the message
     as given, before anything rewrites it. A message where a credential name
     inside a URI, as given or percent-decoded, assigns a value after the
     URI's end (`https://h/password :x`) is withheld too: rewriting the URI to

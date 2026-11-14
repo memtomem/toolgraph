@@ -892,7 +892,7 @@ async def test_uninitialized_ladybug_database_over_a_real_stdio_server(tmp_path)
         ("?%74oken=QXZQ", f"Unknown tool: {VALUE_WITHHELD}"),
         ("srv::?%74oken=QXZQ", f"Unknown tool: {VALUE_WITHHELD}"),
         ("'password\\t=QXZQ'", f"Unknown tool: {VALUE_WITHHELD}"),
-        # Withheld for its literal count, none of them read (#269).
+        # Withheld for its literal count, none of them checked (#269).
         (" ".join(["'a\\tb'"] * 33), f"Unknown tool: {VALUE_WITHHELD}"),
     ],
 )
