@@ -1428,9 +1428,10 @@ def test_proposal_file_write_failure_has_redacted_error(monkeypatch, tmp_path):
 def test_cli_propose_withholds_an_error_that_would_quote_a_credential(
     backend_graph, sample_gov_path, sample_observed_jsonl, field, value
 ):
-    # These fields are not identities, so nothing refuses them first; the
-    # error that rejects them quotes the value, and redact_text cannot see a
-    # percent-encoded credential name.
+    # No identity refusal sees these values first: `calls` and `profile` are
+    # not identities, and the `tool_key` check reads only a string, not this
+    # list. The error that rejects each one quotes it, so the message is left
+    # to redact_text, which percent-decodes it and withholds the whole text.
     _seed_matching_graph(sample_gov_path)
     lines = sample_observed_jsonl.read_text().splitlines()
     index = 0 if field == "profile" else 1

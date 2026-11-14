@@ -250,7 +250,7 @@ _NAME_START = re.compile(rf"(?i)(?=(?:{CREDENTIAL_KEYWORDS}|authorization|bearer
 # What the scrubbers take as an assignment, up to where the value starts: the
 # first group of _SCRUB_VALUE after any name. Matching no value keeps each try
 # bounded. The refusal patterns accept fewer forms (`password :x`,
-# `authorization=Basic x`), and every form the scrubbers accept beyond them
+# `token:x`), and every form the scrubbers accept beyond them
 # leaked here.
 _SCRUB_ASSIGNMENT = re.compile(rf"(?i)(?:{CREDENTIAL_KEYWORDS}|authorization)['\"]?\s*[:=]\s*")
 # _AUTHORIZATION_SCRUB's value runs to the end of the text, so an Authorization
