@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -489,8 +490,12 @@ def test_blast_radius_cli_reports_the_ambiguity_as_a_usage_error(backend_graph):
     ambiguous = runner.invoke(cli_app, ["blast-radius", "urn:x"])
     assert ambiguous.exit_code == 2
     assert ambiguous.stdout == ""
-    assert "the node names both a resource and a policy" in ambiguous.stderr
-    assert "--kind" in ambiguous.stderr
+    # Typer colors and boxes the usage error (on GitHub Actions too) and Rich
+    # wraps it at any character, so compare the text without codes, box edges
+    # or whitespace.
+    shown = re.sub(r"[\s│]", "", re.sub(r"\x1b\[[0-9;]*m", "", ambiguous.stderr))
+    assert "Invalidvaluefor--kind:" in shown
+    assert re.sub(r"\s", "", queries.BLAST_RADIUS_AMBIGUOUS) in shown
 
     chosen = runner.invoke(cli_app, ["blast-radius", "urn:x", "--kind", "policy"])
     assert chosen.exit_code == 0
