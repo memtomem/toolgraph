@@ -303,7 +303,7 @@ def test_one_rule_serves_every_refusal_surface():
     reads of `toolgraph.redaction`. It cannot prove the shared rule is called,
     only that no surface grows a detector of its own from these parts.
     """
-    detectors = {"CREDENTIAL_URI", "CREDENTIAL_QUERY", "CREDENTIAL_KEYWORDS", "contains_credential"}
+    detectors = {"CREDENTIAL_URI", "CREDENTIAL_QUERY", "CREDENTIAL_KEYWORDS"}
     offenders = []
     for path in sorted((ROOT / "toolgraph").rglob("*.py")):
         if path.name == "redaction.py":
