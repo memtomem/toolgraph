@@ -19,6 +19,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from tests._helpers import flat_output, usage_error_text
 from toolgraph import cli
 from toolgraph.crawler.client import CatalogBudget
 from toolgraph.crawler.crawl import (
@@ -653,7 +654,7 @@ def test_crawl_forwards_the_budget_options(backend_graph, tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize("option", ["--max-catalog-bytes", "--max-catalog-records"])
-def test_crawl_rejects_a_non_positive_budget_before_reading_servers(
+def test_crawl_rejects_a_non_positive_budget_as_a_usage_error(
     backend_graph, tmp_path, monkeypatch, option
 ):
     def never(*_a, **_k):
@@ -663,5 +664,8 @@ def test_crawl_rejects_a_non_positive_budget_before_reading_servers(
     result = CliRunner().invoke(
         cli.app, ["crawl", "--servers", str(tmp_path / "missing.yaml"), option, "0"]
     )
-    assert result.exit_code == 1
-    assert "Invalid catalog budget" in result.output
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert flat_output(result.stderr) == usage_error_text(
+        "crawl [OPTIONS]", f"Invalid value for '{option}': 0 is not in the range x>=1."
+    )

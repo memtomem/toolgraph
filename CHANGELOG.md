@@ -27,6 +27,16 @@ All notable changes to Toolgraph are documented here.
   2, an MCP error reply) instead of the resource's answer; choose with
   `--kind resource|policy` (MCP `kind`). A resource without a scheme is found
   now, where it was looked up as a policy only.
+- `crawl --max-catalog-records 0` / `--max-catalog-bytes 0` is a usage error
+  (exit 2, `Invalid value for '--max-catalog-records': 0 is not in the range
+  x>=1.`), where 0.4.1 exited 1 with `Invalid catalog budget: ...`. A
+  `--timeout` of 0, below 0 or `nan` is a usage error too (exit 2); 0.4.1
+  accepted it and failed every server with `timeout after <value>s`, exit 1.
+  `--timeout inf` still crawls without a timeout.
+- An unknown `--profile` and `ingest-manifest --json` without `--dry-run`
+  name their flag: `Invalid value for '--profile': unknown profile ...` and
+  `Invalid value for '--json': requires --dry-run`, where 0.4.1 printed
+  `Invalid value: ...`. Exit codes are unchanged (2).
 
 ### Added
 
@@ -39,6 +49,13 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- `crawl` refuses a backend it cannot use before it launches any server. With
+  `--servers`, no configured backend, a configuration conflict or an
+  unreadable runtime config was found only after every server had been
+  crawled, and so were an unknown `TOOLGRAPH_BACKEND` and Neo4j selected
+  without the `neo4j` extra, with or without `--servers`. An unreachable
+  server, rejected credentials or a malformed `NEO4J_URI` still surface when
+  the graph is first opened, after the crawl.
 - Two error replies no longer lose their fixed text when the caller's value
   is hidden (#266). An MCP call to an unknown tool whose name is withheld
   answers `Unknown tool: <value withheld>`, where 0.4.1 answered only

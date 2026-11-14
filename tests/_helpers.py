@@ -34,6 +34,24 @@ CONTROL_PLAN_FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
 CLICK_SPLITS_STREAMS = tuple(int(p) for p in version("click").split(".")[:2]) >= (8, 2)
 
 
+def flat_output(output: str) -> str:
+    """Typer's error box wraps long lines, and colors them on CI; join it back
+    into one plain line."""
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    lines = [line.strip("│╭╮╰╯─ ") for line in plain.splitlines()]
+    return " ".join(line for line in lines if line)
+
+
+def usage_error_text(usage: str, message: str) -> str:
+    """The whole of a usage error's stderr after ``flat_output``.
+
+    *usage* is the usage line after ``Usage: root `` (CliRunner's program name),
+    such as ``crawl [OPTIONS]``.
+    """
+    command = usage.split(" [OPTIONS]")[0]
+    return f"Usage: root {usage} Try 'root {command} --help' for help. Error {message}"
+
+
 NEO4J_EXPECT_VERSION_ENV = "TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION"
 
 
