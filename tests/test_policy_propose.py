@@ -559,28 +559,6 @@ def test_output_identity_check_names_the_position_not_the_value():
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("srv::password=hunter2", True),
-        ("Authorization: Bearer abc", True),
-        ("bearer abc.def", True),
-        ("api-key: xyz", True),
-        ("srv::get_token", False),
-        ("token::refresh", False),
-        ("vault-secret::read_file", False),
-        ("srv::secret:abc", True),
-        ("filesystem::read_file", False),
-        ("token bucket refill", False),
-        ("credential=abc", True),
-    ],
-)
-def test_contains_credential(text, expected):
-    from toolgraph.redaction import contains_credential
-
-    assert contains_credential(text) is expected
-
-
-@pytest.mark.parametrize(
     "keyword", ["api_key", "api-key", "access_token", "token", "password", "secret", "credential"]
 )
 def test_redact_text_scrubs_every_credential_keyword(keyword):

@@ -51,6 +51,15 @@ All notable changes to Toolgraph are documented here.
   so observation exports and bundles recorded against a manifest stay valid.
 - `blast-radius --kind resource|policy` and the MCP `kind` argument.
 
+### Removed
+
+- `toolgraph.redaction.contains_credential` (#251). No Toolgraph code called
+  it, and it no longer matched the scrubber: `proxy_authorization:x` and
+  `HTTP_AUTHORIZATION:x` read as clean while `redact_text` hid their values.
+  Refusals use `toolgraph.redaction.is_credential_shaped`. It reads a
+  versioned name such as `srv::secret:abc` as clean, where
+  `contains_credential` answered True.
+
 ### Fixed
 
 - `crawl` refuses a backend it cannot use before it launches any server. With

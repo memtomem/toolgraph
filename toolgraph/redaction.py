@@ -33,12 +33,8 @@ _QUOTED_PASSWORD = re.compile(_SCHEME + r"[^\s/'\":]*:[^\s/'\"]*['\"]", re.IGNOR
 # Quoted userinfo, refused and hidden by the same two patterns, each searched
 # only before the last '@'.
 _QUOTED_USERINFO = (_QUOTED_AUTHORITY, _QUOTED_PASSWORD)
-_AUTHORIZATION = re.compile(
-    r"(?i)\bauthorization['\"]?\s*[:=]\s*['\"]?"
-    r"(?:(?:bearer|basic|token)\s+)?[^\s,'\"}\]]+"
-)
-# The scrubbing form hides everything after the name through the end of the
-# text. Where an Authorization value ends cannot be told from prose: a scheme
+# Authorization scrubbing hides everything after the name through the end of
+# the text. Where an Authorization value ends cannot be told from prose: a scheme
 # may take a parameter list (`Digest username=a, response=x failed`), a value
 # may be malformed (`Basic user x`), and a header dump may hold another
 # Authorization header after it. No `\b`, so `proxy_authorization` and
@@ -132,32 +128,12 @@ def persisted_endpoint(transport: str, value: str | None) -> str:
 
 
 _BEARER = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]+")
-# Same keywords as _CREDENTIAL, but a ':' followed by another ':' is the tool
-# key separator (`token::refresh`, `vault-secret::read_file`), not an
-# assignment. Used only where a match refuses the value outright.
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    rf"(?i)({CREDENTIAL_KEYWORDS})"
-    r"['\"]?\s*(?:=|:(?!:))"
-)
-
-
-def contains_credential(text: str) -> bool:
-    """True when ``text`` holds an assignment- or header-shaped credential.
-
-    For values that must be refused rather than scrubbed, because rewriting
-    them would change what they identify. Covers the forms ``redact_text``
-    scrubs (``password=…``, ``Authorization: …``, ``Bearer …``) without
-    mistaking a ``server::tool`` separator for an assignment.
-    """
-    return bool(
-        _CREDENTIAL_ASSIGNMENT.search(text) or _AUTHORIZATION.search(text) or _BEARER.search(text)
-    )
-
-
-# The refusal form of the two rules above. A single ':' is also how a tool or
-# agent name is versioned (`get_token:v2`, `agent-token:blue`), so here a bare
-# ':' is an assignment only when whitespace or a quote follows it (`api_key: x`,
-# `token: rotated weekly`); after a quoted name (`"token":123`) it always is.
+# The refusal rule's assignment form: CREDENTIAL_KEYWORDS plus Authorization.
+# A '::' is the tool key separator (`token::refresh`), and a single ':' is also
+# how a tool or agent name is versioned (`get_token:v2`, `agent-token:blue`),
+# so a bare ':' is an assignment only when whitespace or a quote follows it
+# (`api_key: x`, `token: rotated weekly`); after a quoted name (`"token":123`)
+# it always is.
 # Free text cannot tell `token: abc123` from `token: rotated weekly`; both are
 # refused.
 _REFUSED_ASSIGNMENT = re.compile(
