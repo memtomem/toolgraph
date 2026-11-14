@@ -440,24 +440,36 @@ def _repr_literals(text: str) -> Iterator[list[tuple[int, int, str]]]:
             yield read
 
 
-def _repr_reads_as_credential(text: str) -> bool:
+def _repr_withheld(text: str) -> str | None:
+    """The marker *text* is withheld under for its repr literals, or None.
+
+    ``LITERALS_WITHHELD`` when it holds more than ``_MAX_LITERALS`` of them,
+    unread; ``WITHHELD`` when one, read back, is credential-shaped.
+    """
     # Counted first, so a text over the limit costs one scan and no checks.
     # Each form is then built and checked on its own: holding them all would
     # copy the whole text twice per reading.
     if "\\" not in text:
-        return False
+        return None
     literals = list(islice(_repr_literals(text), _MAX_LITERALS + 1))
     if len(literals) > _MAX_LITERALS:
-        return True
-    return any(
+        return LITERALS_WITHHELD
+    if any(
         is_credential_shaped(value) or is_credential_shaped(text[:start] + value + text[end:])
         for readings in literals
         for start, end, value in readings
-    )
+    ):
+        return WITHHELD
+    return None
 
 
+# Each check that withholds a whole text names its reason. A text holding more
+# than _MAX_LITERALS repr literals is withheld without reading them: a cost
+# bound, not a finding, so it gets its own text instead of the credential one.
 WITHHELD = "details withheld (they contain credential-shaped data)"
 PATH_WITHHELD = "<path withheld: credential-shaped>"
+LITERALS_WITHHELD = "details withheld (too many escaped literals to check)"
+PATH_LITERALS_WITHHELD = "<path withheld: too many escaped literals to check>"
 # A caller's value in an error reply whose fixed text the scrubber would
 # otherwise lose: the reply withheld whole, or a scrubbed value consuming the
 # fixed text after it. A value scrubbed without touching that text keeps its
@@ -482,8 +494,9 @@ def redact_text(value: object) -> str:
     replaced by ``WITHHELD`` before scrubbing. Nor do they read escapes: a
     message holding a str or bytes literal exactly as ``repr`` or ``ascii``
     prints it (`'password\\t=x'`) is withheld when that literal, read back,
-    is credential-shaped, alone or in place in the message, and when it holds
-    more than ``_MAX_LITERALS`` such literals. Both checks read the message
+    is credential-shaped, alone or in place in the message. It is replaced by
+    ``LITERALS_WITHHELD`` instead when it holds more than ``_MAX_LITERALS``
+    such literals, which are then not read. Both checks read the message
     as given, before anything rewrites it. A message where a credential name
     inside a URI, as given or percent-decoded, assigns a value after the
     URI's end (`https://h/password :x`) is withheld too: rewriting the URI to
@@ -497,8 +510,8 @@ def redact_text(value: object) -> str:
         decoded = unquote(raw)
         if decoded != raw and is_credential_shaped(decoded):
             return WITHHELD
-    if "\\" in raw and _repr_reads_as_credential(raw):
-        return WITHHELD
+    if "\\" in raw and (marker := _repr_withheld(raw)):
+        return marker
     text = _INPUT_PLACEHOLDER.sub("\u2039", raw) if "<" in raw else raw
     if "://" in text:
         text = _hide_quoted_userinfo(text)
@@ -513,14 +526,19 @@ def redact_text(value: object) -> str:
 
 
 def display_path(path: object) -> str:
-    """*path* as text for a message, or ``PATH_WITHHELD`` if it is credential-shaped.
+    """*path* as text for a message, or a path marker if ``redact_text`` would change it.
 
     A path is shown whole or not at all: scrubbing part of it would print a
     path that does not exist. Replacing only the path keeps the rest of the
     message, which ``redact_text`` over the whole line would withhold too.
+    The marker is ``PATH_LITERALS_WITHHELD`` when the path holds more than
+    ``_MAX_LITERALS`` repr literals, and ``PATH_WITHHELD`` otherwise.
     """
     text = str(path)
-    return text if redact_text(text) == text else PATH_WITHHELD
+    shown = redact_text(text)
+    if shown == text:
+        return text
+    return PATH_LITERALS_WITHHELD if shown == LITERALS_WITHHELD else PATH_WITHHELD
 
 
 def redact_credentials(text: str) -> str:

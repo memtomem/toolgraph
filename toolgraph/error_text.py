@@ -45,7 +45,7 @@ from mcp_types import PARSE_ERROR
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
-from toolgraph.redaction import PATH_WITHHELD, display_path, redact_text
+from toolgraph.redaction import PATH_LITERALS_WITHHELD, PATH_WITHHELD, display_path, redact_text
 from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
@@ -120,7 +120,7 @@ def _int_literal_base(exc: BaseException) -> str | None:
 
 
 def describe_os_error(exc: OSError) -> str:
-    """``str(exc)``, with each credential-shaped file name replaced by ``PATH_WITHHELD``.
+    """``str(exc)``, with each file name ``display_path`` withholds replaced by its marker.
 
     ``str(OSError)`` writes a file name with ``repr``, which escapes a tab or
     a no-break space (`\\t`, `\\xa0`) into a form the scrubber cannot read.
@@ -139,13 +139,15 @@ def describe_os_error(exc: OSError) -> str:
 
 
 def _shown_name(name: Any) -> Any:
-    """*name* as it is, or ``PATH_WITHHELD`` when it is credential-shaped.
+    """*name* as it is, or the path marker ``display_path`` gives for it.
 
     A bytes name is checked decoded, as the OS reads it.
     """
     text = os.fsdecode(name) if isinstance(name, bytes) else name
-    if isinstance(text, str | os.PathLike) and display_path(text) == PATH_WITHHELD:
-        return PATH_WITHHELD
+    if isinstance(text, str | os.PathLike):
+        shown = display_path(text)
+        if shown in (PATH_WITHHELD, PATH_LITERALS_WITHHELD):
+            return shown
     return name
 
 

@@ -41,6 +41,16 @@ All notable changes to Toolgraph are documented here.
   0.4.1 printed `Invalid value for --config: ...`, and likewise for
   `--backend`, `--kind`, `--reviewer`, `--note`, `DESTINATION` and
   `CANDIDATES`. Exit codes are unchanged (2).
+- A message, error reply or log line holding more than 32 escaped literals
+  as `repr` prints them (`'a\tb'`) is withheld as
+  `details withheld (too many escaped literals to check)`, and such a path as
+  `<path withheld: too many escaped literals to check>` (#269). A uvicorn
+  access line keeps its one fixed withheld text. 0.4.1 used
+  the credential wording for this case too, `details withheld (they contain
+  credential-shaped data)` and `<path withheld: credential-shaped>`, though
+  the literals are withheld without being read. What is withheld is
+  unchanged; the credential wording stays for every check that found
+  something.
 
 ### Added
 
