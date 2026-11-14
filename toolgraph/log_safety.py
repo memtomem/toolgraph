@@ -246,9 +246,11 @@ def filter_uvicorn_loggers() -> None:
     when it starts; a filter on the logger itself survives that. A program
     that runs the app under its own server owns that logging instead.
 
-    ``uvicorn.asgi`` logs whole ASGI scopes and messages, headers included,
-    at uvicorn's TRACE level, which the MCP server's log level cannot select;
-    its records are dropped rather than scrubbed.
+    ``uvicorn.asgi`` logs whole ASGI scopes and messages (headers and bodies
+    masked; method, path, query string and client shown, where fields can
+    form a credential together) at uvicorn's TRACE level, which the MCP
+    server's log level cannot select; its records are dropped rather than
+    scrubbed.
     """
     for name, kind in (
         ("uvicorn.access", AccessLogFilter),
