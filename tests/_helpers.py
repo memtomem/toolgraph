@@ -48,8 +48,8 @@ def usage_error_text(usage: str, message: str) -> str:
     *usage* is the usage line after ``Usage: root `` (CliRunner's program name),
     such as ``crawl [OPTIONS]``.
     """
-    command = usage.split(" [OPTIONS]")[0]
-    return f"Usage: root {usage} Try 'root {command} --help' for help. Error {message}"
+    program = f"root {usage.split('[OPTIONS]')[0]}".strip()
+    return f"Usage: root {usage} Try '{program} --help' for help. Error {message}"
 
 
 NEO4J_EXPECT_VERSION_ENV = "TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION"

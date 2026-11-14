@@ -35,7 +35,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
-from toolgraph.redaction import WITHHELD
+from toolgraph.redaction import WITHHELD, display_path
 
 
 def _seed(exceptions: list[ExpectedException] | None = None) -> None:
@@ -577,6 +577,67 @@ def test_an_unknown_profile_names_its_flag(args, usage):
     assert result.exit_code == 2
     assert result.stdout == ""
     assert flat_output(result.stderr) == usage_error_text(usage, UNKNOWN_PROFILE)
+
+
+@pytest.mark.parametrize(
+    ("args", "usage", "message"),
+    [
+        (
+            ["--config", "missing.json", "check"],
+            "[OPTIONS] COMMAND [ARGS]...",
+            "Invalid value for '--config': Toolgraph runtime config does not exist: {missing}",
+        ),
+        (
+            ["example", "init", "exists"],
+            "example init [OPTIONS] [destination]",
+            "Invalid value for 'DESTINATION': destination already exists: {exists}",
+        ),
+        (
+            ["init", "--backend", "bogus"],
+            "init [OPTIONS]",
+            "Invalid value for '--backend': expected ladybug or neo4j",
+        ),
+        (
+            ["eligible-tools", "a", *["x"] * 4097],
+            "eligible-tools [OPTIONS] {{agent}} {{candidates}}...",
+            "Invalid value for 'CANDIDATES': 4097 candidates exceed the 4096 limit",
+        ),
+        (
+            ["review-candidates", "annotate", "r.json", "c", "--status", "accepted"]
+            + ["--reviewer", "   "],
+            "review-candidates annotate [OPTIONS] {{report}} {{candidate_id}}",
+            "Invalid value for '--reviewer': "
+            "reviewer must be a non-empty single line of at most 256 characters",
+        ),
+        (
+            ["review-candidates", "annotate", "r.json", "c", "--status", "accepted"]
+            + ["--reviewer", "operator", "--note", "a\nb"],
+            "review-candidates annotate [OPTIONS] {{report}} {{candidate_id}}",
+            "Invalid value for '--note': "
+            "note must be a non-empty single line of at most 500 characters",
+        ),
+    ],
+    ids=["config", "destination", "backend", "candidates", "reviewer", "note"],
+)
+def test_a_parameter_named_in_a_usage_error_is_quoted(
+    tmp_path, monkeypatch, fresh_settings, args, usage, message
+):
+    """Toolgraph's own BadParameter hints read like the ones Click derives."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "exists").mkdir()
+    paths = {
+        "missing": display_path((tmp_path / "missing.json").resolve()),
+        "exists": display_path((tmp_path / "exists").resolve()),
+    }
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    # A long path wraps inside a word in the error box (#250): compare
+    # without whitespace.
+    expected = usage_error_text(usage.format(**paths), message.format(**paths))
+    assert "".join(flat_output(result.stderr).split()) == "".join(expected.split())
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "-inf", "1e-400"])

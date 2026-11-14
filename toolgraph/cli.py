@@ -243,7 +243,7 @@ def main(
         try:
             config.configure(config_path)
         except RuntimeError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--config") from None
+            raise typer.BadParameter(str(exc), param_hint=["--config"]) from None
 
 
 @example_app.command("init")
@@ -256,7 +256,7 @@ def example_init(
     destination = destination.expanduser().resolve()
     if destination.exists():
         raise typer.BadParameter(
-            f"destination already exists: {display_path(destination)}", param_hint="DESTINATION"
+            f"destination already exists: {display_path(destination)}", param_hint=["DESTINATION"]
         )
     source = files("toolgraph").joinpath("quickstart")
     # Stage next to the destination and rename once complete: a failure
@@ -307,7 +307,7 @@ def init_backend(
     """Initialize a versioned local backend configuration."""
     normalized = backend.lower().strip()
     if normalized not in {"ladybug", "neo4j"}:
-        raise typer.BadParameter("expected ladybug or neo4j", param_hint="--backend")
+        raise typer.BadParameter("expected ladybug or neo4j", param_hint=["--backend"])
     state_dir = state_dir.expanduser().resolve()
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
@@ -713,7 +713,7 @@ def blast_radius(
     try:
         result = queries.blast_radius(node, kind.value if kind else None)
     except ContractError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--kind") from None
+        raise typer.BadParameter(str(exc), param_hint=["--kind"]) from None
     typer.echo(json.dumps(result, indent=2))
 
 
@@ -853,7 +853,7 @@ def _bounded_candidates(candidates: list[str]) -> list[str]:
     if len(candidates) > MAX_CLI_CANDIDATES:
         raise typer.BadParameter(
             f"{len(candidates)} candidates exceed the {MAX_CLI_CANDIDATES} limit",
-            param_hint="CANDIDATES",
+            param_hint=["CANDIDATES"],
         )
     return candidates
 
@@ -1302,11 +1302,11 @@ def review_candidates_annotate(
     try:
         reviewer = normalize_reviewer(reviewer)
     except ReviewCandidateError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--reviewer") from exc
+        raise typer.BadParameter(str(exc), param_hint=["--reviewer"]) from exc
     try:
         note = normalize_note(note)
     except ReviewCandidateError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--note") from exc
+        raise typer.BadParameter(str(exc), param_hint=["--note"]) from exc
     try:
         payload = annotate_candidate(
             report,

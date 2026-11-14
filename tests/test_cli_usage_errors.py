@@ -142,7 +142,7 @@ def test_a_usage_error_with_a_credential_shaped_token_is_withheld_whole(tmp_path
     result = _run(["--config", str(tmp_path / ENCODED), "check"])
 
     assert result.exit_code == 2
-    assert f"Invalid value for --config: {WITHHELD}" in flat_output(result.output)
+    assert f"Invalid value for '--config': {WITHHELD}" in flat_output(result.output)
     _assert_hidden(result.output)
 
 

@@ -36,7 +36,11 @@ All notable changes to Toolgraph are documented here.
 - An unknown `--profile` and `ingest-manifest --json` without `--dry-run`
   name their flag: `Invalid value for '--profile': unknown profile ...` and
   `Invalid value for '--json': requires --dry-run`, where 0.4.1 printed
-  `Invalid value: ...`. Exit codes are unchanged (2).
+  `Invalid value: ...`. The other usage errors Toolgraph raises itself quote
+  the parameter as Click does: `Invalid value for '--config': ...`, where
+  0.4.1 printed `Invalid value for --config: ...`, and likewise for
+  `--backend`, `--kind`, `--reviewer`, `--note`, `DESTINATION` and
+  `CANDIDATES`. Exit codes are unchanged (2).
 
 ### Added
 
