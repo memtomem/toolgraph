@@ -12,7 +12,7 @@ import tracemalloc
 
 import pytest
 
-from toolgraph.redaction import _MAX_LITERALS, WITHHELD, redact_text
+from toolgraph.redaction import _MAX_LITERALS, LITERALS_WITHHELD, WITHHELD, redact_text
 
 # Separators the scrubber reads as whitespace in raw text and repr escapes.
 SEPARATORS = ["\t", "\n", "\x0b", "\xa0", "\u2000", "\u2028", "\u3000"]
@@ -147,8 +147,8 @@ def test_a_literal_after_an_odd_backslash_run_is_not_read():
 
 @pytest.mark.parametrize("item", ["a\tb", b"a\tb"], ids=["str", "bytes"])
 def test_more_literals_than_the_limit_are_withheld_unread(item):
-    assert redact_text(repr([item] * _MAX_LITERALS)) != WITHHELD
-    assert redact_text(repr([item] * (_MAX_LITERALS + 1))) == WITHHELD
+    assert redact_text(repr([item] * _MAX_LITERALS)) == repr([item] * _MAX_LITERALS)
+    assert redact_text(repr([item] * (_MAX_LITERALS + 1))) == LITERALS_WITHHELD
 
 
 def test_reading_back_prints_no_parser_warning(recwarn, capsys):

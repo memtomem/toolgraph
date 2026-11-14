@@ -205,6 +205,22 @@ def test_governance_config_error_withholds_the_path(tmp_path):
     _assert_hidden(result.output)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash separates path parts there")
+def test_a_config_path_over_the_literal_limit_names_that_reason(tmp_path):
+    """Not "credential-shaped": none of the 33 literals was checked (#269)."""
+    path = tmp_path.joinpath(*["'a\\tb'"] * 33) / "governance.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text("bogus: x\n", encoding="utf-8")
+
+    result = _run(["ingest-manifest", "--governance", str(path)])
+
+    assert result.exit_code == 1
+    assert result.output.startswith(
+        "Invalid governance config at <path withheld: too many escaped literals to check>: "
+        "1 validation error for Governance: "
+    )
+
+
 def test_command_lines_withhold_a_credential_shaped_working_directory(
     tmp_path, monkeypatch, fresh_settings
 ):
