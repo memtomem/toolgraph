@@ -34,10 +34,10 @@ jobs:
   # TOOLGRAPH_TEST_NO_DOCKER, so a test that reaches that fixture without the
   # marker fails here instead of quietly starting Docker in the unit half.
   #
-  # The classifiers claim Python 3.12-3.14, and some tests run only on
-  # Windows, so the unit half runs at both ends of that range and on Windows.
-  # UV_PYTHON picks the interpreter for every uv call: `.python-version` pins
-  # 3.12, and `uv run` would otherwise go back to it after `uv sync --python`.
+  # The classifiers claim Python 3.12-3.14, so the unit half runs at both ends
+  # of that range (Windows: test-unit-windows below). UV_PYTHON picks the
+  # interpreter for every uv call: `.python-version` pins 3.12, and `uv run`
+  # would otherwise go back to it after `uv sync --python`.
   test-unit:
     strategy:
       fail-fast: false
@@ -47,6 +47,46 @@ jobs:
             python: "3.12"
           - os: ubuntu-latest
             python: "3.14"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - name: Run on the matrix interpreter
+        run: uv run python -c "import sys; v = '%d.%d' % sys.version_info[:2]; assert v == '${{ matrix.python }}', v"
+      - name: Require the optional local backend
+        run: uv run python -c "import ladybug"
+      # The legs collect different tests (Windows skips the POSIX-only ones
+      # and runs its own), so totals cannot be compared across them; the
+      # JUnit report records each test's outcome and skip reason.
+      - name: Run the tests that need no Docker
+        env:
+          TOOLGRAPH_TEST_NO_DOCKER: "1"
+        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-unit-${{ matrix.os }}-${{ matrix.python }}
+          path: junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  # The unit half on Windows, which runs the Windows-only tests. Advisory: it
+  # is deliberately not in ci-required.needs until #291 (tests that assume
+  # POSIX) is fixed; #292 is a product failure it shows. A red run here does
+  # not block a merge, so read its result rather than trusting the gate.
+  test-unit-windows:
+    strategy:
+      matrix:
+        include:
           - os: windows-latest
             python: "3.12"
     runs-on: ${{ matrix.os }}
@@ -329,7 +369,7 @@ jobs:
   #
   # Branch protection must require THIS job and nothing else. The matrix jobs
   # above report as "artifact-smoke (ubuntu-latest, 3.14)", "test-unit
-  # (windows-latest, 3.12)" and friends, so
+  # (ubuntu-latest, 3.14)" and friends, so
   # naming those directly means every matrix edit silently orphans a required
   # check and leaves pull requests waiting forever for a context that will
   # never report.
