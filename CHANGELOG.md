@@ -56,9 +56,9 @@ All notable changes to Toolgraph are documented here.
 - `toolgraph.redaction.contains_credential` (#251). No Toolgraph code called
   it, and it no longer matched the scrubber: `proxy_authorization:x` and
   `HTTP_AUTHORIZATION:x` read as clean while `redact_text` hid their values.
-  Refusals use `toolgraph.redaction.is_credential_shaped`, which reads a
-  bare `:` with no space after it as a version (`srv::secret:abc` is clean)
-  where `contains_credential` answered True.
+  Refusals use `toolgraph.redaction.is_credential_shaped`. It reads a
+  versioned name such as `srv::secret:abc` as clean, where
+  `contains_credential` answered True.
 
 ### Fixed
 
