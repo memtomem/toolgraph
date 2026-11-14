@@ -4,6 +4,39 @@ All notable changes to Toolgraph are documented here.
 
 ## Unreleased
 
+### Changed
+
+- A `governed_by` key that names both a tool and a resource now rejects the
+  manifest (#280). The key's shape picks the target (a URI scheme means a resource),
+  so the policy governed only one of the two and the other read as ALLOW: a
+  tool named `repo:delete` with `governed_by: {repo:delete: [deny]}` ingested
+  with no warning, the DENY landed on a new Resource node, and `check-access`
+  answered `ALLOW` for the tool. The same held for a qualified key whose server
+  name holds a colon (`gh:prod::delete`), for a tool and a resource that share
+  one URI, and the other way round for a resource without a scheme
+  (`customers_db` in `data_access`) that bound to a tool of the same name.
+  Ingest, `ingest-manifest --dry-run` and `policy impact` now report
+  `GOVERNED_BY: '<key>' reads as a resource URI but also names N crawled
+  tool(s)`
+  or `... reads as a tool but is also a resource in data_access or
+  expected_exceptions`, and leave the graph unchanged. A manifest that 0.4.1
+  ingested can be rejected; move each such key to `governed_tools` or
+  `governed_resources`.
+- `blast-radius` / the `blast_radius` MCP tool look a node up as both a
+  Resource and a Policy id (#280). A node that names both is now an error (CLI exit
+  2, an MCP error reply) instead of the resource's answer; choose with
+  `--kind resource|policy` (MCP `kind`). A resource without a scheme is found
+  now, where it was looked up as a policy only.
+
+### Added
+
+- `governed_tools` and `governed_resources` manifest fields (#280): the same
+  bindings as `governed_by`, with the target kind stated instead of read from the key.
+  A `governed_tools` key is checked as an identity even when it looks like a
+  URI. While both are empty, the governance digest is the one 0.4.1 computed,
+  so observation exports and bundles recorded against a manifest stay valid.
+- `blast-radius --kind resource|policy` and the MCP `kind` argument.
+
 ### Fixed
 
 - Two error replies no longer lose their fixed text when the caller's value

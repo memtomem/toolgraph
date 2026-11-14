@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
@@ -273,9 +273,13 @@ def unsafe_callable_tools(agent: str, include_authorized: bool = False) -> dict:
 
 
 @mcp.read_only_tool()
-def blast_radius(node: str) -> dict:
-    """Agents/tools affected if `node` (a resource URI or a policy id) changes."""
-    return _with_generation(lambda: queries.blast_radius(node))
+def blast_radius(node: str, kind: Literal["resource", "policy"] | None = None) -> dict:
+    """Agents/tools affected if `node` (a resource or a policy id) changes.
+
+    Pass `kind` when `node` names both a resource and a policy; without it
+    such a node is an error rather than an answer for one of them.
+    """
+    return _with_generation(lambda: queries.blast_radius(node, kind))
 
 
 @mcp.read_only_tool()

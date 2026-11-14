@@ -425,7 +425,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 
 | Command | Exit code |
 | --- | --- |
-| any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable |
+| any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable, a `blast-radius` NODE that names both a resource and a policy without `--kind` |
 | commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. A command that only reads the graph (not `check`) also exits 1 with one line on a Ladybug database whose schema is missing, telling you to run `toolgraph init-schema`, or was written by another schema version, telling you to upgrade Toolgraph or migrate the database; writers initialize a missing schema themselves. It does not create a missing Ladybug database either: it reports the backend as unavailable. (If another process deletes the file at the instant a read opens it, Ladybug recreates it empty; the schema check then refuses it.) Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a `backend_misconfigured` result |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
@@ -484,10 +484,12 @@ on stdout first; usage errors print click's usage text).
   classifications.
 - `blast-radius` returns `found: false` when the node argument matches no
   Resource or Policy. A typo'd URI is no longer indistinguishable from
-  `impacted: []`. `blast-radius` accepts a URI-shaped argument as either a
-  resource URI or a policy id — if the lexical URI pattern matches no
-  Resource node, it retries against Policy ids before declaring not-found
-  (so a policy id like `urn:secret` or `mailto:ops` works as a node).
+  `impacted: []`. `blast-radius` looks the node up as both a Resource and a
+  Policy id, so a policy id like `urn:secret` or `mailto:ops` and a resource
+  without a scheme both work as a node. A node that names a Resource AND a
+  Policy is a usage error (CLI exit 2, an MCP error reply) until you choose
+  one with `--kind resource|policy` (MCP `kind`). Not found, a URI-shaped
+  node reports `kind: "resource"`, any other `kind: "policy"`.
 - `unsafe-tools` (CLI) and the `unsafe_callable_tools` MCP tool both
   default to `classification='violation'` only; pass `--all` (CLI) or
   `include_authorized: true` (MCP) to see operator-declared exceptions
@@ -548,6 +550,27 @@ When a DENY fires via a resource path, the result row includes both
 `provenance` (the data-flow edge that put the row in front of you) and
 `policy_provenance` (the binding evidence, attached only when the author
 cited one).
+
+A `governed_by` key's shape picks what it governs: a key with a URI scheme
+(`file:///x`, `memory:foo`, `urn:secret`) is a resource, anything else a tool
+ref (`server::tool` or a bare tool name). The same string can name both, and
+then the policy would govern only the one the shape picks. So ingest rejects
+the manifest when a resource-shaped key also names a tool (a tool called
+`repo:delete`, or a server whose name holds a colon, `gh:prod::delete`), and
+when a tool-shaped key is also a resource in `data_access` or
+`expected_exceptions` (a resource without a scheme, `customers_db`). Say the
+kind explicitly with `governed_tools` or `governed_resources`, which take the
+same bindings:
+
+```yaml
+governed_tools:
+  "gh:prod::delete": [no-delete]      # always a tool ref
+governed_resources:
+  customers_db: [pii-deny]            # always a resource, scheme or not
+```
+
+A binding (target and policy) belongs in one of the three fields; the same
+binding in two of them rejects the manifest.
 
 ### Tool annotations are self-claims, not facts
 
@@ -764,7 +787,7 @@ result shapes do not always match:
 | --- | --- | --- |
 | `check_access(agent, tool)` | `check-access AGENT TOOL` | Same verdict object. The CLI adds `--fail-on-deny`. |
 | `unsafe_callable_tools(agent, include_authorized=false)` | `unsafe-tools AGENT [--all]` | MCP returns `{agent, agent_found, count, tools}`; the CLI prints the bare list and exits 1 on an unknown agent. The CLI adds `--fail-on-violation`. |
-| `blast_radius(node)` | `blast-radius NODE` | Same object. |
+| `blast_radius(node, kind=null)` | `blast-radius NODE [--kind resource\|policy]` | Same object. A node naming both a resource and a policy without `kind` is an MCP error reply / CLI exit 2. |
 | `unmapped_tools(only_granted=true)` | `unmapped-tools [--all]` | `--all` is `only_granted: false`. MCP `{count, tools}`, CLI list. |
 | `orphan_policies()` | `orphan-policies` | MCP `{count, policies}`, CLI list. |
 | `unbacked_edges(include_grants=false)` | `unbacked-edges [--include-grants]` | MCP `{count, edges}`, CLI list. |

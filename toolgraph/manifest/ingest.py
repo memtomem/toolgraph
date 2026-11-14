@@ -24,7 +24,7 @@ from toolgraph.graph.queries import resolve_tool_refs
 from toolgraph.graph.schema import bump_generation, check_backend_schema_version, exception_key
 from toolgraph.manifest.parser import governance_digest
 from toolgraph.models import Governance, GovernedByBinding, edge_provenance_props, revalidated
-from toolgraph.uris import is_resource_ref, normalize_resource_uri
+from toolgraph.uris import canonical_for_lookup, is_resource_ref, normalize_resource_uri
 
 if TYPE_CHECKING:
     from neo4j import ManagedTransaction, Session
@@ -212,7 +212,10 @@ def _validate_manifest(
     # Resolve once on this transaction; validation still walks the original
     # manifest order so diagnostics and last-entry-wins semantics do not move.
     refs = [g.tool for g in gov.grants] + [d.tool for d in gov.data_access]
-    refs.extend(ref for ref in gov.governed_by if not is_resource_ref(ref))
+    # Every governed_by key is resolved, resource-shaped ones too: a key whose
+    # shape says "resource" but that also names a tool is a collision below.
+    refs.extend(gov.governed_by)
+    refs.extend(gov.governed_tools)
     refs.extend(e.tool for e in gov.expected_exceptions)
     resolved_refs = resolve_tool_refs(tx, refs)
     resolved_grants: list[tuple] = []
@@ -244,34 +247,81 @@ def _validate_manifest(
     resolved_governed: list[tuple] = []  # (kind, key_or_uri, list[(pid, prov_props)])
     policy_resources: dict[str, set[str]] = {}  # pid -> {uri, ...}
     policy_tools: dict[str, set[str]] = {}  # pid -> {tool_key, ...}
-    for node_ref, items in gov.governed_by.items():
-        bindings = _normalize_bindings(items)
-        for b in bindings:
-            if b.policy not in known_policies:
-                # A resource URI may hold a password; the warning shows it whole-value
-                # redacted, as artifact evidence does.
-                node = display_resource(node_ref) if is_resource_ref(node_ref) else node_ref
-                warnings.append(f"GOVERNED_BY: policy {b.policy!r} not defined (node {node!r})")
-        valid = [
-            (b.policy, edge_provenance_props(b.provenance))
-            for b in bindings
-            if b.policy in known_policies
-        ]
-        if is_resource_ref(node_ref):
-            uri = normalize_resource_uri(node_ref)
-            resolved_governed.append(("resource", uri, valid))
-            for pid, _ in valid:
-                policy_resources.setdefault(pid, set()).add(uri)
-        else:
-            key, matches = _resolve(resolved_refs, node_ref)
-            if key is None:
-                warnings.append(
-                    f"GOVERNED_BY: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
-                )
+    # Every resource this manifest gives a tool access to, canonical. Successful
+    # ingest rebuilds all READS/WRITES edges from data_access, so this is the
+    # full set of resources a resource-level DENY can act through.
+    manifest_resources = {uri for _, _, uri, _ in resolved_access}
+    manifest_resources |= {canonical_for_lookup(d.resource) for d in gov.data_access}
+    manifest_resources |= {
+        canonical_for_lookup(e.resource) for e in gov.expected_exceptions if e.resource
+    }
+    bound_in: dict[tuple[str, str, str], str] = {}  # (kind, target, policy) -> field
+    for field_name, mapping in (
+        ("governed_by", gov.governed_by),
+        ("governed_tools", gov.governed_tools),
+        ("governed_resources", gov.governed_resources),
+    ):
+        label = field_name.upper()
+        for node_ref, items in mapping.items():
+            if field_name == "governed_by":
+                kind = "resource" if is_resource_ref(node_ref) else "tool"
             else:
-                resolved_governed.append(("tool", key, valid))
-                for pid, _ in valid:
-                    policy_tools.setdefault(pid, set()).add(key)
+                kind = "tool" if field_name == "governed_tools" else "resource"
+            # A resource URI may hold a password; warnings show it whole-value
+            # redacted, as artifact evidence does.
+            node = display_resource(node_ref) if kind == "resource" else node_ref
+            if field_name == "governed_by":
+                # The key's shape picks the kind, but the same string can name
+                # a tool AND a resource. Binding the policy to the one the
+                # shape picks would leave the other ungoverned (a DENY that
+                # reads as ALLOW), so a collision rejects the manifest.
+                if kind == "resource" and resolved_refs[node_ref]:
+                    # A count, not the keys: a tool key joins two names that
+                    # were each checked as identities, and the join can still
+                    # read as a credential (`https://u:x` + `::` + `y@host`).
+                    warnings.append(
+                        f"GOVERNED_BY: {node!r} reads as a resource URI but also names "
+                        f"{len(resolved_refs[node_ref])} crawled tool(s) — move it to "
+                        f"governed_tools or governed_resources to say which one the policy "
+                        f"governs"
+                    )
+                    continue
+                if kind == "tool" and canonical_for_lookup(node_ref) in manifest_resources:
+                    warnings.append(
+                        f"GOVERNED_BY: {node!r} reads as a tool but is also a resource in "
+                        f"data_access or expected_exceptions — move it to governed_tools or "
+                        f"governed_resources to say which one the policy governs"
+                    )
+                    continue
+            bindings = _normalize_bindings(items)
+            for b in bindings:
+                if b.policy not in known_policies:
+                    warnings.append(f"{label}: policy {b.policy!r} not defined (node {node!r})")
+            valid = [
+                (b.policy, edge_provenance_props(b.provenance))
+                for b in bindings
+                if b.policy in known_policies
+            ]
+            if kind == "resource":
+                target = normalize_resource_uri(node_ref)
+            else:
+                target, matches = _resolve(resolved_refs, node_ref)
+                if target is None:
+                    warnings.append(
+                        f"{label}: tool {node_ref!r} {_resolve_problem(node_ref, matches)}"
+                    )
+                    continue
+            for pid, _ in valid:
+                first = bound_in.setdefault((kind, target, pid), field_name)
+                if first != field_name:
+                    warnings.append(
+                        f"{label}: policy {pid!r} is already bound to {kind} {node!r} in "
+                        f"{first} — bind it in one field only"
+                    )
+            resolved_governed.append((kind, target, valid))
+            targets = policy_resources if kind == "resource" else policy_tools
+            for pid, _ in valid:
+                targets.setdefault(pid, set()).add(target)
 
     # Reachability lookups for exception validation: which tools each agent
     # holds a grant on, and which resources each tool actually touches.

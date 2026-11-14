@@ -23,8 +23,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from toolgraph.artifact_safety import display_resource
+from toolgraph.errors import ContractError
 from toolgraph.graph.driver import read_session
-from toolgraph.uris import is_resource_ref, normalize_resource_uri
+from toolgraph.uris import canonical_for_lookup, is_resource_ref, normalize_resource_uri
 
 if TYPE_CHECKING:
     from neo4j import Session
@@ -824,7 +825,13 @@ def annotation_contradictions() -> list[dict]:
     return rows
 
 
-def blast_radius(node: str) -> dict:
+BLAST_RADIUS_KINDS = ("resource", "policy")
+BLAST_RADIUS_AMBIGUOUS = (
+    "the node names both a resource and a policy; choose one with kind (resource or policy)"
+)
+
+
+def blast_radius(node: str, kind: str | None = None) -> dict:
     """Who/what is affected if a resource or a policy changes (with evidence paths).
 
     Every impacted row has the same keys (via/resource/agent/tool_key/tool/mode/path);
@@ -832,31 +839,41 @@ def blast_radius(node: str) -> dict:
     resource but has no caller is still reported (it is affected).
 
     The response carries ``found`` — False when the node argument matches no
-    Resource (for a URI) or Policy (otherwise). Without this, a typo'd URI is
-    indistinguishable from a real resource that nothing touches; the analyzer's
-    negative-truth promise depends on telling the two apart.
+    Resource or Policy. Without this, a typo'd URI is indistinguishable from a
+    real resource that nothing touches; the analyzer's negative-truth promise
+    depends on telling the two apart.
+
+    ``kind`` names what ``node`` is. Without it the node's shape cannot decide:
+    a policy id like ``urn:bar`` looks like a URI, and a resource can be a bare
+    name (``governed_resources``). So both are looked up, and a node that names
+    a Resource AND a Policy raises a ``ContractError`` instead of silently
+    answering for one of them. With neither, a URI-shaped node reports as a
+    resource not found, anything else as a policy not found.
     """
-    if is_resource_ref(node):
-        uri = normalize_resource_uri(node)
-        with read_session() as s:
-            found = s.run("RETURN EXISTS { MATCH (:Resource {uri:$uri}) } AS ok", uri=uri).single()[
-                "ok"
-            ]
-            if not found:
-                # is_resource_ref is purely lexical: a policy id like 'mailto:foo'
-                # or 'urn:bar' looks like a URI scheme. If no Resource matches,
-                # try Policy id BEFORE declaring not-found, so URI-shaped policy
-                # ids work as `blast-radius` arguments.
-                policy_match = s.run(
-                    "RETURN EXISTS { MATCH (:Policy {id:$node}) } AS ok", node=node
-                ).single()["ok"]
-                if policy_match:
-                    return _blast_radius_policy(s, node)
+    if kind is not None and kind not in BLAST_RADIUS_KINDS:
+        raise ContractError("kind must be resource or policy")
+    with read_session() as s:
+        if kind == "policy":
+            return _blast_radius_policy(s, node)
+        shaped = is_resource_ref(node)
+        uri = normalize_resource_uri(node) if shaped or kind else canonical_for_lookup(node)
+        resource = s.run("RETURN EXISTS { MATCH (:Resource {uri:$uri}) } AS ok", uri=uri).single()[
+            "ok"
+        ]
+        if kind == "resource":
+            if not resource:
                 return {"kind": "resource", "node": uri, "found": False, "impacted": []}
             return _blast_radius_resource(s, uri)
-
-    with read_session() as s:
-        return _blast_radius_policy(s, node)
+        policy = s.run("RETURN EXISTS { MATCH (:Policy {id:$node}) } AS ok", node=node).single()[
+            "ok"
+        ]
+        if resource and policy:
+            raise ContractError(BLAST_RADIUS_AMBIGUOUS)
+        if resource:
+            return _blast_radius_resource(s, uri)
+        if policy or not shaped:
+            return _blast_radius_policy(s, node)
+        return {"kind": "resource", "node": uri, "found": False, "impacted": []}
 
 
 def _blast_radius_resource(s: Session, uri: str) -> dict:
