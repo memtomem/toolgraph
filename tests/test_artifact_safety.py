@@ -21,7 +21,7 @@ from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import CrawlResult, Governance, ToolRecord
 from toolgraph.policy_bundle import build_policy_bundle
 from toolgraph.preflight import build_preflight
-from toolgraph.uris import normalize_resource_uri
+from toolgraph.uris import ResourceUriNormalizationWarning, normalize_resource_uri
 
 
 def test_identity_preservation_and_evidence_redaction():
@@ -481,6 +481,16 @@ _PASSWORD_SHAPES = [
     'neo4j://u:"QX ZQ"@host/r',
 ]
 _MARKERS = ("SECRETPW", "QX", "ZQ")
+# The resources above that do not parse as URLs: ingesting one stores it
+# verbatim and warns. Listed rather than computed, so that losing the warning
+# fails the dry-run tests below.
+_STORED_VERBATIM = {
+    *_UNPARSEABLE,
+    "https://u:QX) ZQ@[::1/r",
+    "neo4j://u:QX/ZQ@host/r",
+    "neo4j://u:12QX/ZQ@host/r",
+    "neo4j://u:QXZQ%40host/r",
+}
 
 
 def _shown(resource: str) -> str:
@@ -515,12 +525,18 @@ def _dry_run(tmp_path, governance: dict):
     path.write_text(yaml.safe_dump(governance, allow_unicode=True))
     # A URI that cannot be canonicalized is stored verbatim, with a warning;
     # outside pytest that warning prints to stderr, so its text must not carry
-    # the password either.
+    # the password either. Only that warning is let through: the others stay
+    # errors, as pyproject sets them.
     with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+        warnings.simplefilter("always", ResourceUriNormalizationWarning)
         result = CliRunner().invoke(
             cli.app, ["ingest-manifest", "--governance", str(path), "--dry-run", "--json"]
         )
+    resources = [row["resource"] for row in governance["data_access"]]
+    resources += list(governance["governed_by"])
+    resources += [row["resource"] for row in governance.get("expected_exceptions", [])]
+    stored_verbatim = [w for w in caught if w.category is ResourceUriNormalizationWarning]
+    assert bool(stored_verbatim) == any(uri in _STORED_VERBATIM for uri in resources), caught
     for warning in caught:
         for marker in _MARKERS:
             assert marker not in str(warning.message), (warning.category, marker)

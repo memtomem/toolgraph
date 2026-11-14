@@ -21,10 +21,11 @@ NO_DOCKER_ENV = "TOOLGRAPH_TEST_NO_DOCKER"
 # Typer colors usage errors and boxes when GITHUB_ACTIONS is set, so a CLI
 # test that passed locally used to fail only on CI. Take the CI path here too.
 # Typer reads the variable once, at import, so the in-process setting is
-# assigned; the variable is for subprocesses. `_TYPER_FORCE_DISABLE_TERMINAL`
-# still turns both off together.
+# assigned; the variable is for subprocesses, and an empty one counts as unset
+# there. `_TYPER_FORCE_DISABLE_TERMINAL` still turns both off together.
 if not os.environ.get("_TYPER_FORCE_DISABLE_TERMINAL"):
-    os.environ.setdefault("GITHUB_ACTIONS", "true")
+    if not os.environ.get("GITHUB_ACTIONS"):
+        os.environ["GITHUB_ACTIONS"] = "true"
     typer.rich_utils.FORCE_TERMINAL = True
 
 
