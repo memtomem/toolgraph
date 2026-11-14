@@ -11,6 +11,7 @@ import subprocess
 import sys
 import textwrap
 import time
+from http import HTTPStatus
 
 import pytest
 from uvicorn.config import LOGGING_CONFIG
@@ -80,6 +81,23 @@ def test_an_access_line_passes_whole_or_keeps_only_its_status(args, expected, us
     _assert_hidden(formatter.format(safe))
 
 
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/mcp?page=2", 'INFO:     127.0.0.1:5000 - "GET /mcp?page=2 HTTP/1.1" 406 Not Acceptable'),
+        ("/mcp?token=QXZQ", f'INFO:     - - "- {WITHHELD} HTTP/-" 406 Not Acceptable'),
+    ],
+)
+def test_an_http_status_member_counts_as_the_status(path, expected):
+    # The MCP SDK answers with HTTPStatus members, which uvicorn logs as given.
+    args = ("127.0.0.1:5000", "GET", path, "1.1", HTTPStatus.NOT_ACCEPTABLE)
+
+    safe = log_safety.AccessLogFilter().filter(_record(args))
+
+    assert type(safe.args[4]) is int
+    assert AccessFormatter(ACCESS_FMT, use_colors=False).format(safe) == expected
+
+
 def test_the_plain_access_lines_read_as_expected():
     formatter = AccessFormatter(ACCESS_FMT, use_colors=False)
     lines = [
@@ -103,6 +121,24 @@ def test_a_message_that_is_not_the_access_format_is_withheld():
     safe = log_safety.AccessLogFilter().filter(record)
 
     assert (safe.msg, safe.args) == (ACCESS_FORMAT, _withheld(200))
+
+
+class _FormatsAsCredential(str):
+    """Reads as ``/mcp`` through ``%s``; an f-string shows a credential."""
+
+    def __format__(self, spec: str) -> str:
+        return "token=QXZQ"
+
+
+@pytest.mark.parametrize("use_colors", [False, True])
+def test_a_field_that_is_not_a_plain_string_is_withheld(use_colors):
+    formatter = AccessFormatter(ACCESS_FMT, use_colors=use_colors)
+    args = ("127.0.0.1:5000", "GET", _FormatsAsCredential("/mcp"), "1.1", 200)
+
+    safe = log_safety.AccessLogFilter().filter(_record(args))
+
+    assert safe.args == _withheld(200)
+    _assert_hidden(formatter.format(safe))
 
 
 @pytest.mark.parametrize("use_colors", [False, True])
@@ -216,13 +252,13 @@ def test_each_uvicorn_logger_gets_one_filter(uvicorn_filters):
     assert kinds == {
         "uvicorn.access": [log_safety.AccessLogFilter],
         "uvicorn.error": [log_safety.RedactingFilter],
-        "uvicorn.asgi": [log_safety.RedactingFilter],
+        "uvicorn.asgi": [log_safety._DropFilter],
     }
 
 
-@pytest.mark.parametrize("name", ["uvicorn.error", "uvicorn.asgi"])
 @pytest.mark.parametrize("use_colors", [False, True])
-def test_uvicorn_error_records_are_rebuilt_without_input(name, use_colors, uvicorn_filters):
+def test_uvicorn_error_records_are_rebuilt_without_input(use_colors, uvicorn_filters):
+    name = "uvicorn.error"
     log_safety.filter_uvicorn_loggers()
     try:
         raise RuntimeError("connect neo4j://u:QXZQ@h failed")
@@ -245,6 +281,23 @@ def test_uvicorn_error_records_are_rebuilt_without_input(name, use_colors, uvico
     assert "Traceback" not in text
     assert text.splitlines()[-1] == "RuntimeError: connect neo4j://h failed"
     _assert_hidden(text)
+
+
+def test_uvicorn_asgi_scope_dumps_are_dropped(uvicorn_filters):
+    # What uvicorn's message logger writes at TRACE: the whole scope, so a
+    # credential can span fields (method and path) or sit in a header.
+    log_safety.filter_uvicorn_loggers()
+    record = logging.getLogger("uvicorn.asgi").makeRecord(
+        "uvicorn.asgi",
+        5,
+        "message_logger.py",
+        1,
+        "%s Started scope=%s",
+        ("ASGI [1]", {"method": "Bearer", "path": "/QXZQ"}),
+        None,
+    )
+
+    assert logging.getLogger("uvicorn.asgi").filter(record) is False
 
 
 # uvicorn replaces its loggers' handlers when a Config is made; the filters
@@ -287,8 +340,11 @@ def _free_port() -> int:
 
 
 def _request(port: int, request_line: str) -> None:
+    # A Host with the port passes the SDK's host check, so a request reaches
+    # the MCP transport and is answered with an HTTPStatus member.
+    head = f"{request_line}\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     with socket.create_connection(("127.0.0.1", port), timeout=10) as sock:
-        sock.sendall(f"{request_line}\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".encode())
+        sock.sendall(head.encode())
         while sock.recv(4096):
             pass
 
@@ -335,13 +391,17 @@ def test_a_served_request_line_with_a_credential_is_withheld(tmp_path):
             _request(port, line)
     finally:
         proc.terminate()
-        stdout, stderr = proc.communicate(timeout=30)
+        try:
+            stdout, stderr = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate()
 
-    request_lines = re.findall(r' - "(.*)" \d{3}', stdout)
+    request_lines = re.findall(r' - "(.*)" (\d{3})', stdout)
     assert request_lines == [
-        "GET /mcp?page=2 HTTP/1.1",
-        f"- {WITHHELD} HTTP/-",
-        f"- {WITHHELD} HTTP/-",
-        f"- {WITHHELD} HTTP/-",
+        ("GET /mcp?page=2 HTTP/1.1", "406"),
+        (f"- {WITHHELD} HTTP/-", "406"),
+        (f"- {WITHHELD} HTTP/-", "400"),
+        (f"- {WITHHELD} HTTP/-", "404"),
     ]
     _assert_hidden(stdout + stderr)

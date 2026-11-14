@@ -179,10 +179,12 @@ class AccessLogFilter(logging.Filter):
     misses a credential the fields form together (a ``Bearer`` method before
     a ``/<token>`` path) or one sent as a proxied client address.
 
-    A record whose message is not uvicorn's access format is withheld too:
-    AccessFormatter prints the arguments whatever the message says. One
-    whose arguments the access formatter cannot read is dropped, since a
-    formatter error prints the logging call's traceback and source.
+    A record whose message is not uvicorn's access format, whose text fields
+    are not plain ``str``, or whose status is not an ``int`` is withheld too:
+    AccessFormatter prints the arguments whatever the message says, through
+    f-strings that a subclass's ``__format__`` can make differ from the ``%``
+    text judged here. One whose arguments the access formatter cannot read is dropped,
+    since a formatter error prints the logging call's traceback and source.
     """
 
     def filter(self, record: logging.LogRecord) -> logging.LogRecord | bool:
@@ -191,17 +193,23 @@ class AccessLogFilter(logging.Filter):
             return False
         try:
             message = record.getMessage()
+            # The MCP SDK answers with HTTPStatus members; the formatter reads
+            # the status through int(), so its digits are all that prints.
+            status = int(args[4]) if isinstance(args[4], int) else None
             clean = (
                 record.msg == _ACCESS_FORMAT
+                and status is not None
+                and all(type(arg) is str for arg in args[:4])
                 and not _credential_shaped_value(args)
                 and redact_text(message) == message
             )
         except Exception:
             return False
-        if not clean:
-            status = args[4] if isinstance(args[4], int) else 0
-            args = ("-", "-", WITHHELD, "-", status)
-        return _rebuilt(record, _ACCESS_FORMAT, args)
+        if clean:
+            fields = (*args[:4], status)
+        else:
+            fields = ("-", "-", WITHHELD, "-", 0 if status is None else status)
+        return _rebuilt(record, _ACCESS_FORMAT, fields)
 
 
 def install(handler: logging.Handler) -> None:
@@ -226,17 +234,26 @@ def filtering_root_handlers_if_unconfigured() -> Iterator[None]:
             install(handler)
 
 
+class _DropFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return False
+
+
 def filter_uvicorn_loggers() -> None:
     """Filter what uvicorn logs while it serves the MCP app over HTTP.
 
     uvicorn logs on its own loggers with its own handlers, which it replaces
     when it starts; a filter on the logger itself survives that. A program
     that runs the app under its own server owns that logging instead.
+
+    ``uvicorn.asgi`` logs whole ASGI scopes and messages, headers included,
+    at uvicorn's TRACE level, which the MCP server's log level cannot select;
+    its records are dropped rather than scrubbed.
     """
     for name, kind in (
         ("uvicorn.access", AccessLogFilter),
         ("uvicorn.error", RedactingFilter),
-        ("uvicorn.asgi", RedactingFilter),
+        ("uvicorn.asgi", _DropFilter),
     ):
         logger = logging.getLogger(name)
         if not any(isinstance(f, kind) for f in logger.filters):

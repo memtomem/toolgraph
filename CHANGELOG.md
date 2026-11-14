@@ -81,9 +81,9 @@ All notable changes to Toolgraph are documented here.
   line is judged whole, a request whose query holds a URI with a path
   (`?url=https://example.org/docs`) is withheld too, since a URI's path is
   hidden wherever Toolgraph prints one. uvicorn's server log goes through the
-  #206 filter: each exception in a traceback prints as one line, as
-  Toolgraph's own server log does. A program that runs the MCP app under its
-  own uvicorn keeps its own logging.
+  #206 filter: a traceback prints as its redacted exception chain without
+  frames, as Toolgraph's own server log does. A program that runs the MCP app
+  under its own uvicorn keeps its own logging.
 
 ## 0.4.1 - 2026-11-09
 
