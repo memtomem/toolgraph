@@ -315,6 +315,22 @@ def backend_name() -> str:
     return backend
 
 
+def check_backend_selected() -> str:
+    """Refuse a backend selection that cannot work, without opening the backend.
+
+    Reads the settings (refusing no backend, a configuration conflict or an
+    unreadable runtime config), checks the backend name, and for Neo4j checks
+    that the ``neo4j`` extra imports. It creates no driver or database handle
+    and contacts nothing, so an unreachable server, rejected credentials or a
+    malformed ``NEO4J_URI`` still surface when the graph is first opened.
+    Ladybug is a core dependency and is not import-checked here.
+    """
+    backend = backend_name()
+    if backend == "neo4j":
+        _neo4j()
+    return backend
+
+
 def get_driver() -> Driver:
     """Return the process-wide Neo4j driver."""
     if backend_name() != "neo4j":

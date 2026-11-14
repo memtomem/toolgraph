@@ -163,7 +163,7 @@ review_candidates_app = typer.Typer(
 )
 policy_app = typer.Typer(
     add_completion=False,
-    help="Compile and review portable policy artifacts.",
+    help="Preview and gate governance changes; compile, review and propose policy artifacts.",
 )
 example_app = typer.Typer(
     add_completion=False,
@@ -243,7 +243,7 @@ def main(
         try:
             config.configure(config_path)
         except RuntimeError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--config") from None
+            raise typer.BadParameter(str(exc), param_hint=["--config"]) from None
 
 
 @example_app.command("init")
@@ -256,7 +256,7 @@ def example_init(
     destination = destination.expanduser().resolve()
     if destination.exists():
         raise typer.BadParameter(
-            f"destination already exists: {display_path(destination)}", param_hint="DESTINATION"
+            f"destination already exists: {display_path(destination)}", param_hint=["DESTINATION"]
         )
     source = files("toolgraph").joinpath("quickstart")
     # Stage next to the destination and rename once complete: a failure
@@ -307,7 +307,7 @@ def init_backend(
     """Initialize a versioned local backend configuration."""
     normalized = backend.lower().strip()
     if normalized not in {"ladybug", "neo4j"}:
-        raise typer.BadParameter("expected ladybug or neo4j", param_hint="--backend")
+        raise typer.BadParameter("expected ladybug or neo4j", param_hint=["--backend"])
     state_dir = state_dir.expanduser().resolve()
     runtime_path = state_dir / "config.json"
     db_path = state_dir / "toolgraph.lbug"
@@ -394,19 +394,33 @@ def doctor(
         raise typer.Exit(code=1)
 
 
+def _positive_seconds(value: float) -> float:
+    # Not `min=`: a range check lets NaN through, as every comparison with it
+    # is false. inf passes and leaves the crawl without a timeout.
+    if not value > 0:
+        raise typer.BadParameter("must be a positive number of seconds")
+    return value
+
+
 @app.command()
 @_reports_backend_outage
 def crawl(
     servers: Path = typer.Option(None, help="Path to servers.yaml (defaults to config)."),
-    timeout: float = typer.Option(DEFAULT_TIMEOUT, help="Per-server crawl timeout (seconds)."),
+    timeout: float = typer.Option(
+        DEFAULT_TIMEOUT,
+        callback=_positive_seconds,
+        help="Per-server crawl timeout in seconds, above 0; inf for none.",
+    ),
     max_catalog_bytes: int = typer.Option(
         DEFAULT_MAX_CATALOG_BYTES,
+        min=1,
         help="Per-server cap on retained catalog data: UTF-8 bytes of the JSON of "
         "every tool and resource record kept (ADR-0016). A server over it fails "
         "and is not loaded. Bounds retained data, not transport buffering.",
     ),
     max_catalog_records: int = typer.Option(
         DEFAULT_MAX_CATALOG_RECORDS,
+        min=1,
         help="Per-server cap on retained tool and resource records combined (ADR-0016).",
     ),
     prune: bool = typer.Option(
@@ -429,11 +443,7 @@ def crawl(
     fleet, while a blank file or a file without the key exits 1 before any
     server is contacted (ADR-0014).
     """
-    try:
-        budget = CatalogBudget(max_records=max_catalog_records, max_bytes=max_catalog_bytes)
-    except ValueError as exc:
-        typer.echo(f"Invalid catalog budget: {exc}", err=True)
-        raise typer.Exit(code=1) from None
+    budget = CatalogBudget(max_records=max_catalog_records, max_bytes=max_catalog_bytes)
     path = servers or config.settings.servers_config
     try:
         specs = load_servers_config(path)
@@ -454,6 +464,9 @@ def crawl(
             err=True,
         )
         raise typer.Exit(code=1)
+    # Before any server is launched: a backend that cannot be used would
+    # otherwise be found only after every server had been crawled.
+    driver.check_backend_selected()
     typer.echo(f"Crawling {len(specs)} server(s) from {display_path(path)} ...")
 
     results, failures = crawl_all(specs, timeout=timeout, budget=budget)
@@ -523,7 +536,7 @@ def ingest_manifest(
 ) -> None:
     """Ingest authored governance (agents, policies, ACL, data access, GOVERNED_BY)."""
     if json_output and not dry_run:
-        raise typer.BadParameter("--json requires --dry-run")
+        raise typer.BadParameter("requires --dry-run", param_hint=["--json"])
     path = governance or config.settings.governance_config
     try:
         gov = load_governance(path)
@@ -700,7 +713,7 @@ def blast_radius(
     try:
         result = queries.blast_radius(node, kind.value if kind else None)
     except ContractError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--kind") from None
+        raise typer.BadParameter(str(exc), param_hint=["--kind"]) from None
     typer.echo(json.dumps(result, indent=2))
 
 
@@ -826,7 +839,8 @@ def audit_report(
 
 def _selector_profile(profile: str) -> str:
     if problem := selector.profile_error(profile):
-        raise typer.BadParameter(problem)
+        # A list hint is quoted ('--profile'), like the hints Click derives.
+        raise typer.BadParameter(problem, param_hint=["--profile"])
     return profile
 
 
@@ -839,7 +853,7 @@ def _bounded_candidates(candidates: list[str]) -> list[str]:
     if len(candidates) > MAX_CLI_CANDIDATES:
         raise typer.BadParameter(
             f"{len(candidates)} candidates exceed the {MAX_CLI_CANDIDATES} limit",
-            param_hint="CANDIDATES",
+            param_hint=["CANDIDATES"],
         )
     return candidates
 
@@ -1018,11 +1032,24 @@ def policy_impact(
     candidates: list[str] = typer.Argument(
         ..., help="Explicit tool refs; qualified keys preferred."
     ),
-    agent: str = typer.Option(..., "--agent"),
-    profile: str = typer.Option(selector.DEFAULT_PROFILE, "--profile"),
-    format: AuditReportFormat = typer.Option(AuditReportFormat.markdown, "--format"),
+    agent: str = typer.Option(..., "--agent", help="Agent whose selector decisions are compared."),
+    profile: str = typer.Option(
+        selector.DEFAULT_PROFILE,
+        "--profile",
+        help="Named rule set: strict (production default) / review / explore.",
+    ),
+    format: AuditReportFormat = typer.Option(
+        AuditReportFormat.markdown,
+        "--format",
+        help="Output format: json (automation) or markdown (human review).",
+    ),
     output: Path | None = typer.Option(None, "--output", help="Private report destination."),
-    strict_drift: bool = typer.Option(False, "--strict-drift"),
+    strict_drift: bool = typer.Option(
+        False,
+        "--strict-drift",
+        help="Treat drifted tool refs (no live EXPOSES edge) as errors that "
+        "reject the manifest. Default: non-fatal notice.",
+    ),
 ) -> None:
     """Compare current and proposed selector decisions without applying policy."""
     _selector_profile(profile)
@@ -1065,7 +1092,11 @@ def policy_impact(
 @_reports_backend_outage
 def policy_check(
     impact: Path = typer.Argument(..., help="JSON impact report with proposed-side expectations."),
-    format: AuditReportFormat = typer.Option(AuditReportFormat.markdown, "--format"),
+    format: AuditReportFormat = typer.Option(
+        AuditReportFormat.markdown,
+        "--format",
+        help="Output format: json (automation) or markdown (human review).",
+    ),
 ) -> None:
     """Explicit regression gate against the current graph; never applies a manifest."""
     try:
@@ -1271,11 +1302,11 @@ def review_candidates_annotate(
     try:
         reviewer = normalize_reviewer(reviewer)
     except ReviewCandidateError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--reviewer") from exc
+        raise typer.BadParameter(str(exc), param_hint=["--reviewer"]) from exc
     try:
         note = normalize_note(note)
     except ReviewCandidateError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--note") from exc
+        raise typer.BadParameter(str(exc), param_hint=["--note"]) from exc
     try:
         payload = annotate_candidate(
             report,

@@ -494,7 +494,7 @@ def test_blast_radius_cli_reports_the_ambiguity_as_a_usage_error(backend_graph):
     # wraps it at any character, so compare the text without codes, box edges
     # or whitespace.
     shown = re.sub(r"[\s│]", "", re.sub(r"\x1b\[[0-9;]*m", "", ambiguous.stderr))
-    assert "Invalidvaluefor--kind:" in shown
+    assert "Invalidvaluefor'--kind':" in shown
     assert re.sub(r"\s", "", queries.BLAST_RADIUS_AMBIGUOUS) in shown
 
     chosen = runner.invoke(cli_app, ["blast-radius", "urn:x", "--kind", "policy"])

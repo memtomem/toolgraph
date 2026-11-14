@@ -432,7 +432,7 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
 | `init` | 0 · 1 when `--state-dir` cannot be created · 2 on a `--backend` other than `ladybug` / `neo4j` |
 | `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict or no configured backend |
-| `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) |
+| `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) · 1 before any server is launched when no backend is configured, the configuration conflicts or cannot be read, `TOOLGRAPH_BACKEND` is unknown, or Neo4j is selected without the `neo4j` extra · 2 on a `--timeout` not above 0 or a catalog budget below 1 |
 | `ingest-manifest` | 1 on an unreadable or invalid file · 1 when the manifest is REJECTED (graph unchanged) |
 | `ingest-manifest --dry-run [--json]` | 0 when the manifest would apply · 1 when it would be rejected (the `--json` report is still printed) · 2 for `--json` without `--dry-run` |
 | `reset` | 0 · 1 without `--yes` (the refusal goes to stdout) |
@@ -441,6 +441,8 @@ to stderr) and exit 0 by default — gating is opt-in.
 | `audit-report --fail-on-blocking` | 1 when `status` is `fail` (unsafe violations or drifted governed tools) |
 | `preflight` | 0 for advisory allow, warn, and unresolved identity · 1 when the artifact cannot be built or written |
 | `control-preflight` | 0 including advisory warnings · 1 on an invalid plan or an I/O failure |
+| `policy impact` | 0 after printing or writing the report, including for an unknown `--agent` (its comparisons are reported as unresolved) · 1 on an unreadable or invalid manifest, an `--output` that names the manifest, unresolved graph state, or I/O failure · 2 on an unknown `--profile` |
+| `policy check` | 0 when every expectation holds, including after governance or generation changes · 1 when an expectation no longer holds (the result is still printed) · 1 with one `ERROR:` line and no result for an invalid impact file, one with unresolved comparisons, or one from another graph instance or scoped catalog. Exit 1 is this command's purpose, not an opt-in gate (ADR-0003) |
 | `policy compile` | 0 after atomic bundle replacement (see the note below on escalated durability warnings) · 1 on unresolved identity/state or I/O failure |
 | `policy review-plan` | 0 · 1 on an invalid or stale report, unresolved graph state, or I/O failure |
 | `policy propose` | 0 · 1 on invalid input or a refused export · 2 for `--json` with `--output`, or `--min-would-block` below 1 |
@@ -809,8 +811,8 @@ message over MCP and a usage error (exit 2) on the CLI.
 
 The other commands have no MCP tool: `example init`, `init`, `init-schema`,
 `check`, `doctor`, `crawl`, `ingest-manifest`, `reset`, `serve`, `preflight`,
-`control-preflight`, `policy compile` / `review-plan` / `propose`, and
-`review-candidates list` / `annotate`.
+`control-preflight`, `policy impact` / `check` / `compile` / `review-plan` /
+`propose`, and `review-candidates list` / `annotate`.
 
 ## Inputs
 

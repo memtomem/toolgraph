@@ -23,6 +23,9 @@ gating must be opt-in.
    - `unsafe-tools --fail-on-violation` → exit 1 when any `violation` row
      remains after filtering.
    - Not-found verdicts keep their existing nonzero exits.
+   - `policy check` is itself an explicit gate command (ADR-0015): its exit 1
+     on an expectation that no longer holds is the command's purpose, not a
+     default-on gate.
 3. The exit-code table is documented in the README; it is a contract, not an
    implementation detail.
 

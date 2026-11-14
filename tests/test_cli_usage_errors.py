@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import json
-import re
 import sys
 from email.message import Message
 from pathlib import Path
@@ -14,6 +13,7 @@ from urllib.error import HTTPError
 import pytest
 from typer.testing import CliRunner
 
+from tests._helpers import flat_output
 from toolgraph.cli import app
 from toolgraph.error_text import describe_error
 from toolgraph.redaction import PATH_WITHHELD, VALUE_WITHHELD, WITHHELD, display_path
@@ -36,14 +36,6 @@ def _run(args: list[str]):
     return CliRunner().invoke(app, args)
 
 
-def _flat(output: str) -> str:
-    """Typer's error box wraps long lines, and colors them on CI; join it back
-    into one plain line."""
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
-    lines = [line.strip("│╭╮╰╯─ ") for line in plain.splitlines()]
-    return " ".join(line for line in lines if line)
-
-
 def _assert_hidden(text: str) -> None:
     assert "QX" not in text
     assert "ZQ" not in text
@@ -57,8 +49,14 @@ def _assert_hidden(text: str) -> None:
         (["check", "--?%74oken%3DQXZQ"], WITHHELD),
         (["crawl", "--timeout", PLAIN], f"Invalid value for '--timeout': {WITHHELD}"),
         (["crawl", "--max-catalog-bytes", ENCODED], f"'--max-catalog-bytes': {WITHHELD}"),
-        (["eligible-tools", "a", "b", "--profile", ENCODED], f"Invalid value: {WITHHELD}"),
-        (["selection-explain", "a", "b", "--profile", PLAIN], f"Invalid value: {WITHHELD}"),
+        (
+            ["eligible-tools", "a", "b", "--profile", ENCODED],
+            f"Invalid value for '--profile': {WITHHELD}",
+        ),
+        (
+            ["selection-explain", "a", "b", "--profile", PLAIN],
+            f"Invalid value for '--profile': {WITHHELD}",
+        ),
         (
             ["policy", "propose", "g", "o", "--min-would-block", PLAIN],
             f"Invalid value for '--min-would-block': {WITHHELD}",
@@ -100,7 +98,7 @@ def test_usage_errors_are_scrubbed(args, shown):
     result = _run(args)
 
     assert result.exit_code == 2
-    assert shown in _flat(result.output)
+    assert shown in flat_output(result.output)
     _assert_hidden(result.output)
 
 
@@ -110,7 +108,7 @@ def test_usage_errors_are_scrubbed(args, shown):
         (["chek"], "No such command 'chek'. Did you mean 'check'?"),
         (
             ["eligible-tools", "a", "b", "--profile", "prod"],
-            "Invalid value: unknown profile 'prod' — expected one of",
+            "Invalid value for '--profile': unknown profile 'prod' — expected one of",
         ),
         (
             ["crawl", "--timeout", "soon"],
@@ -122,7 +120,7 @@ def test_ordinary_usage_errors_are_unchanged(args, shown):
     result = _run(args)
 
     assert result.exit_code == 2
-    assert shown in _flat(result.output)
+    assert shown in flat_output(result.output)
 
 
 def test_an_unknown_profile_keeps_the_valid_profiles_when_its_value_goes():
@@ -132,11 +130,11 @@ def test_an_unknown_profile_keeps_the_valid_profiles_when_its_value_goes():
 
     assert result.exit_code == 2
     shown = (
-        f"Invalid value: unknown profile {VALUE_WITHHELD} "
+        f"Invalid value for '--profile': unknown profile {VALUE_WITHHELD} "
         "— expected one of ['explore', 'review', 'strict']"
     )
     # The error box may wrap this line anywhere (#250); the message ends it.
-    assert "".join(_flat(result.output).split()).endswith("".join(shown.split()))
+    assert "".join(flat_output(result.output).split()).endswith("".join(shown.split()))
 
 
 def test_a_usage_error_with_a_credential_shaped_token_is_withheld_whole(tmp_path, fresh_settings):
@@ -144,7 +142,7 @@ def test_a_usage_error_with_a_credential_shaped_token_is_withheld_whole(tmp_path
     result = _run(["--config", str(tmp_path / ENCODED), "check"])
 
     assert result.exit_code == 2
-    assert f"Invalid value for --config: {WITHHELD}" in _flat(result.output)
+    assert f"Invalid value for '--config': {WITHHELD}" in flat_output(result.output)
     _assert_hidden(result.output)
 
 
@@ -160,7 +158,7 @@ def test_an_ordinary_config_path_is_shown(path, fresh_settings):
     # box wraps that line at any character, so the comparison ignores the
     # whitespace a wrap inserts. The paths themselves hold none.
     assert "".join(path.split()) == path
-    assert path in "".join(_flat(result.output).split())
+    assert path in "".join(flat_output(result.output).split())
 
 
 INVALID_SERVERS = "servers:\n  - name: 1\n    bogus: x\n"
@@ -324,7 +322,7 @@ def test_ordinary_text_still_goes_through_the_scrubber():
     result = _run(["crawl", "--timeout", "token:QXZQ"])
 
     assert result.exit_code == 2
-    assert "Invalid value for '--timeout': 'token=<redacted> is not a valid float." in _flat(
+    assert "Invalid value for '--timeout': 'token=<redacted> is not a valid float." in flat_output(
         result.output
     )
     _assert_hidden(result.output)

@@ -10,14 +10,17 @@ not-found/ambiguous verdicts so a typo can't pass as a clean run.
 from __future__ import annotations
 
 import json
+import math
+import os
 import re
+import subprocess
 import sys
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
-from tests._helpers import CLICK_SPLITS_STREAMS, CSV, seed_basic
+from tests._helpers import CLICK_SPLITS_STREAMS, CSV, flat_output, seed_basic, usage_error_text
 from toolgraph import __version__, cli
 from toolgraph.cli import app
 from toolgraph.graph import driver, loader
@@ -32,6 +35,7 @@ from toolgraph.models import (
     ResourceRecord,
     ToolRecord,
 )
+from toolgraph.redaction import WITHHELD, display_path
 
 
 def _seed(exceptions: list[ExpectedException] | None = None) -> None:
@@ -481,7 +485,9 @@ def test_json_options_are_rejected_before_graph_or_file_access(monkeypatch):
     assert "cannot be combined" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     result = runner.invoke(cli.app, ["ingest-manifest", "--json"])
     assert result.exit_code == 2
-    assert "requires --dry-run" in re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert flat_output(result.stderr) == usage_error_text(
+        "ingest-manifest [OPTIONS]", "Invalid value for '--json': requires --dry-run"
+    )
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
@@ -528,3 +534,269 @@ def test_invalid_governance_error_never_quotes_a_credential_key(tmp_path, docume
     assert result.exit_code == 1
     assert result.output.strip().endswith(f"governance.yaml: {detail}")
     assert "SECRET" not in result.output
+
+
+# --- flag values and the backend are checked before any work -------------
+
+UNKNOWN_PROFILE = (
+    "Invalid value for '--profile': unknown profile 'bogus' "
+    "— expected one of ['explore', 'review', 'strict']"
+)
+
+
+@pytest.mark.parametrize(
+    ("args", "usage"),
+    [
+        (["eligible-tools", "a", "x"], "eligible-tools [OPTIONS] {agent} {candidates}..."),
+        (["selection-explain", "a", "x"], "selection-explain [OPTIONS] {agent} {tool}"),
+        (["preflight", "a", "x", "--run-id", "r"], "preflight [OPTIONS] {agent} {candidates}..."),
+        (["control-preflight", "plan.json"], "control-preflight [OPTIONS] {plan}"),
+        (
+            ["policy", "impact", "g.yaml", "x", "--agent", "a"],
+            "policy impact [OPTIONS] {governance} {candidates}...",
+        ),
+        (["policy", "compile", "--agent", "a", "--output", "b.json"], "policy compile [OPTIONS]"),
+        (
+            ["policy", "review-plan", "report.json", "--agent", "a", "--output", "plan.json"],
+            "policy review-plan [OPTIONS] {report}",
+        ),
+    ],
+    ids=[
+        "eligible-tools",
+        "selection-explain",
+        "preflight",
+        "control-preflight",
+        "policy-impact",
+        "policy-compile",
+        "policy-review-plan",
+    ],
+)
+def test_an_unknown_profile_names_its_flag(args, usage):
+    result = CliRunner().invoke(cli.app, [*args, "--profile", "bogus"])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert flat_output(result.stderr) == usage_error_text(usage, UNKNOWN_PROFILE)
+
+
+@pytest.mark.parametrize(
+    ("args", "usage", "message"),
+    [
+        (
+            ["--config", "missing.json", "check"],
+            "[OPTIONS] COMMAND [ARGS]...",
+            "Invalid value for '--config': Toolgraph runtime config does not exist: {missing}",
+        ),
+        (
+            ["example", "init", "exists"],
+            "example init [OPTIONS] [destination]",
+            "Invalid value for 'DESTINATION': destination already exists: {exists}",
+        ),
+        (
+            ["init", "--backend", "bogus"],
+            "init [OPTIONS]",
+            "Invalid value for '--backend': expected ladybug or neo4j",
+        ),
+        (
+            ["eligible-tools", "a", *["x"] * 4097],
+            "eligible-tools [OPTIONS] {{agent}} {{candidates}}...",
+            "Invalid value for 'CANDIDATES': 4097 candidates exceed the 4096 limit",
+        ),
+        (
+            ["review-candidates", "annotate", "r.json", "c", "--status", "accepted"]
+            + ["--reviewer", "   "],
+            "review-candidates annotate [OPTIONS] {{report}} {{candidate_id}}",
+            "Invalid value for '--reviewer': "
+            "reviewer must be a non-empty single line of at most 256 characters",
+        ),
+        (
+            ["review-candidates", "annotate", "r.json", "c", "--status", "accepted"]
+            + ["--reviewer", "operator", "--note", "a\nb"],
+            "review-candidates annotate [OPTIONS] {{report}} {{candidate_id}}",
+            "Invalid value for '--note': "
+            "note must be a non-empty single line of at most 500 characters",
+        ),
+    ],
+    ids=["config", "destination", "backend", "candidates", "reviewer", "note"],
+)
+def test_a_parameter_named_in_a_usage_error_is_quoted(
+    tmp_path, monkeypatch, fresh_settings, args, usage, message
+):
+    """Toolgraph's own BadParameter hints read like the ones Click derives."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "exists").mkdir()
+    paths = {
+        "missing": display_path((tmp_path / "missing.json").resolve()),
+        "exists": display_path((tmp_path / "exists").resolve()),
+    }
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    # A long path wraps inside a word in the error box (#250): compare
+    # without whitespace.
+    expected = usage_error_text(usage.format(**paths), message.format(**paths))
+    assert "".join(flat_output(result.stderr).split()) == "".join(expected.split())
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "-inf", "1e-400"])
+def test_a_crawl_timeout_not_above_zero_is_a_usage_error(monkeypatch, value):
+    monkeypatch.setattr(cli, "crawl_all", lambda *a, **k: pytest.fail("must not crawl"))
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--timeout", value])
+
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert flat_output(result.stderr) == usage_error_text(
+        "crawl [OPTIONS]", "Invalid value for '--timeout': must be a positive number of seconds"
+    )
+
+
+def test_a_crawl_timeout_of_inf_crawls_without_one(backend_graph, tmp_path, monkeypatch):
+    servers = tmp_path / "servers.yaml"
+    servers.write_text("servers: []\n", encoding="utf-8")
+    seen = []
+
+    def crawl_all(specs, *, timeout, budget):
+        seen.append(timeout)
+        return [], []
+
+    monkeypatch.setattr(cli, "crawl_all", crawl_all)
+    result = CliRunner().invoke(
+        cli.app, ["crawl", "--servers", str(servers), "--timeout", "inf", "--no-prune"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == [math.inf]
+
+
+@pytest.mark.parametrize("force_color", [False, True])
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [(["--timeout", "-1"], "--timeout"), (["--max-catalog-records", "0"], "--max-catalog-records")],
+)
+def test_a_range_error_is_withheld_whole_beside_a_credential(monkeypatch, args, flag, force_color):
+    """The value is a plain number, but another token is credential-shaped, so
+    the message is withheld whole, as for every other usage error."""
+    if force_color:
+        monkeypatch.setenv("FORCE_COLOR", "1")
+    monkeypatch.setattr(cli, "crawl_all", lambda *a, **k: pytest.fail("must not crawl"))
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", "password=QXZQ", *args])
+
+    assert result.exit_code == 2
+    assert flat_output(result.stderr) == usage_error_text(
+        "crawl [OPTIONS]", f"Invalid value for '{flag}': {WITHHELD}"
+    )
+    assert "QXZQ" not in result.output
+
+
+@pytest.fixture
+def no_backend(tmp_path, monkeypatch, fresh_settings):
+    """A working directory where nothing names a backend: no runtime config,
+    no `.env`, no TOOLGRAPH_* variables, no cached settings."""
+    for name in ("TOOLGRAPH_BACKEND", "TOOLGRAPH_DB_PATH", "TOOLGRAPH_CONFIG", "TOOLGRAPH_SERVERS"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    driver.close_driver()
+    yield tmp_path
+    driver.close_driver()
+
+
+NO_BACKEND = (
+    "ERROR: no backend configured: run `toolgraph init`, or set TOOLGRAPH_BACKEND "
+    "to ladybug or neo4j\n"
+)
+UNKNOWN_BACKEND = "ERROR: unknown TOOLGRAPH_BACKEND 'bogus'; expected 'neo4j' or 'ladybug'\n"
+NO_NEO4J_EXTRA = (
+    "ERROR: backend=neo4j requires the 'neo4j' extra: "
+    "install with `uv sync --extra neo4j` or `pip install toolgraph[neo4j]`\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("backend", "expected"),
+    [(None, NO_BACKEND), ("bogus", UNKNOWN_BACKEND), ("neo4j", NO_NEO4J_EXTRA)],
+    ids=["none", "unknown", "neo4j-without-extra"],
+)
+def test_crawl_refuses_an_unusable_backend_before_crawling(
+    no_backend, monkeypatch, backend, expected
+):
+    if backend is not None:
+        monkeypatch.setenv("TOOLGRAPH_BACKEND", backend)
+    # A None entry makes `import neo4j` raise ImportError.
+    monkeypatch.setitem(sys.modules, "neo4j", None)
+    monkeypatch.setattr(cli, "crawl_all", lambda *a, **k: pytest.fail("must not crawl"))
+    servers = no_backend / "fleet.yaml"
+    servers.write_text("servers: []\n", encoding="utf-8")
+
+    result = CliRunner().invoke(cli.app, ["crawl", "--servers", str(servers)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == expected
+
+
+@pytest.mark.parametrize(
+    ("backend", "servers_flag", "first"),
+    [
+        # A servers file named on the command line is read first ...
+        (None, True, "Invalid servers config at "),
+        # ... while the default one is found through the settings, so a
+        # backend that cannot be resolved is refused before it is read ...
+        (None, False, NO_BACKEND),
+        # ... but an unknown name resolves, and is refused after the file.
+        ("bogus", False, "Invalid servers config at "),
+    ],
+    ids=["servers-flag", "default-servers", "default-servers-unknown-name"],
+)
+def test_crawl_error_precedence_is_unchanged(no_backend, monkeypatch, backend, servers_flag, first):
+    if backend is not None:
+        monkeypatch.setenv("TOOLGRAPH_BACKEND", backend)
+    monkeypatch.setattr(cli, "crawl_all", lambda *a, **k: pytest.fail("must not crawl"))
+    args = ["crawl", "--servers", str(no_backend / "missing.yaml")] if servers_flag else ["crawl"]
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith(first)
+
+
+def test_crawl_launches_no_server_when_the_backend_is_unusable(tmp_path):
+    """Run as a real process: a server writes a marker when it is launched."""
+    marker = tmp_path / "launched"
+    servers = tmp_path / "servers.yaml"
+    probe = {
+        "name": "probe",
+        "transport": "stdio",
+        "command": sys.executable,
+        "args": ["-c", f"open({str(marker)!r}, 'w').close()"],
+    }
+    servers.write_text(yaml.safe_dump({"servers": [probe]}), encoding="utf-8")
+    base = {key: value for key, value in os.environ.items() if not key.startswith("TOOLGRAPH_")}
+
+    def crawl(env):
+        return subprocess.run(
+            [sys.executable, "-m", "toolgraph.cli", "crawl", "--servers", str(servers)]
+            + ["--timeout", "20", "--no-prune"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=tmp_path,
+            env=env,
+            timeout=120,
+        )
+
+    refused = crawl({**base, "TOOLGRAPH_BACKEND": "bogus"})
+    assert refused.returncode == 1
+    assert refused.stdout == ""
+    assert refused.stderr == UNKNOWN_BACKEND
+    assert not marker.exists()
+
+    # Control: the same file does launch the server once the backend is usable.
+    launched = crawl(
+        {**base, "TOOLGRAPH_BACKEND": "ladybug", "TOOLGRAPH_DB_PATH": str(tmp_path / "g.lbug")}
+    )
+    assert launched.stdout.startswith("Crawling 1 server(s)"), launched.stderr
+    assert marker.exists()

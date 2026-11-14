@@ -621,3 +621,56 @@ def test_display_controls_are_visible_without_changing_json_or_identity(control)
     assert control not in block
     assert "한글 설명" in block and escaped in block
     assert json.loads("\n".join(block.splitlines()[1:-1])) == evidence
+
+
+def test_cli_exit_codes_match_the_readme_rows(backend_graph, tmp_path):
+    """The README exit-code rows for `policy impact` and `policy check`."""
+    gov = seed()
+    manifest = tmp_path / "candidate.yaml"
+    manifest.write_text(yaml.safe_dump(gov.model_dump(mode="json")))
+    runner = CliRunner()
+
+    def impact_for(agent: str, path: Path) -> None:
+        result = runner.invoke(
+            cli.app,
+            ["policy", "impact", str(manifest), *CANDIDATES, "--agent", agent]
+            + ["--format", "json", "--output", str(path)],
+        )
+        assert result.exit_code == 0, result.output
+
+    def check(path: Path):
+        return runner.invoke(cli.app, ["policy", "check", str(path), "--format", "json"])
+
+    # impact: an unknown agent is reported, not refused.
+    unresolved = tmp_path / "unresolved.json"
+    impact_for("nobody", unresolved)
+    assert json.loads(unresolved.read_text())["regression_ready"] is False
+    # check: an artifact with unresolved comparisons gets one line, no result.
+    refused = check(unresolved)
+    assert refused.exit_code == 1
+    assert refused.stdout == ""
+    assert refused.stderr == (
+        "ERROR: impact contains unresolved comparisons; regenerate reviewed expectations\n"
+    )
+
+    ready = tmp_path / "ready.json"
+    impact_for("a", ready)
+    held = check(ready)
+    assert held.exit_code == 0, held.output
+    assert json.loads(held.stdout)["passed"] is True
+    # A governance change that keeps every expectation still passes.
+    gov.policies.append(Policy(id="unrelated", effect="ALLOW"))
+    assert ingest_governance(gov).applied
+    assert check(ready).exit_code == 0
+
+    # Another graph instance: one line, no result.
+    other = json.loads(ready.read_text())
+    other["graph_state"]["instance_id"] = "00000000-0000-4000-8000-000000000000"
+    foreign = tmp_path / "foreign.json"
+    foreign.write_text(json.dumps(other))
+    moved = check(foreign)
+    assert moved.exit_code == 1
+    assert moved.stdout == ""
+    assert moved.stderr == (
+        "ERROR: incompatible graph instance; regenerate reviewed expectations\n"
+    )
