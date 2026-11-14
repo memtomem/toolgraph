@@ -18,6 +18,10 @@ exception message in the chain verbatim.
 
 Frames are not printed: a frame's file and function names are not input, but
 nothing guarantees it, and the exception chain is what an operator reads.
+
+Served over HTTP, uvicorn logs each request line with its query string on
+loggers of its own. ``AccessLogFilter`` withholds such a line when it carries
+a credential, and ``filter_uvicorn_loggers`` puts the filters on those loggers.
 """
 
 from __future__ import annotations
@@ -127,6 +131,23 @@ def render(record: logging.LogRecord) -> str:
     return "\n".join(lines)
 
 
+def _rebuilt(record: logging.LogRecord, msg: str, args: tuple[object, ...]) -> logging.LogRecord:
+    """A new record carrying *msg*, *args* and only the standard attributes.
+
+    The traceback, cached exception text, stack and any ``extra`` attribute
+    (``color_message`` among them) are not carried over.
+    """
+    kept = {key: getattr(record, key) for key in _KEPT if hasattr(record, key)}
+    for key in _NAMES:
+        if isinstance(kept.get(key), str):
+            kept[key] = redact_text(kept[key])
+    # Not makeLogRecord: it calls the configured record factory, which may
+    # add attributes back.
+    safe = logging.LogRecord(record.name, record.levelno, "", 0, msg, args, None)
+    safe.__dict__.update(kept)
+    return safe
+
+
 class RedactingFilter(logging.Filter):
     """Hand the handler a rebuilt record; never alter the original.
 
@@ -140,15 +161,47 @@ class RedactingFilter(logging.Filter):
             text = render(record)
         except Exception:
             text = "log record could not be rendered"
-        kept = {key: getattr(record, key) for key in _KEPT if hasattr(record, key)}
-        for key in _NAMES:
-            if isinstance(kept.get(key), str):
-                kept[key] = redact_text(kept[key])
-        # Not makeLogRecord: it calls the configured record factory, which may
-        # add attributes back.
-        safe = logging.LogRecord(record.name, record.levelno, "", 0, text, (), None)
-        safe.__dict__.update(kept)
-        return safe
+        return _rebuilt(record, text, ())
+
+
+# The access line uvicorn logs: client address, method, path with its query
+# string, HTTP version, status code. Its AccessFormatter builds the request
+# line from these five arguments, not from the message.
+_ACCESS_FORMAT = '%s - "%s %s HTTP/%s" %d'
+
+
+class AccessLogFilter(logging.Filter):
+    """Withhold every text field of an access line that carries a credential.
+
+    The whole line is judged once, as uvicorn formatted it from the client's
+    request: a line ``redact_text`` would leave as it is passes unchanged;
+    any other line keeps only its status code. Scrubbing field by field
+    misses a credential the fields form together (a ``Bearer`` method before
+    a ``/<token>`` path) or one sent as a proxied client address.
+
+    A record whose message is not uvicorn's access format is withheld too:
+    AccessFormatter prints the arguments whatever the message says. One
+    whose arguments the access formatter cannot read is dropped, since a
+    formatter error prints the logging call's traceback and source.
+    """
+
+    def filter(self, record: logging.LogRecord) -> logging.LogRecord | bool:
+        args = record.args
+        if not (isinstance(args, tuple) and len(args) == 5):
+            return False
+        try:
+            message = record.getMessage()
+            clean = (
+                record.msg == _ACCESS_FORMAT
+                and not _credential_shaped_value(args)
+                and redact_text(message) == message
+            )
+        except Exception:
+            return False
+        if not clean:
+            status = args[4] if isinstance(args[4], int) else 0
+            args = ("-", "-", WITHHELD, "-", status)
+        return _rebuilt(record, _ACCESS_FORMAT, args)
 
 
 def install(handler: logging.Handler) -> None:
@@ -171,6 +224,23 @@ def filtering_root_handlers_if_unconfigured() -> Iterator[None]:
     if not configured:
         for handler in logging.getLogger().handlers:
             install(handler)
+
+
+def filter_uvicorn_loggers() -> None:
+    """Filter what uvicorn logs while it serves the MCP app over HTTP.
+
+    uvicorn logs on its own loggers with its own handlers, which it replaces
+    when it starts; a filter on the logger itself survives that. A program
+    that runs the app under its own server owns that logging instead.
+    """
+    for name, kind in (
+        ("uvicorn.access", AccessLogFilter),
+        ("uvicorn.error", RedactingFilter),
+        ("uvicorn.asgi", RedactingFilter),
+    ):
+        logger = logging.getLogger(name)
+        if not any(isinstance(f, kind) for f in logger.filters):
+            logger.addFilter(kind())
 
 
 def install_on_last_resort() -> None:

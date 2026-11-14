@@ -70,6 +70,20 @@ All notable changes to Toolgraph are documented here.
   naming one tool (a repeat, or a bare name and its qualified key) used to
   list it twice in `eligible`, and in a preflight artifact. Rejected rows
   still follow the candidates one by one.
+- `serve --http` no longer prints a credential from a request in uvicorn's
+  access log (#226). Every request line went to stdout with its query string,
+  so `GET /mcp?token=...` showed the token. Toolgraph judges each access line
+  as a whole: a line `redact_text` would leave unchanged prints as before, and
+  any other line keeps only its status code (`- - "- details withheld (they
+  contain credential-shaped data) HTTP/-" 400 Bad Request`). That also
+  catches a credential the fields form together, such as a `Bearer` method
+  before a `/<token>` path, or one in a proxied client address. Because the
+  line is judged whole, a request whose query holds a URI with a path
+  (`?url=https://example.org/docs`) is withheld too, since a URI's path is
+  hidden wherever Toolgraph prints one. uvicorn's server log goes through the
+  #206 filter: each exception in a traceback prints as one line, as
+  Toolgraph's own server log does. A program that runs the MCP app under its
+  own uvicorn keeps its own logging.
 
 ## 0.4.1 - 2026-11-09
 
