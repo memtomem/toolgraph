@@ -41,16 +41,17 @@ All notable changes to Toolgraph are documented here.
   0.4.1 printed `Invalid value for --config: ...`, and likewise for
   `--backend`, `--kind`, `--reviewer`, `--note`, `DESTINATION` and
   `CANDIDATES`. Exit codes are unchanged (2).
-- A message, error reply or log line holding more than 32 escaped literals
-  as `repr` prints them (`'a\tb'`) is withheld as
-  `details withheld (too many escaped literals to check)`, and such a path as
-  `<path withheld: too many escaped literals to check>` (#269). A uvicorn
-  access line keeps its one fixed withheld text. 0.4.1 used
-  the credential wording for this case too, `details withheld (they contain
-  credential-shaped data)` and `<path withheld: credential-shaped>`, though
-  the literals are withheld without being read. What is withheld is
-  unchanged; the credential wording stays for every check that found
-  something.
+- A text withheld for holding more than 32 escaped literals as `repr`
+  prints them (`'a\tb'`), which are not read, now says so (#269): an error
+  message or log line reads `details withheld (too many escaped literals to
+  check)`, and such a path `<path withheld: too many escaped literals to
+  check>`. 0.4.1 used the credential wording for this case too, `details
+  withheld (they contain credential-shaped data)` and `<path withheld:
+  credential-shaped>`. What is withheld is unchanged, and the credential
+  wording stays for every check that found something, including a
+  percent-encoded credential name, which is checked first. Texts with a
+  fixed form keep it: an unknown tool's reply still reads `Unknown tool:
+  <value withheld>`, and a uvicorn access line its one withheld text.
 
 ### Added
 
@@ -115,6 +116,9 @@ All notable changes to Toolgraph are documented here.
   #206 filter: a traceback prints as its redacted exception chain without
   frames, as Toolgraph's own server log does. A program that runs the MCP app
   under its own uvicorn keeps its own logging.
+- An OS error whose file name merely reads like a path marker prints the
+  name as Python does (`b'…'`, `PosixPath('…')`); it was shown as a bare
+  string.
 
 ## 0.4.1 - 2026-11-09
 

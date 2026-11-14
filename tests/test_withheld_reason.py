@@ -8,8 +8,13 @@ mistake fails these tests too.
 
 from __future__ import annotations
 
+import io
+import logging
+from pathlib import Path
+
 import pytest
 
+from toolgraph import log_safety
 from toolgraph.error_text import describe_error, describe_os_error
 from toolgraph.redaction import display_path, is_credential_shaped, redact_text
 
@@ -27,6 +32,17 @@ def _literals(literal: str, count: int, sep: str = " ") -> str:
 
 
 SHOWN_PATH = "/srv/" + _literals(TAB, 32, "/") + "/x.yaml"
+
+
+def _logged(emit) -> list[str]:
+    """Lines a filtered handler writes, from a logger outside the hierarchy."""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    log_safety.install(handler)
+    logger = logging.Logger("toolgraph.test.withheld_reason", logging.DEBUG)
+    logger.addHandler(handler)
+    emit(logger)
+    return stream.getvalue().splitlines()
 
 
 def test_a_harmless_literal_is_not_credential_shaped():
@@ -94,3 +110,28 @@ def test_an_os_error_keeps_its_line_and_withholds_only_the_name(convert):
     assert describe_os_error(exc) == (
         "[Errno 2] No such file or directory: '<path withheld: too many escaped literals to check>'"
     )
+
+
+@pytest.mark.parametrize("marker", [PATH_LITERALS, PATH_CREDENTIAL], ids=["literals", "credential"])
+@pytest.mark.parametrize("convert", [str, str.encode, Path], ids=["str", "bytes", "path"])
+def test_a_name_that_reads_like_a_marker_is_printed_as_given(marker, convert):
+    """Only a name display_path changes is replaced; one that equals a marker
+    keeps its type, so bytes and Path names keep their repr."""
+    exc = OSError(18, "Invalid cross-device link", convert(marker), None, convert(marker))
+
+    assert describe_os_error(exc) == str(exc)
+
+
+def test_a_logged_message_over_the_limit_gets_the_limit_label():
+    lines = _logged(lambda log: log.info("cannot parse %s", _literals(TAB, 33)))
+
+    assert lines == [LITERALS]
+
+
+def test_a_logged_exception_over_the_limit_keeps_its_type():
+    try:
+        raise ValueError("bad keys " + _literals(TAB, 33))
+    except ValueError:
+        lines = _logged(lambda log: log.exception("boom"))
+
+    assert lines == ["boom", f"ValueError: {LITERALS}"]
