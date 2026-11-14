@@ -102,6 +102,21 @@ def test_usage_errors_are_scrubbed(args, shown):
     _assert_hidden(result.output)
 
 
+def test_the_cli_catches_the_class_typer_reports_usage_errors_with():
+    """``toolgraph.cli`` imports ``ClickException`` from Typer's private
+    ``typer._click``. A Typer that moved its engine would still import there
+    while raising another class, and every usage error would print unscrubbed;
+    the test above shows that, this one names the cause."""
+    import typer.core
+
+    from toolgraph import cli
+
+    assert typer.core._click.exceptions.ClickException is cli.ClickException, (
+        "Typer no longer catches the ClickException toolgraph.cli imports;"
+        " import it from wherever typer.core now takes it"
+    )
+
+
 @pytest.mark.parametrize(
     ("args", "shown"),
     [

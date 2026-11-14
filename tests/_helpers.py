@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from importlib.metadata import version
 from pathlib import Path
 
 from toolgraph.graph import driver, loader, queries
@@ -26,12 +25,6 @@ CSV = "file:///data/customers.csv"
 
 
 CONTROL_PLAN_FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
-
-
-# click >= 8.2 always splits streams (result.stdout / result.stderr);
-# older click mixes stderr into stdout by default, so purity can't be
-# asserted there.
-CLICK_SPLITS_STREAMS = tuple(int(p) for p in version("click").split(".")[:2]) >= (8, 2)
 
 
 def flat_output(output: str) -> str:
