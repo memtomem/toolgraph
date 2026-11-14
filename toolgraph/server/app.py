@@ -100,6 +100,16 @@ class _ToolgraphMCP(MCPServer):
 
         return decorator
 
+    async def run_streamable_http_async(self, **kwargs: Any) -> None:
+        """Serve over HTTP with uvicorn's loggers filtered."""
+        log_safety.filter_uvicorn_loggers()
+        await super().run_streamable_http_async(**kwargs)
+
+    async def run_sse_async(self, **kwargs: Any) -> None:
+        """Serve over legacy SSE with uvicorn's loggers filtered."""
+        log_safety.filter_uvicorn_loggers()
+        await super().run_sse_async(**kwargs)
+
     async def _is_retryable(self, name: str) -> bool:
         """Whether a failed call to *name* is safe to repeat.
 
