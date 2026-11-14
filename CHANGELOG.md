@@ -116,9 +116,6 @@ All notable changes to Toolgraph are documented here.
   #206 filter: a traceback prints as its redacted exception chain without
   frames, as Toolgraph's own server log does. A program that runs the MCP app
   under its own uvicorn keeps its own logging.
-- An OS error whose file name merely reads like a path marker prints the
-  name as Python does (`b'…'`, `PosixPath('…')`); it was shown as a bare
-  string.
 
 ## 0.4.1 - 2026-11-09
 

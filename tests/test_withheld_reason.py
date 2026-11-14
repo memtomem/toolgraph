@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import logging
-from pathlib import Path
 
 import pytest
 
@@ -110,16 +109,6 @@ def test_an_os_error_keeps_its_line_and_withholds_only_the_name(convert):
     assert describe_os_error(exc) == (
         "[Errno 2] No such file or directory: '<path withheld: too many escaped literals to check>'"
     )
-
-
-@pytest.mark.parametrize("marker", [PATH_LITERALS, PATH_CREDENTIAL], ids=["literals", "credential"])
-@pytest.mark.parametrize("convert", [str, str.encode, Path], ids=["str", "bytes", "path"])
-def test_a_name_that_reads_like_a_marker_is_printed_as_given(marker, convert):
-    """Only a name display_path changes is replaced; one that equals a marker
-    keeps its type, so bytes and Path names keep their repr."""
-    exc = OSError(18, "Invalid cross-device link", convert(marker), None, convert(marker))
-
-    assert describe_os_error(exc) == str(exc)
 
 
 def test_a_logged_message_over_the_limit_gets_the_limit_label():

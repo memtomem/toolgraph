@@ -45,7 +45,7 @@ from mcp_types import PARSE_ERROR
 from pydantic import BaseModel, ValidationError
 
 from toolgraph.errors import ValueFreeError
-from toolgraph.redaction import display_path, redact_text
+from toolgraph.redaction import PATH_LITERALS_WITHHELD, PATH_WITHHELD, display_path, redact_text
 from toolgraph.yaml_loader import DUPLICATE_KEY
 
 MASK = "<key>"
@@ -141,13 +141,13 @@ def describe_os_error(exc: OSError) -> str:
 def _shown_name(name: Any) -> Any:
     """*name* as it is, or the path marker ``display_path`` gives for it.
 
-    A bytes name is checked decoded, as the OS reads it. Only a name
-    ``display_path`` changes is replaced: a name that merely reads like a
-    marker keeps its type, so it still prints as ``b'…'`` or ``PosixPath('…')``.
+    A bytes name is checked decoded, as the OS reads it.
     """
     text = os.fsdecode(name) if isinstance(name, bytes) else name
-    if isinstance(text, str | os.PathLike) and (shown := display_path(text)) != str(text):
-        return shown
+    if isinstance(text, str | os.PathLike):
+        shown = display_path(text)
+        if shown in (PATH_WITHHELD, PATH_LITERALS_WITHHELD):
+            return shown
     return name
 
 

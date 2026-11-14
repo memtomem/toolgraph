@@ -531,8 +531,10 @@ def display_path(path: object) -> str:
     A path is shown whole or not at all: scrubbing part of it would print a
     path that does not exist. Replacing only the path keeps the rest of the
     message, which ``redact_text`` over the whole line would withhold too.
-    The marker is ``PATH_LITERALS_WITHHELD`` when the path holds more than
-    ``_MAX_LITERALS`` repr literals, and ``PATH_WITHHELD`` otherwise.
+    The marker is ``PATH_LITERALS_WITHHELD`` when ``redact_text`` withheld the
+    path for holding more than ``_MAX_LITERALS`` repr literals, and
+    ``PATH_WITHHELD`` for every other check (one that runs first, such as the
+    percent-decoded check, keeps its own marker).
     """
     text = str(path)
     shown = redact_text(text)
