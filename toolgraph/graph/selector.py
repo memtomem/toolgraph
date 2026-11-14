@@ -302,11 +302,17 @@ def filter_features(ranked: dict, profile: str = DEFAULT_PROFILE) -> dict:
 
     rejects = PROFILES[profile]
     eligible: list[str] = []
+    listed: set[str] = set()
     rejected: list[dict] = []
     for feature in ranked["features"]:
         reason = next((r for r in _applicable_reasons(feature) if r in rejects), None)
         if reason is None:
-            eligible.append(feature["tool_key"])
+            # Two candidates can name one tool (a repeat, or a bare name and
+            # its qualified key). A consumer exposes what `eligible` lists, so
+            # each tool appears once, where it first resolved.
+            if feature["tool_key"] not in listed:
+                listed.add(feature["tool_key"])
+                eligible.append(feature["tool_key"])
             continue
         row = {
             "candidate": feature["candidate"],

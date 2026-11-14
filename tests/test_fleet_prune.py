@@ -31,6 +31,7 @@ from toolgraph.manifest.ingest import ingest_governance
 from toolgraph.models import (
     AccessGrant,
     CrawlResult,
+    DataAccess,
     Governance,
     Policy,
     ResourceRecord,
@@ -270,6 +271,65 @@ def test_resource_lifecycle_follows_adr_0001(backend_graph):
     # Dead crawl artifact gone; shared (still provided) and governed kept.
     assert uris == {"file:///shared.csv", "file:///gov.csv"}
     assert loader.graph_counts()["provides"] == 1
+
+
+def _resource_uris() -> set[str]:
+    with driver.session() as s:
+        return {r["u"] for r in s.run("MATCH (r:Resource) RETURN r.uri AS u")}
+
+
+def _seed_resources_beta_will_drop() -> None:
+    _load("alpha", resources=["file:///shared.csv"])
+    _load(
+        "beta",
+        [ToolRecord(name="reader")],
+        resources=[
+            "file:///shared.csv",
+            "file:///b-only.csv",
+            "file:///gov.csv",
+            "file:///read.csv",
+        ],
+    )
+    report = ingest_governance(
+        Governance(
+            policies=[Policy(id="pii", effect="DENY")],
+            data_access=[
+                DataAccess(tool="beta::reader", resource="file:///read.csv", mode="READS")
+            ],
+            governed_by={"file:///gov.csv": ["pii"]},
+        )
+    )
+    assert report.warnings == []
+
+
+def test_a_recrawl_removes_the_resources_its_server_stopped_providing(backend_graph):
+    _seed_resources_beta_will_drop()
+
+    _load("beta", [ToolRecord(name="reader")])  # now advertises no resources
+
+    # Only the dead crawl artifact goes: still provided by alpha, governed, and
+    # read through data_access all keep an edge.
+    assert _resource_uris() == {"file:///shared.csv", "file:///gov.csv", "file:///read.csv"}
+    assert queries.blast_radius("file:///b-only.csv") == {
+        "kind": "resource",
+        "node": "file:///b-only.csv",
+        "found": False,
+        "impacted": [],
+    }
+
+
+def test_a_failed_recrawl_keeps_the_resources_it_would_drop(backend_graph, monkeypatch):
+    _seed_resources_beta_will_drop()
+    before = _resource_uris()
+
+    def fail(_tx):
+        raise RuntimeError("bump failed")
+
+    monkeypatch.setattr(loader, "bump_generation", fail)
+    with pytest.raises(RuntimeError, match="bump failed"):
+        _load("beta", [ToolRecord(name="reader")])
+
+    assert _resource_uris() == before
 
 
 def test_failed_retirement_leaves_the_fleet_in_place(backend_graph, monkeypatch):

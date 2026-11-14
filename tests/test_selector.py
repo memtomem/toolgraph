@@ -254,6 +254,18 @@ def test_strict_passes_only_clean_allow(backend_graph):
     }
 
 
+def test_eligible_lists_a_tool_once_however_many_candidates_name_it(backend_graph):
+    _seed()
+    got = selector.eligible_tools(
+        "planner",
+        ["alpha::git_status", "git_status", "alpha::unbacked", "alpha::git_status"],
+        profile="strict",
+    )
+
+    assert got["eligible"] == ["alpha::git_status", "alpha::unbacked"]
+    assert got["rejected"] == []
+
+
 def test_review_passes_exceptions_and_unmapped_but_not_violations(backend_graph):
     _seed()
     got = selector.eligible_tools("planner", CANDIDATES, profile="review")

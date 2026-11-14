@@ -640,7 +640,7 @@ def unmapped_tools(only_granted: bool = True) -> list[dict]:
         """
     )
     with read_session() as s:
-        return [dict(r) for r in s.run(cypher)]
+        return [_with_lists(r, "granted_to") for r in s.run(cypher)]
 
 
 def orphan_policies() -> list[dict]:
@@ -667,7 +667,22 @@ def orphan_policies() -> list[dict]:
     ORDER BY policy
     """
     with read_session() as s:
-        return [dict(r) for r in s.run(cypher)]
+        return [
+            _with_lists(r, "resources_governed", "tools_governed_directly") for r in s.run(cypher)
+        ]
+
+
+def _with_lists(record, *fields: str) -> dict:
+    """The row with each collected field as a sorted list of its non-null values.
+
+    Over an OPTIONAL MATCH that matched nothing, Neo4j's ``collect`` returns
+    ``[]`` and Ladybug's returns ``None``; the backends must answer alike
+    (ADR-0011), and an unsorted ``collect(DISTINCT ...)`` has no fixed order.
+    """
+    row = dict(record)
+    for name in fields:
+        row[name] = sorted(value for value in (row[name] or []) if value is not None)
+    return row
 
 
 def unbacked_edges(include_grants: bool = False) -> list[dict]:
