@@ -8,9 +8,18 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request cancels the run it replaces. Every push to
+# main keeps its own run: a group holds at most one pending run, and GitHub
+# cancels that one for the next even with cancel-in-progress off, so each
+# commit on main gets a group of its own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -24,23 +33,97 @@ jobs:
   # test depending on the shared neo4j_container fixture. test-unit sets
   # TOOLGRAPH_TEST_NO_DOCKER, so a test that reaches that fixture without the
   # marker fails here instead of quietly starting Docker in the unit half.
+  #
+  # The classifiers claim Python 3.12-3.14, so the unit half runs at both ends
+  # of that range (Windows: test-unit-windows below). UV_PYTHON picks the
+  # interpreter for every uv call: `.python-version` pins 3.12, and `uv run`
+  # would otherwise go back to it after `uv sync --python`.
   test-unit:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: "latest"
       - run: uv sync --frozen --group dev --extra ladybug
+      - name: Run on the matrix interpreter
+        run: uv run python -c "import sys; v = '%d.%d' % sys.version_info[:2]; assert v == '${{ matrix.python }}', v"
       - name: Require the optional local backend
         run: uv run python -c "import ladybug"
+      # The legs collect different tests (Windows skips the POSIX-only ones
+      # and runs its own), so totals cannot be compared across them; the
+      # JUnit report records each test's outcome and skip reason.
       - name: Run the tests that need no Docker
         env:
           TOOLGRAPH_TEST_NO_DOCKER: "1"
-        run: uv run pytest -q -m "not neo4j"
+        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-unit-${{ matrix.os }}-${{ matrix.python }}
+          path: junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml
+          if-no-files-found: error
+          retention-days: 14
+
+  # The unit half on Windows, which runs the Windows-only tests. Advisory: it
+  # is deliberately not in ci-required.needs until #291 (tests that assume
+  # POSIX) is fixed; #292 is a product failure it shows. A red run here does
+  # not block a merge, so read its result rather than trusting the gate.
+  test-unit-windows:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            python: "3.12"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: ${{ matrix.python }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "latest"
+      - run: uv sync --frozen --group dev --extra ladybug
+      - name: Run on the matrix interpreter
+        run: uv run python -c "import sys; v = '%d.%d' % sys.version_info[:2]; assert v == '${{ matrix.python }}', v"
+      - name: Require the optional local backend
+        run: uv run python -c "import ladybug"
+      # The legs collect different tests (Windows skips the POSIX-only ones
+      # and runs its own), so totals cannot be compared across them; the
+      # JUnit report records each test's outcome and skip reason.
+      - name: Run the tests that need no Docker
+        env:
+          TOOLGRAPH_TEST_NO_DOCKER: "1"
+        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-unit-${{ matrix.os }}-${{ matrix.python }}
+          path: junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml
+          if-no-files-found: error
+          retention-days: 14
 
   test-neo4j:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -60,6 +143,7 @@ jobs:
   # version is declared apart from the image so an ignored override fails.
   minimum-neo4j:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -90,6 +174,7 @@ jobs:
           - os: windows-latest
             python: "3.12"
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -137,6 +222,7 @@ jobs:
 
   minimum-mcp:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -178,6 +264,7 @@ jobs:
   # conflict check would answer before the missing extra does.
   no-extras:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -223,6 +310,7 @@ jobs:
 
   audit-runtime:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -232,6 +320,7 @@ jobs:
 
   audit-extras:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -241,6 +330,7 @@ jobs:
 
   audit-dev:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -251,6 +341,7 @@ jobs:
 
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
@@ -276,8 +367,9 @@ jobs:
 
   # Single stable required check.
   #
-  # Branch protection must require THIS job and nothing else. The matrix job
-  # above reports as "artifact-smoke (ubuntu-latest, 3.14)" and friends, so
+  # Branch protection must require THIS job and nothing else. The matrix jobs
+  # above report as "artifact-smoke (ubuntu-latest, 3.14)", "test-unit
+  # (ubuntu-latest, 3.14)" and friends, so
   # naming those directly means every matrix edit silently orphans a required
   # check and leaves pull requests waiting forever for a context that will
   # never report.
@@ -301,6 +393,7 @@ jobs:
       - package
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Verify every required job succeeded
         env:
