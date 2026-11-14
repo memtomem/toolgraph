@@ -66,10 +66,20 @@ jobs:
         run: uv run python -c "import sys; v = '%d.%d' % sys.version_info[:2]; assert v == '${{ matrix.python }}', v"
       - name: Require the optional local backend
         run: uv run python -c "import ladybug"
+      # The legs collect different tests (Windows skips the POSIX-only ones
+      # and runs its own), so totals cannot be compared across them; the
+      # JUnit report records each test's outcome and skip reason.
       - name: Run the tests that need no Docker
         env:
           TOOLGRAPH_TEST_NO_DOCKER: "1"
-        run: uv run pytest -q -m "not neo4j"
+        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: junit-unit-${{ matrix.os }}-${{ matrix.python }}
+          path: junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml
+          if-no-files-found: error
+          retention-days: 14
 
   test-neo4j:
     runs-on: ubuntu-latest
