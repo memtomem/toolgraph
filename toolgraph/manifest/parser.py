@@ -16,9 +16,18 @@ def load_governance(path: Path) -> Governance:
 
 
 def governance_digest(governance: Governance) -> str:
-    """Stable semantic digest of the validated authored governance model."""
+    """Stable semantic digest of the validated authored governance model.
+
+    The explicit target fields are left out while empty, so a manifest that
+    does not use them keeps the digest it had before they existed (observation
+    exports and policy bundles record it).
+    """
+    data = governance.model_dump(mode="json")
+    for name in ("governed_tools", "governed_resources"):
+        if not data.get(name):
+            data.pop(name, None)
     payload = json.dumps(
-        governance.model_dump(mode="json"),
+        data,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
