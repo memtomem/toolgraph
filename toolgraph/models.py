@@ -265,6 +265,11 @@ class Governance(StrictInputModel):
     # (backward-compatible, no provenance) or a GovernedByBinding object with
     # per-binding source citation. node id is a resource uri or '<server>::<tool>'.
     governed_by: dict[str, list[str | GovernedByBinding]] = Field(default_factory=dict)
+    # governed_by picks the target kind from the key's shape (a URI scheme
+    # means a resource). A key that names both a tool and a resource is
+    # rejected at ingest; these two fields say the kind explicitly instead.
+    governed_tools: dict[str, list[str | GovernedByBinding]] = Field(default_factory=dict)
+    governed_resources: dict[str, list[str | GovernedByBinding]] = Field(default_factory=dict)
     expected_exceptions: list[ExpectedException] = Field(default_factory=list)
 
     @field_validator("agents")
@@ -279,12 +284,19 @@ class Governance(StrictInputModel):
         # Checked here rather than per field: an error raised inside the
         # mapping would carry its key in the error location, which hiding the
         # input does not cover. A resource key is a resource, not an identity.
-        for node, bindings in self.governed_by.items():
-            if not is_resource_ref(node):
-                refuse_credential_identity("governed_by tool ref", node)
-            for binding in bindings:
-                policy = binding if isinstance(binding, str) else binding.policy
-                refuse_credential_identity("governed_by policy id", policy)
+        for field_name, mapping in (
+            ("governed_by", self.governed_by),
+            ("governed_tools", self.governed_tools),
+            ("governed_resources", self.governed_resources),
+        ):
+            for node, bindings in mapping.items():
+                if field_name == "governed_tools" or (
+                    field_name == "governed_by" and not is_resource_ref(node)
+                ):
+                    refuse_credential_identity(f"{field_name} tool ref", node)
+                for binding in bindings:
+                    policy = binding if isinstance(binding, str) else binding.policy
+                    refuse_credential_identity(f"{field_name} policy id", policy)
         return self
 
 

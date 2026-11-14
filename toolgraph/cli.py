@@ -49,6 +49,7 @@ from toolgraph.crawler.crawl import (
     spec_label,
 )
 from toolgraph.error_text import describe_error
+from toolgraph.errors import ContractError
 from toolgraph.graph import driver, loader, queries, schema, selector
 from toolgraph.health import run_doctor
 from toolgraph.manifest.ingest import dry_run_ingest, governance_counts, ingest_governance
@@ -79,6 +80,11 @@ from toolgraph.review_candidates import (
 class AuditReportFormat(StrEnum):
     json = "json"
     markdown = "markdown"
+
+
+class BlastRadiusKind(StrEnum):
+    resource = "resource"
+    policy = "policy"
 
 
 class ReviewDisposition(StrEnum):
@@ -682,9 +688,20 @@ def unsafe_tools(
 
 @app.command("blast-radius")
 @_reports_backend_outage
-def blast_radius(node: str) -> None:
-    """Agents/tools affected if NODE (a resource URI or policy id) changes."""
-    typer.echo(json.dumps(queries.blast_radius(node), indent=2))
+def blast_radius(
+    node: str,
+    kind: BlastRadiusKind | None = typer.Option(
+        None,
+        "--kind",
+        help="What NODE is; required when NODE names both a resource and a policy.",
+    ),
+) -> None:
+    """Agents/tools affected if NODE (a resource or policy id) changes."""
+    try:
+        result = queries.blast_radius(node, kind.value if kind else None)
+    except ContractError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--kind") from None
+    typer.echo(json.dumps(result, indent=2))
 
 
 @app.command("unmapped-tools")

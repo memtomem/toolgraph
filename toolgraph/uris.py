@@ -50,6 +50,19 @@ def normalize_resource_uri(uri: str) -> str:
         return uri
 
 
+def canonical_for_lookup(value: str) -> str:
+    """``normalize_resource_uri`` without its warning, for comparing and lookup.
+
+    For strings that may not be resources at all (a tool ref checked for a
+    collision, a ``blast_radius`` argument that may be a policy id): one that
+    looks like a URL but fails to parse must not warn about a resource
+    identity nobody is creating.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceUriNormalizationWarning)
+        return normalize_resource_uri(value)
+
+
 def is_resource_ref(ref: str) -> bool:
     """Distinguish a resource URI from a tool ref / policy id.
 
