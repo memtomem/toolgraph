@@ -75,8 +75,11 @@ containment. The prototype was not built at that date.
    - it is a fixed point of `normalize_resource_uri`;
    - a value with a scheme must parse as `AnyUrl`. `normalize_resource_uri`
      returns an unparseable value unchanged and warns only when it contains
-     `://`, so `memory:foo bar` is a silent fixed point today (measured);
-   - it contains no whitespace, control character, quote, `?`, `#` or `@`;
+     `://`, so `https:` fails to parse yet is a silent fixed point today
+     (measured);
+   - it contains no whitespace, control character, quote, `?`, `#` or `@`.
+     Parsing does not cover these: `AnyUrl` accepts `memory:foo bar` and
+     `memory:a"b` unchanged (measured);
    - `is_credential_shaped_identity` (`toolgraph/redaction.py:196`) does not
      refuse it. The character rule alone misses `memory:token=SECRET` and
      `file:///data/%3Ftoken%3DSECRET` (measured).
@@ -95,8 +98,9 @@ containment. The prototype was not built at that date.
      That field joins the sort keys, so two governed ancestors with the same
      policy give a stable order on both backends, and joins `_RESOURCE_KEYS`
      (`toolgraph/artifact_safety.py:162`) so it is redacted like `resource`.
-   - The path string shows the chain:
-     `(tool) -WRITES-> (R) <-CONTAINS- (A) -GOVERNED_BY-> (P:DENY)`.
+   - The path string shows the chain with one `<-CONTAINS-` segment per hop.
+     For `A` contains `B` contains `R`:
+     `(tool) -WRITES-> (R) <-CONTAINS- (B) <-CONTAINS- (A) -GOVERNED_BY-> (P:DENY)`.
 
    Every other reader of GOVERNED_BY decides explicitly:
 
