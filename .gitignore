@@ -20,3 +20,7 @@ wheels/
 # macOS / local git worktrees
 .DS_Store
 .worktrees/
+
+# memtomem local artifacts (memtomem ADR-0011 project_local tier)
+.memtomem/*.local/
+.memtomem/.staging/
