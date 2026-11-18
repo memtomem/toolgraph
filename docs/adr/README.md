@@ -22,6 +22,7 @@ decision, consequences. Statuses: Proposed / Accepted / Superseded.
 | [0015](0015-policy-impact-preview.md) | Read-only semantic policy impact preview | Proposed |
 | [0016](0016-catalog-collection-budget.md) | Per-server catalog collection budget | Accepted |
 | [0017](0017-ladybug-default-neo4j-optional.md) | Ladybug becomes the default backend; Neo4j becomes an optional extra | Accepted |
+| [0018](0018-resource-containment-inherited-deny.md) | Authored resource containment with inherited DENY | Proposed |
 
 Background for 0003–0005: `docs/context-engineering-tool-selection-report.md`
 and the 2026-06-11 external (Codex) review of the improvement plan.
