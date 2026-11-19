@@ -47,6 +47,16 @@ class GraphStateChurnError(RuntimeError):
     """A strict bracket found the graph state moving on every retry."""
 
 
+class GraphResetInProgressError(GraphStateChurnError):
+    """A strict bracket found a reset marker: the graph is being erased (#271)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "a graph reset is in progress or did not finish; retry after it finishes, "
+            "or run toolgraph reset --yes once no reset process is left"
+        )
+
+
 @dataclass(frozen=True)
 class GraphState:
     """Collision-safe identity for one concrete graph state."""
@@ -54,6 +64,9 @@ class GraphState:
     instance_id: str | None
     generation: int
     governance_digest: str | None = None
+    # A reset marker row exists: `toolgraph reset` is erasing the graph, or
+    # one stopped before it finished. No state read now names a graph.
+    reset_in_progress: bool = False
 
 
 def with_graph_state(
@@ -77,12 +90,31 @@ def with_graph_state(
     state, so a verdict from before a permission change could be cached under
     the very state that changed it. Null does not enforce anything by itself:
     the obligation to skip the cache is the consumer's (ADR-0004).
+
+    A reset marker read before or after the query (``reset_in_progress``)
+    returns the unverified form at once, without retrying, and a strict caller
+    gets ``GraphResetInProgressError``: the stamp stays still while a reset
+    erases the graph in batches, so an equal before/after read proves nothing.
     """
     read_state = state_reader if state_reader is not None else graph_state
     for attempt in range(_GENERATION_RETRIES):
         before = read_state()
-        result = fetch()
-        if read_state() == before:
+        if before.reset_in_progress:
+            _refuse_during_reset(strict)
+            return _unverified(fetch())
+        try:
+            result = fetch()
+        except Exception as exc:
+            # A reset that began mid-query can fail it first (an agent it just
+            # deleted is "not found"); name the reset, not its side effect.
+            if strict and _reset_began(read_state):
+                raise GraphResetInProgressError() from exc
+            raise
+        after = read_state()
+        if after.reset_in_progress:
+            _refuse_during_reset(strict)
+            return _unverified(result)
+        if after == before:
             token = {"instance_id": before.instance_id, "generation": before.generation}
             return {
                 **result,
@@ -94,6 +126,10 @@ def with_graph_state(
         _bracket_backoff(attempt)
     if strict:
         raise GraphStateChurnError("graph state changed during every read attempt")
+    return _unverified(result)
+
+
+def _unverified(result: dict) -> dict:
     return {
         **result,
         "graph_generation": None,
@@ -101,6 +137,20 @@ def with_graph_state(
         "graph_state": None,
         "graph_state_verified": False,
     }
+
+
+def _reset_began(read_state: Callable[[], GraphState]) -> bool:
+    try:
+        return read_state().reset_in_progress
+    except Exception:  # the query's own error is the one to report
+        return False
+
+
+def _refuse_during_reset(strict: bool) -> None:
+    # Retrying cannot help: the marker stays until the reset's last
+    # transaction, and every read until then sees a graph being erased.
+    if strict:
+        raise GraphResetInProgressError()
 
 
 RESOLVE_BATCH_SIZE = 4096
@@ -161,11 +211,14 @@ def graph_state(s: Session | None = None) -> GraphState:
 
 
 def _read_graph_state(s: Session) -> GraphState:
+    # One read, so the marker and the stamp come from the same statement.
     rec = s.run(
-        "MATCH (m:GraphMeta {id:'singleton'}) "
+        "OPTIONAL MATCH (m:GraphMeta {id:'singleton'}) "
+        "OPTIONAL MATCH (r:GraphMeta {id:'reset'}) "
         "RETURN m.instance_id AS instance_id, "
         "coalesce(m.generation, 0) AS generation, "
-        "m.governance_digest AS governance_digest"
+        "m.governance_digest AS governance_digest, "
+        "r IS NOT NULL AS reset_in_progress"
     ).single()
     if rec is None:
         return GraphState(instance_id=None, generation=0)
@@ -173,6 +226,7 @@ def _read_graph_state(s: Session) -> GraphState:
         instance_id=rec["instance_id"],
         generation=rec["generation"],
         governance_digest=rec["governance_digest"],
+        reset_in_progress=bool(rec["reset_in_progress"]),
     )
 
 

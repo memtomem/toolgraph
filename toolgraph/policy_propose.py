@@ -738,6 +738,9 @@ def run_propose(
 
     try:
         bracket_result = queries.with_graph_state(fetch_bracketed, strict=True)
+    except queries.GraphResetInProgressError as exc:
+        # Not churn: no retry was made, and none would help until the reset ends.
+        raise PolicyProposeError(str(exc)) from exc
     except queries.GraphStateChurnError as exc:
         raise StateChurnError(
             "graph state churn during observation proposal: concurrent graph "

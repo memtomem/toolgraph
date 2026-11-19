@@ -643,7 +643,8 @@ features per graph state. Cache identity is the pair (`graph_instance_id`,
 
 A response also carries `graph_state_verified`. It is `true` when the read was
 bracketed by a stable graph state, and `false` when the graph moved under every
-retry — in which case all three state fields are null:
+retry or a `toolgraph reset` is erasing it (#271) — in which case all three
+state fields are null:
 
 ```json
 {"graph_generation": null, "graph_instance_id": null,
@@ -655,6 +656,17 @@ cached and must not be attributed to a graph state. Nothing enforces that for
 you: `null` is a usable dictionary key and two unverified responses compare
 equal on it. A consumer that turns eligibility into an authorization decision
 should reject or retry rather than proceed on one.
+
+`toolgraph reset` deletes in batches and keeps a marker from its first
+transaction to its last, so every read in between is unverified and every
+command that writes an artifact (`preflight`, `policy compile`, `policy
+review-plan`, `policy propose`, `policy impact`, `ingest-manifest --dry-run`)
+stops with `ERROR: a graph reset is in progress or did not finish; ...`. A
+reset interrupted by an outage leaves the marker, and `doctor` reports Graph
+State FAIL: wait if a reset is still running, otherwise run `toolgraph reset
+--yes` again to finish it. Run one reset at a time: two overlapping resets, like
+a crawl during a reset, are concurrent writers, which the marker does not
+order.
 
 If the graph backend is temporarily unavailable, every MCP tool returns
 `isError: true` with a typed `structuredContent` envelope instead of exposing

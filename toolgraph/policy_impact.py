@@ -89,6 +89,9 @@ def _scope(agent: str, candidates: list[str], profile: str) -> list[str]:
 
 def _state(s):
     state = queries.graph_state(s)
+    if state.reset_in_progress:
+        # Before the checks below: an erased graph has no digest to complain about.
+        raise queries.GraphResetInProgressError()
     if not state.instance_id or not state.governance_digest:
         raise PolicyImpactError("graph needs an instance id and ingested governance digest")
     clean_identity(state.instance_id)

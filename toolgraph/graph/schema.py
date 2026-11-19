@@ -187,6 +187,77 @@ def init_schema() -> None:
         _refuse_version_mismatch(_stored_backend_schema_version(s))
 
 
+# `reset` (#271). A second GraphMeta row marks a reset in progress: reads
+# that see it are unverified (queries.with_graph_state). A new row needs no
+# schema change on either backend, where a new GraphMeta column would need a
+# Ladybug migration. It exists from the reset's first transaction to its
+# last, so no reader sees the half-erased graph, or the empty graph before
+# its new instance id, as a verified state. One reset at a time: a second
+# reset running beside the first is writer concurrency, like a crawl during a
+# reset, and is out of scope (the command's help says so).
+RESET_BATCH_SIZE = 10_000
+
+_BEGIN_RESET = (
+    "MATCH (m:GraphMeta {id:'singleton'}) "
+    "SET m.generation = coalesce(m.generation, 0) + 1, m.updated_at = datetime() "
+    "MERGE (r:GraphMeta {id:'reset'})"
+)
+
+# Every node but GraphMeta (the singleton and the marker). Ladybug has no
+# `NOT n:Label` predicate (parser error) and Neo4j's labels(n)[0] reads only
+# the first label, so each backend gets its own form.
+_DELETE_BATCH = {
+    "neo4j": (
+        "MATCH (n) WHERE NOT n:GraphMeta WITH n LIMIT $limit "
+        "DETACH DELETE n RETURN count(n) AS deleted"
+    ),
+    "ladybug": (
+        "MATCH (n) WHERE label(n) <> 'GraphMeta' WITH n LIMIT $limit "
+        "DETACH DELETE n RETURN count(n) AS deleted"
+    ),
+}
+
+# A reset may reuse generation numbers but must never reuse an external
+# graph-state key, so the singleton gets a fresh instance id.
+_FINISH_RESET = (
+    "MATCH (m:GraphMeta {id:'singleton'}) "
+    "SET m.instance_id = $graph_instance_id, m.generation = 0, "
+    "m.governance_digest = NULL, m.last_policy_change_id = NULL, "
+    "m.updated_at = datetime() "
+    "WITH m MATCH (r:GraphMeta {id:'reset'}) DELETE r"
+)
+
+
+def reset_graph() -> None:
+    """Delete every node and relationship but GraphMeta, then give it a new identity.
+
+    Not atomic: the deletion runs in batches of ``RESET_BATCH_SIZE``. While it
+    runs, and after an interrupted run, the reset marker makes every graph
+    state read unverified; running the reset again finishes it.
+    """
+    # Enforce the schema-version gate BEFORE touching anything: an older
+    # binary must not erase a newer database and then re-stamp it as its own.
+    # It also creates the singleton on a database that lost it.
+    init_schema()
+    statement = _DELETE_BATCH[backend_name()]
+    with session() as s:
+        s.execute_write(_run, _BEGIN_RESET, {})
+        # Batched: one unbounded DETACH DELETE builds a transaction holding
+        # every node and can OOM the server on a large graph.
+        while s.execute_write(_deleted, statement, RESET_BATCH_SIZE):
+            pass
+        s.execute_write(_run, _FINISH_RESET, {"graph_instance_id": str(uuid4())})
+
+
+def _run(tx, statement: str, params: dict) -> None:
+    tx.run(statement, **params)
+
+
+def _deleted(tx, statement: str, limit: int) -> int:
+    record = tx.run(statement, limit=limit).single()
+    return record["deleted"] if record else 0
+
+
 def list_constraints() -> list[dict]:
     if backend_name() == "ladybug":
         return [

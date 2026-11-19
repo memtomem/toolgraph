@@ -551,7 +551,11 @@ def ingest_manifest(
         )
         raise typer.Exit(code=1) from None
     if dry_run:
-        report = dry_run_ingest(gov, strict_drift=strict_drift)
+        try:
+            report = dry_run_ingest(gov, strict_drift=strict_drift)
+        except queries.GraphStateChurnError as exc:
+            # A reset in progress, or churn on every retry: one line, no report.
+            _fail(exc)
         if json_output:
             # A display-only delta, not a replay artifact: scrub every string,
             # including URI lists and free-text warnings/reasons.
@@ -604,27 +608,15 @@ def reset(
     """Delete every node and relationship (keeps constraints). Destructive.
 
     Not atomic: deletion runs in batches, so run it inside a maintenance
-    window on a shared backend — a concurrent writer can interleave, and an
-    outage mid-way leaves a partially erased graph (re-run to finish).
+    window on a shared backend, one reset at a time — a concurrent writer can
+    interleave. While it runs, reads return graph_state_verified false and
+    artifact commands refuse. An outage mid-way leaves the graph partially
+    erased and still marked; once no reset process is left, re-run to finish.
     """
     if not yes:
         typer.echo("Refusing to wipe the graph without --yes")
         raise typer.Exit(code=1)
-    # Enforce the schema-version gate BEFORE destroying GraphMeta: an older
-    # binary must not erase a newer database and then re-stamp it as its own.
-    schema.init_schema()
-    with driver.session() as s:
-        # Batched: one unbounded DETACH DELETE builds a transaction holding
-        # every node and can OOM the server on a large graph.
-        while True:
-            record = s.run(
-                "MATCH (n) WITH n LIMIT 10000 DETACH DELETE n RETURN count(n) AS deleted"
-            ).single()
-            if not record or not record["deleted"]:
-                break
-    # Recreate GraphMeta at generation 0 with a fresh instance id. A reset may
-    # reuse generation numbers but must never reuse an external graph-state key.
-    schema.init_schema()
+    schema.reset_graph()
     typer.echo("Graph cleared.")
 
 

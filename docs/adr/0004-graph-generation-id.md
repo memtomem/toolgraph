@@ -16,7 +16,8 @@ Nothing in the graph today identifies its own revision.
 
 ## Decision
 
-A single `GraphMeta` node carries `generation: int` (and `updated_at`).
+A single `GraphMeta` node, the singleton (`id: 'singleton'`), carries
+`generation: int` (and `updated_at`).
 Every successful `crawl` load and every successful `ingest-manifest`
 increments it in the same transaction as the mutation. Query results that
 feed the selector surface (and the MCP server responses) include
@@ -50,6 +51,20 @@ null exactly when there is nothing to key on.
 Persisted artifacts use strict bracketing and fail instead, because a
 potentially mislabelled replay artifact is worse than no artifact.
 
+`reset` (amended 2026-11, #271). Reset deletes in batches, and a bracket
+cannot see it: the stamp stays still between batches, and once a batch
+deleted the singleton, two reads of the missing node also agreed. So reset
+keeps the singleton and writes a second `GraphMeta` row, `id: 'reset'`, in
+its first transaction, removing it in its last, which also gives the
+singleton a new instance id and generation 0. A bracket that reads the marker
+before or after its query returns the unverified form at once, without
+retrying, and a strict bracket raises `GraphResetInProgressError`. An
+interrupted reset leaves the marker; running reset again finishes it. The
+marker is a row, not a column, because a new column on Ladybug's typed
+`GraphMeta` table would need a migration. It orders one reset against its
+readers only: two overlapping resets are concurrent writers, out of scope as
+a crawl during a reset is.
+
 ## Consequences
 
 - Cache invalidation is a comparison of the pair (`graph_instance_id`,
@@ -59,4 +74,6 @@ potentially mislabelled replay artifact is worse than no artifact.
 - Crawl of N servers = N increments (each server load is its own
   transaction) — acceptable: generation is an invalidation token, not a
   semantic version.
-- Adds one bookkeeping node; `reset` clears it like everything else.
+- Adds one bookkeeping node, which `reset` keeps and re-stamps with a new
+  instance id and generation 0, plus a marker row that exists only while a
+  reset runs (or after one was interrupted).
