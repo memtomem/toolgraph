@@ -724,11 +724,16 @@ server older than Neo4j 5.7
 `acquire_readonly_session()` and `verify_connectivity()`, again with the
 driver error as `__cause__`; it is not an outage and not retryable. Other configuration and Cypher/client
 errors are untouched, as is the still-raw `get_driver()` escape hatch, with
-one exception: a `NEO4J_URI` Toolgraph cannot use raises
-`BackendConfigurationError` (cause `neo4j_uri_invalid`, fixed text) from
-`get_driver()` and everything that opens the graph, where it raised the
-driver's `ConfigurationError` or `ValueError`, whose text quotes the whole
-URI. Note
+one exception: a `NEO4J_URI` that Toolgraph's own check or the driver's
+constructor refuses raises `BackendConfigurationError` (cause
+`neo4j_uri_invalid`, fixed text) from `get_driver()` and everything that opens
+the graph. That covers a scheme other than `bolt` / `neo4j` and their `+s` /
+`+ssc` forms, user info, an unparseable URI and anything else the driver
+refuses while it is built, which 0.4.1 raised as the driver's
+`ConfigurationError` or `ValueError` quoting the whole URI; and a path other
+than `/` or a fragment, which 0.4.1 accepted with a warning quoting the URI. A
+URI the driver builds but cannot connect to, such as one whose port is not a
+number, is still an outage (`BackendUnavailableError`). Note
 that `is_backend_unavailable()` narrowed with it: it classifies only
 `BackendUnavailableError`, so exceptions raised straight out of `get_driver()`
 no longer answer yes. Route retry-sensitive calls through `driver.session()`.

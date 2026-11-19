@@ -1351,6 +1351,33 @@ def test_no_envelope_does_not_waive_known_live_manifest_mismatch(proposal_case):
     )
 
 
+def test_the_cli_names_the_next_step_on_a_live_manifest_mismatch(proposal_case):
+    _, export = proposal_case
+    with driver.session() as session:
+        session.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.governance_digest=$d", d="a" * 64)
+    governance, observed = export(None)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "policy",
+            "propose",
+            str(governance),
+            str(observed),
+            "--unverified-provenance",
+            "--revalidate-current",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ERROR: graph governance digest mismatch: supplied manifest and live graph differ; "
+        "pass the manifest that is ingested now, or ingest this one first with "
+        "`toolgraph ingest-manifest`\n"
+    )
+
+
 def test_an_export_digest_the_live_graph_lacks_says_to_re_export():
     """Called directly: run_propose() refuses this earlier, because
     verify_envelope() requires the export's digest to equal the manifest's."""
