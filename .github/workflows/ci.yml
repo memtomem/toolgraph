@@ -38,6 +38,9 @@ jobs:
   # of that range (Windows: test-unit-windows below). UV_PYTHON picks the
   # interpreter for every uv call: `.python-version` pins 3.12, and `uv run`
   # would otherwise go back to it after `uv sync --python`.
+  #
+  # The unit half runs on pytest-xdist workers (-n auto); the neo4j half stays
+  # serial because its tests share one container fixture.
   test-unit:
     strategy:
       fail-fast: false
@@ -70,7 +73,7 @@ jobs:
       - name: Run the tests that need no Docker
         env:
           TOOLGRAPH_TEST_NO_DOCKER: "1"
-        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+        run: uv run pytest -q -rs -n auto -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -110,7 +113,7 @@ jobs:
       - name: Run the tests that need no Docker
         env:
           TOOLGRAPH_TEST_NO_DOCKER: "1"
-        run: uv run pytest -q -rs -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
+        run: uv run pytest -q -rs -n auto -m "not neo4j" --junitxml="junit-unit-${{ matrix.os }}-${{ matrix.python }}.xml"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -155,6 +158,36 @@ jobs:
           TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION: "5.7"
       - name: Refuse a server below the minimum
         run: uv run python scripts/verify_neo4j_floor.py
+
+  # Installs the lowest version each direct requirement in pyproject.toml
+  # allows, the neo4j driver included, and runs both halves of the suite on
+  # it. The script fails when a floor is not what got installed, because
+  # another requirement needs more: such a floor is false and must be raised.
+  # Every uv call after the sync passes --no-sync. A lowest-direct sync
+  # rewrites the lock with that resolution mode, and a plain `uv run` would
+  # re-resolve it at the highest versions before running anything.
+  lowest-direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "latest"
+      - run: uv sync --resolution lowest-direct --group dev --extra ladybug --extra neo4j
+      # Names the same groups and extras as the sync above.
+      - name: Every declared floor is the installed version
+        run: uv run --no-sync python scripts/verify_lowest_direct.py --group dev --extra ladybug --extra neo4j
+      - name: Run the tests that need no Docker
+        env:
+          TOOLGRAPH_TEST_NO_DOCKER: "1"
+        run: uv run --no-sync pytest -q -rs -n auto -m "not neo4j"
+      - name: Run the tests against real Neo4j
+        run: uv run --no-sync pytest -q -m neo4j
+        env:
+          TOOLGRAPH_TEST_NEO4J_EXPECT_VERSION: "5.26"
 
   artifact-smoke:
     strategy:
@@ -385,6 +418,7 @@ jobs:
       - artifact-smoke
       - minimum-mcp
       - minimum-neo4j
+      - lowest-direct
       - no-extras
       - notebooks
       - audit-runtime

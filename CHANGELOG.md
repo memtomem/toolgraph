@@ -70,6 +70,13 @@ All notable changes to Toolgraph are documented here.
   Texts with a fixed form keep it: an unknown tool's reply still reads
   `Unknown tool: <value withheld>`, and a uvicorn access line its one
   withheld text.
+- Two dependency floors are raised to versions that install (#278):
+  `pydantic>=2.12`, which mcp 2.1.1 already required, so 2.7 to 2.11 never
+  installed beside it; and `pyyaml>=6.0.1`, because 6.0 has no wheel for
+  Python 3.12 and its source distribution no longer builds. An environment that installed 0.4.1 already had these
+  versions, unless it built PyYAML 6.0 from source. CI now installs the
+  lowest version each direct requirement allows, runs the suite on it, and
+  fails when a declared floor is not the version that installed.
 
 ### Added
 
