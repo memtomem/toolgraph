@@ -522,7 +522,7 @@ def test_artifact_commands_hide_a_resource_password(backend_graph, tmp_path, res
 
 def _dry_run(tmp_path, governance: dict):
     path = tmp_path / "governance.yaml"
-    path.write_text(yaml.safe_dump(governance, allow_unicode=True))
+    path.write_text(yaml.safe_dump(governance, allow_unicode=True), encoding="utf-8")
     # A URI that cannot be canonicalized is stored verbatim, with a warning;
     # outside pytest that warning prints to stderr, so its text must not carry
     # the password either. Only that warning is let through: the others stay

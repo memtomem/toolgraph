@@ -91,6 +91,17 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- On Windows, a review annotation writer waits for another writer holding the
+  lock (#292). It gave up after about ten seconds with `cannot lock review
+  annotations: Permission denied`. The lock is now taken with `filelock`, a
+  new runtime dependency (`filelock>=4.2.4`) on every platform: on POSIX it
+  is the same `flock` wait as before, and a filesystem without `flock` is
+  still an error, not a fallback to a lock file a crashed writer would leave
+  behind.
+- On Windows, an `OSError` built with `winerror=None` passed explicitly reads
+  `[Errno N]` in Toolgraph's error lines where Python prints `[WinError None]`
+  (#293). This is now documented; an error from a Windows call, which carries
+  an integer `winerror`, reads `[WinError N]` as Python prints it.
 - `example init` no longer copies `__pycache__/` into the generated quickstart
   (#276). A wheel installed by `pip` holds the compiled server script, and
   the copy carried it along.

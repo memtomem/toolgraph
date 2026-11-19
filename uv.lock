@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12, <3.15"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -1903,6 +1903,7 @@ name = "toolgraph"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
+    { name = "filelock" },
     { name = "idna" },
     { name = "ladybug" },
     { name = "mcp" },
@@ -1941,6 +1942,7 @@ notebook = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.0" },
+    { name = "filelock", specifier = ">=4.2.4" },
     { name = "idna", specifier = ">=3.18" },
     { name = "ladybug", specifier = ">=0.18.2,<0.19" },
     { name = "mcp", specifier = ">=2.1.1,<3" },

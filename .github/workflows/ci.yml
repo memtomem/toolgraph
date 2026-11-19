@@ -79,10 +79,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The unit half on Windows, which runs the Windows-only tests. Advisory: it
-  # is deliberately not in ci-required.needs until #291 (tests that assume
-  # POSIX) is fixed; #292 is a product failure it shows. A red run here does
-  # not block a merge, so read its result rather than trusting the gate.
+  # The unit half on Windows, which runs the Windows-only tests. Required
+  # through ci-required. Tests skipped here say why in the JUnit report.
   test-unit-windows:
     strategy:
       matrix:
@@ -382,6 +380,7 @@ jobs:
     needs:
       - lint
       - test-unit
+      - test-unit-windows
       - test-neo4j
       - artifact-smoke
       - minimum-mcp

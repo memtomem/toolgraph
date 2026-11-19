@@ -29,9 +29,10 @@ CONTROL_PLAN_FIXTURE = ROOT / "contracts" / "fixtures" / "control-plan-v1.json"
 
 def flat_output(output: str) -> str:
     """Typer's error box wraps long lines, and colors them on CI; join it back
-    into one plain line."""
+    into one plain line. Rich draws the box with rounded corners, or with
+    square ones on a Windows console."""
     plain = re.sub(r"\x1b\[[0-9;]*m", "", output)
-    lines = [line.strip("│╭╮╰╯─ ") for line in plain.splitlines()]
+    lines = [line.strip("│╭╮╰╯┌┐└┘─ ") for line in plain.splitlines()]
     return " ".join(line for line in lines if line)
 
 

@@ -1,0 +1,5 @@
+# Contract goldens are compared byte for byte and by digest, here and in the
+# repositories that consume them. Check them out exactly as committed, so a
+# Windows checkout does not turn their line endings into CRLF.
+contracts/fixtures/** -text
+contracts/tracegraph/v1.json -text

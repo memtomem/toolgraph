@@ -6,6 +6,9 @@ import errno
 import json
 import os
 import stat
+import subprocess
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -345,7 +348,8 @@ def test_published_sidecar_is_not_chmodded_after_replace(tmp_path, monkeypatch):
     )
 
     assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
-    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows has no POSIX mode bits to check
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 def test_atomic_write_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
@@ -469,6 +473,67 @@ def test_concurrent_annotations_are_serialized_without_lost_events(tmp_path):
     assert [event["sequence"] for event in candidate["history"]] == [1, 2]
     assert candidate["history"][1]["from_disposition"] == candidate["history"][0]["disposition"]
     assert candidate["disposition"] in {"accepted", "dismissed"}
+
+
+_HOLD_THE_LOCK = """
+import sys, time
+from pathlib import Path
+from toolgraph.review_candidates import _writer_lock
+with _writer_lock(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text("held", encoding="utf-8")
+    time.sleep(float(sys.argv[3]))
+"""
+
+
+def test_a_writer_waits_for_another_process_holding_the_lock(tmp_path):
+    """#292: on Windows the old lock gave up after about ten seconds. Another
+    process holds the lock here; the annotation waits, then lands."""
+    source = _source(tmp_path)
+    sidecar = default_annotations_path(source)
+    held = tmp_path / "held"
+    hold_s = 2.0
+    holder = subprocess.Popen(
+        [sys.executable, "-c", _HOLD_THE_LOCK, str(sidecar), str(held), str(hold_s)]
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while not held.exists():
+            assert holder.poll() is None, "the holder exited before taking the lock"
+            assert time.monotonic() < deadline, "the holder never took the lock"
+            time.sleep(0.05)
+
+        started = time.monotonic()
+        annotate_candidate(
+            source,
+            CANDIDATE_ID,
+            disposition="accepted",
+            reviewer="operator",
+            recorded_at=_at(6),
+        )
+        waited = time.monotonic() - started
+    finally:
+        # The holder exits on its own once it releases the lock.
+        try:
+            holder.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            holder.kill()
+            holder.wait()
+
+    assert holder.returncode == 0
+    assert waited >= hold_s / 2, waited
+    assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
+
+
+def test_a_lock_that_cannot_be_taken_is_one_error(tmp_path):
+    """A failure other than another writer holding the lock is not waited on."""
+    sidecar = tmp_path / "annotations.json"
+    Path(f"{sidecar.resolve()}.lock").mkdir()
+
+    with (
+        pytest.raises(ReviewCandidateError, match=r"^cannot lock review annotations: "),
+        _writer_lock(sidecar),
+    ):
+        pytest.fail("acquired a lock on a directory")
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation requires Windows privileges")
