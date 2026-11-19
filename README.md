@@ -426,13 +426,13 @@ to stderr) and exit 0 by default — gating is opt-in.
 | Command | Exit code |
 | --- | --- |
 | any command (usage error) | 2 — bad flag or argument, unknown `--profile`, more than 4096 candidates, a `--config` file that is missing or unreadable, a `blast-radius` NODE that names both a resource and a policy without `--kind` |
-| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, or Neo4j selected without the `neo4j` extra. A command that only reads the graph (not `check`) also exits 1 with one line on a Ladybug database whose schema is missing, telling you to run `toolgraph init-schema`, or was written by another schema version, telling you to upgrade Toolgraph or migrate the database; writers initialize a missing schema themselves. It does not create a missing Ladybug database either: it reports the backend as unavailable. (If another process deletes the file at the instant a read opens it, Ladybug recreates it empty; the schema check then refuses it.) Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a `backend_misconfigured` result |
+| commands that read or write the graph | 1 with one `ERROR:` line on stderr when no backend is configured, for a configuration conflict, an unreadable config file, an unavailable backend, rejected Neo4j credentials, a `NEO4J_DATABASE` the Neo4j server does not have, a Neo4j server older than 5.7, Neo4j selected without the `neo4j` extra, or a `NEO4J_URI` Toolgraph cannot use (another scheme than `bolt` / `neo4j` and their `+s` / `+ssc` forms, a path other than `/`, a fragment, a user name or password, or anything else the Neo4j driver refuses; the line never shows the URI). A command that only reads the graph (not `check`) also exits 1 with one line on a Ladybug database whose schema is missing, telling you to run `toolgraph init-schema`, or was written by another schema version, telling you to upgrade Toolgraph or migrate the database; writers initialize a missing schema themselves. It does not create a missing Ladybug database either: it reports the backend as unavailable. (If another process deletes the file at the instant a read opens it, Ladybug recreates it empty; the schema check then refuses it.) Exceptions: `doctor` reports these as a FAIL in its own output; `init` writes the config file instead of reading it, so a missing backend, a conflict or an unreadable config file does not stop it; and `serve` refuses the configuration cases (no backend, a conflict, an unreadable config file) before serving, with the same line and exit 1, and meets the rest per tool call over MCP, an outage as a `backend_unavailable` result and the others as a `backend_misconfigured` result |
 | query commands (default) | 0 always — advisory, even on DENY/violations |
 | `unsafe-tools` / `rank-features` / `eligible-tools` / `selection-explain` (unknown agent) | 1 — `AGENT_NOT_FOUND` printed to stderr |
 | `check` / `init-schema` | 0 · 1 when the backend cannot be reached or initialized |
 | `init` | 0 · 1 when `--state-dir` cannot be created · 2 on a `--backend` other than `ladybug` / `neo4j` |
 | `doctor [--json]` | 0 when no check FAILs (WARN does not) · 1 on any FAIL, including a configuration conflict or no configured backend |
-| `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) · 1 before any server is launched when no backend is configured, the configuration conflicts or cannot be read, `TOOLGRAPH_BACKEND` is unknown, or Neo4j is selected without the `neo4j` extra · 2 on a `--timeout` not above 0 or a catalog budget below 1 |
+| `crawl` | 1 on an invalid servers file (including one without a `servers` list), two servers claiming one name or identity (nothing loaded), or any server failing (the others still load) · 1 before any server is launched when no backend is configured, the configuration conflicts or cannot be read, `TOOLGRAPH_BACKEND` is unknown, Neo4j is selected without the `neo4j` extra, or `NEO4J_URI` has a scheme, path, fragment or user info Toolgraph cannot use · 2 on a `--timeout` not above 0 or a catalog budget below 1 |
 | `ingest-manifest` | 1 on an unreadable or invalid file · 1 when the manifest is REJECTED (graph unchanged) |
 | `ingest-manifest --dry-run [--json]` | 0 when the manifest would apply · 1 when it would be rejected (the `--json` report is still printed) · 2 for `--json` without `--dry-run` |
 | `reset` | 0 · 1 without `--yes` (the refusal goes to stdout) |
@@ -684,7 +684,7 @@ waiting does not fix configuration.
 ```
 
 `cause` is one of `neo4j_extra_missing`, `neo4j_credentials_rejected`,
-`neo4j_database_not_found`, `neo4j_server_too_old`, `ladybug_missing`,
+`neo4j_database_not_found`, `neo4j_server_too_old`, `neo4j_uri_invalid`, `ladybug_missing`,
 `backend_corrupt`, `schema_not_initialized` and `schema_version_mismatch`, and
 each has a fixed `message`. The two schema causes are Ladybug-only: every read
 checks the schema first. The details the CLI prints,
@@ -723,7 +723,12 @@ server older than Neo4j 5.7
 `BackendConfigurationError` from `driver.session()`,
 `acquire_readonly_session()` and `verify_connectivity()`, again with the
 driver error as `__cause__`; it is not an outage and not retryable. Other configuration and Cypher/client
-errors are untouched, as is the still-raw `get_driver()` escape hatch. Note
+errors are untouched, as is the still-raw `get_driver()` escape hatch, with
+one exception: a `NEO4J_URI` Toolgraph cannot use raises
+`BackendConfigurationError` (cause `neo4j_uri_invalid`, fixed text) from
+`get_driver()` and everything that opens the graph, where it raised the
+driver's `ConfigurationError` or `ValueError`, whose text quotes the whole
+URI. Note
 that `is_backend_unavailable()` narrowed with it: it classifies only
 `BackendUnavailableError`, so exceptions raised straight out of `get_driver()`
 no longer answer yes. Route retry-sensitive calls through `driver.session()`.

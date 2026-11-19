@@ -843,7 +843,9 @@ def _proposal_provenance(
             raise ProvenanceError("live governance_digest must be 64 lowercase hex characters")
     if digest is not None and digest != expected_digest:
         raise StateMismatchError(
-            "graph governance digest mismatch: supplied manifest and live graph differ"
+            "graph governance digest mismatch: supplied manifest and live graph differ; "
+            "pass the manifest that is ingested now, or ingest this one first with "
+            "`toolgraph ingest-manifest`"
         )
     if type(state.generation) is not int or state.generation < 0:
         raise ProvenanceError("live graph generation must be a non-negative integer")
@@ -864,8 +866,11 @@ def _proposal_provenance(
                 f"graph instance mismatch: export declared {env_instance}, live graph is {instance}"
             )
         if digest is not None and digest != observed["governance_digest"]:
+            # verify_envelope() already ties the export's digest to the supplied
+            # manifest, so run_propose() stops at the manifest check above first.
             raise StateMismatchError(
-                "graph governance digest mismatch: export and live graph differ"
+                "graph governance digest mismatch: the export declares a governance digest "
+                "the live graph does not have; re-export from the current graph"
             )
         if observed["generation"] != state.generation and not revalidate_current:
             raise StateMismatchError(

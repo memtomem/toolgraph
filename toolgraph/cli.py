@@ -265,7 +265,11 @@ def example_init(
     staging = destination.parent / f".{destination.name}.tmp-{os.getpid()}"
     try:
         with as_file(source) as source_path:
-            shutil.copytree(source_path, staging)
+            # A wheel installed by pip holds bytecode next to the server
+            # script: pip compiles it at install time.
+            shutil.copytree(
+                source_path, staging, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+            )
         servers_path = staging / "servers.yaml"
         servers_path.write_text(
             servers_path.read_text(encoding="utf-8").replace(

@@ -565,6 +565,25 @@ async def test_each_cause_reaches_the_caller_by_name(monkeypatch, cause):
     _assert_no_operator_detail(result)
 
 
+async def test_an_unusable_neo4j_uri_reaches_the_caller_by_name(
+    monkeypatch, tmp_path, fresh_settings
+):
+    """Driven through the real driver seam: the URI and its password stay out."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("TOOLGRAPH_CONFIG", raising=False)
+    monkeypatch.setenv("TOOLGRAPH_BACKEND", "neo4j")
+    monkeypatch.setenv("NEO4J_URI", "neo4j://u:SENTINEL_LEAK@h:7687")
+    driver.close_driver()
+    try:
+        result = await _wire_call("check_access", {"agent": "a", "tool": "s::t"})
+    finally:
+        driver.close_driver()
+
+    assert result.is_error is True
+    assert result.structured_content == _misconfigured(ConfigurationCause.NEO4J_URI_INVALID)
+    _assert_no_operator_detail(result)
+
+
 async def test_untagged_configuration_error_keeps_the_mask(monkeypatch):
     monkeypatch.setattr(
         app, "_with_generation", _raising(lambda: BackendConfigurationError(_OPERATOR_DETAIL))
