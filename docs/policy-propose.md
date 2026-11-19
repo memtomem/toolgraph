@@ -23,6 +23,45 @@ export declarations; it does not authenticate the observation producer.
   does not waive a known generation mismatch. Revalidation alone does not waive
   incomplete provenance; both flags are required in that case.
 
+## Trying it on the quickstart
+
+Run the quickstart from `toolgraph example init` up to `ingest-manifest`. Then
+delete the `policy-gateway::read_note` entry from the `grants:` list in
+`governance.yaml`, so there is a missing grant to propose, and ingest again:
+
+```sh
+toolgraph ingest-manifest --governance governance.yaml
+toolgraph doctor --json
+```
+
+Copy `instance_id`, `generation` and `governance_digest` from the `Graph State`
+check's `details` into the envelope of `observed.jsonl`. The rows say that
+`vibe-coder` was blocked from `read_note` five times and never called
+`publish_note`:
+
+```text
+{"envelope": {"graph_instance_id": "<instance_id>", "graph_generation": <generation>, "governance_digest": "<governance_digest>", "profile": "strict", "window_start": "2026-11-01T00:00:00Z", "window_end": "2026-11-08T00:00:00Z"}}
+{"agent": "vibe-coder", "tool_key": "policy-gateway::read_note", "decision": "rejected", "reject_reasons": ["NOT_GRANTED"], "calls": 5, "would_block_calls": 5}
+{"agent": "vibe-coder", "tool_key": "policy-gateway::publish_note", "decision": "eligible", "calls": 0}
+```
+
+```sh
+toolgraph policy propose governance.yaml observed.jsonl
+```
+
+The provenance line reads `declared (exact composite token matched: ...)`.
+The proposal adds the `read_note` grant (`would_block=5 reason=NOT_GRANTED`)
+and lists `publish_note` as a lower-confidence removal candidate, because the
+window has an explicit zero-call row for it. Nothing is applied.
+
+If you edit `governance.yaml` after writing the envelope, the command refuses
+because the export declares a different governance digest than the manifest
+you pass. Without an envelope (`--unverified-provenance`), an edited manifest
+that was not ingested is refused with `graph governance digest mismatch:
+supplied manifest and live graph differ`, followed by the next step: pass the
+manifest that is ingested now, or ingest this one first with
+`toolgraph ingest-manifest`.
+
 ## Checking the current catalog
 
 ```sh

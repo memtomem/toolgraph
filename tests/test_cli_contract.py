@@ -13,8 +13,10 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
@@ -416,6 +418,29 @@ def test_invalid_governance_cli_is_concise_and_does_not_mutate_graph(backend_gra
     with driver.session() as current:
         after = current.run("MATCH (n) RETURN count(n) AS count").single()["count"]
     assert after == before
+
+
+def test_example_init_leaves_compiled_bytecode_behind(tmp_path, monkeypatch):
+    """A wheel installed by pip holds `quickstart/__pycache__/*.pyc` (measured);
+    the copy must not."""
+    package = tmp_path / "package"
+    shutil.copytree(Path(cli.__file__).parent / "quickstart", package / "quickstart")
+    cache = package / "quickstart" / "__pycache__"
+    cache.mkdir(exist_ok=True)
+    (cache / "policy_gateway_server.cpython-312.pyc").write_bytes(b"\0")
+    (package / "quickstart" / "stray.pyc").write_bytes(b"\0")
+    monkeypatch.setattr(cli, "files", lambda _name: package)
+    destination = tmp_path / "quickstart"
+
+    created = CliRunner().invoke(app, ["example", "init", str(destination)])
+
+    assert created.exit_code == 0, created.output
+    assert sorted(str(path.relative_to(destination)) for path in destination.rglob("*")) == [
+        "README.md",
+        "governance.yaml",
+        "policy_gateway_server.py",
+        "servers.yaml",
+    ]
 
 
 def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_path):

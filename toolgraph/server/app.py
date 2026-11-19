@@ -61,6 +61,10 @@ _BACKEND_MISCONFIGURED_MESSAGES = {
         "Toolgraph backend is misconfigured: the Neo4j server is older than 5.7, the minimum "
         "Toolgraph supports; see the server log."
     ),
+    ConfigurationCause.NEO4J_URI_INVALID: (
+        "Toolgraph backend is misconfigured: NEO4J_URI is not a URI Toolgraph can use; "
+        "see the server log."
+    ),
     ConfigurationCause.LADYBUG_MISSING: (
         "Toolgraph backend is misconfigured: Ladybug is not importable; see the server log."
     ),

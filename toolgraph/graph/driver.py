@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from toolgraph import config
 from toolgraph.models import TOOL_HINT_FIELDS
@@ -44,6 +45,7 @@ class ConfigurationCause(StrEnum):
     NEO4J_CREDENTIALS_REJECTED = "neo4j_credentials_rejected"
     NEO4J_DATABASE_NOT_FOUND = "neo4j_database_not_found"
     NEO4J_SERVER_TOO_OLD = "neo4j_server_too_old"
+    NEO4J_URI_INVALID = "neo4j_uri_invalid"
     LADYBUG_MISSING = "ladybug_missing"
     BACKEND_CORRUPT = "backend_corrupt"
     SCHEMA_NOT_INITIALIZED = "schema_not_initialized"
@@ -133,6 +135,46 @@ def _server_too_old() -> BackendConfigurationError:
         "Neo4j server is older than 5.7, the minimum Toolgraph supports; upgrade the server",
         cause=ConfigurationCause.NEO4J_SERVER_TOO_OLD,
     )
+
+
+# The schemes Toolgraph can use. The driver also takes http(s):// (its Query
+# API), but get_driver() always asks for notification filtering, which the
+# Query API refuses for every query.
+_NEO4J_SCHEMES = frozenset({"bolt", "bolt+s", "bolt+ssc", "neo4j", "neo4j+s", "neo4j+ssc"})
+
+
+def _uri_invalid() -> BackendConfigurationError:
+    # Fixed text only: the driver's own errors and warnings about a URI quote
+    # all of it, user name and password included.
+    return BackendConfigurationError(
+        "NEO4J_URI is not a URI Toolgraph can use: use bolt:// or neo4j:// (or their "
+        "+s / +ssc forms) with no path or fragment, keep the user name and password "
+        "in NEO4J_USER and NEO4J_PASSWORD, and name the database in NEO4J_DATABASE",
+        cause=ConfigurationCause.NEO4J_URI_INVALID,
+    )
+
+
+def _check_neo4j_uri(uri: str) -> None:
+    """Refuse a ``NEO4J_URI`` Toolgraph cannot use, without building a driver.
+
+    Besides the scheme, it refuses the parts the driver warns about and then
+    ignores, a path other than ``/`` and a fragment: the driver's warning
+    quotes the whole URI, so the URI must not reach it. User info is refused
+    here as well as by the driver, so ``crawl`` refuses it before launching
+    any server. Everything else is left to the driver, whose refusals
+    ``get_driver()`` turns into the same error.
+    """
+    try:
+        parts = urlsplit(uri)
+    except ValueError as exc:  # an unclosed IPv6 bracket
+        raise _uri_invalid() from exc
+    if (
+        parts.scheme not in _NEO4J_SCHEMES
+        or parts.path not in ("", "/")
+        or parts.fragment
+        or "@" in parts.netloc
+    ):
+        raise _uri_invalid()
 
 
 def _credentials_rejected(code: str | None) -> BackendConfigurationError:
@@ -320,14 +362,16 @@ def check_backend_selected() -> str:
 
     Reads the settings (refusing no backend, a configuration conflict or an
     unreadable runtime config), checks the backend name, and for Neo4j checks
-    that the ``neo4j`` extra imports. It creates no driver or database handle
+    that the ``neo4j`` extra imports and that ``NEO4J_URI`` has a scheme,
+    shape and parts Toolgraph can use. It creates no driver or database handle
     and contacts nothing, so an unreachable server, rejected credentials or a
-    malformed ``NEO4J_URI`` still surface when the graph is first opened.
+    URI only the driver refuses still surface when the graph is first opened.
     Ladybug is a core dependency and is not import-checked here.
     """
     backend = backend_name()
     if backend == "neo4j":
         _neo4j()
+        _check_neo4j_uri(config.settings.neo4j_uri)
     return backend
 
 
@@ -340,13 +384,19 @@ def get_driver() -> Driver:
         with _backend_lock:
             if _driver is None:
                 neo4j = _neo4j()
-                _driver = neo4j.GraphDatabase.driver(
-                    config.settings.neo4j_uri,
-                    auth=(config.settings.neo4j_user, config.settings.neo4j_password),
-                    notifications_disabled_classifications=[
-                        neo4j.NotificationDisabledClassification.UNRECOGNIZED
-                    ],
-                )
+                _check_neo4j_uri(config.settings.neo4j_uri)
+                # The other arguments are fixed, so a ConfigurationError while
+                # building the driver is about the URI (neo4j 6.2 and 6.4).
+                try:
+                    _driver = neo4j.GraphDatabase.driver(
+                        config.settings.neo4j_uri,
+                        auth=(config.settings.neo4j_user, config.settings.neo4j_password),
+                        notifications_disabled_classifications=[
+                            neo4j.NotificationDisabledClassification.UNRECOGNIZED
+                        ],
+                    )
+                except (neo4j.exceptions.ConfigurationError, ValueError) as exc:
+                    raise _uri_invalid() from exc
     return _driver
 
 

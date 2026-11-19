@@ -27,6 +27,23 @@ All notable changes to Toolgraph are documented here.
   2, an MCP error reply) instead of the resource's answer; choose with
   `--kind resource|policy` (MCP `kind`). A resource without a scheme is found
   now, where it was looked up as a policy only.
+- A `NEO4J_URI` Toolgraph cannot use is refused with one fixed line, `NEO4J_URI
+  is not a URI Toolgraph can use: ...`, that never shows the URI (#287): a
+  scheme other than `bolt` / `neo4j` and their `+s` / `+ssc` forms, a path
+  other than `/`, a fragment, a user name or password, or anything else the
+  Neo4j driver refuses. 0.4.1 ended a graph command with the driver's
+  traceback, whose message quotes the whole URI, password included. A URI with
+  a path or a fragment is refused where 0.4.1 accepted it and the driver
+  ignored that part (with a warning quoting the URI): remove it, and name the
+  database in `NEO4J_DATABASE`. `get_driver()` raises `BackendConfigurationError`
+  for these, and an MCP call answers `backend_misconfigured` with the new
+  cause `neo4j_uri_invalid`.
+- `policy propose` says what to do when the governance digests disagree
+  (#277). `... supplied manifest and live graph differ` goes on: pass the
+  manifest that is ingested now, or ingest this one first with
+  `toolgraph ingest-manifest`.
+  `docs/policy-propose.md` walks through a proposal on the quickstart with a
+  sample `observed.jsonl`.
 - `crawl --max-catalog-records 0` / `--max-catalog-bytes 0` is a usage error
   (exit 2, `Invalid value for '--max-catalog-records': 0 is not in the range
   x>=1.`), where 0.4.1 exited 1 with `Invalid catalog budget: ...`. A
@@ -74,13 +91,17 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- `example init` no longer copies `__pycache__/` into the generated quickstart
+  (#276). A wheel installed by `pip` holds the compiled server script, and
+  the copy carried it along.
 - `crawl` refuses a backend it cannot use before it launches any server. With
   `--servers`, no configured backend, a configuration conflict or an
   unreadable runtime config was found only after every server had been
   crawled, and so were an unknown `TOOLGRAPH_BACKEND` and Neo4j selected
-  without the `neo4j` extra, with or without `--servers`. An unreachable
-  server, rejected credentials or a malformed `NEO4J_URI` still surface when
-  the graph is first opened, after the crawl.
+  without the `neo4j` extra, with or without `--servers`. So is a `NEO4J_URI`
+  with a scheme, path, fragment or user info Toolgraph cannot use (#287). An
+  unreachable server, rejected credentials or a URI only the Neo4j driver
+  refuses still surface when the graph is first opened, after the crawl.
 - Two error replies no longer lose their fixed text when the caller's value
   is hidden (#266). An MCP call to an unknown tool whose name is withheld
   answers `Unknown tool: <value withheld>`, where 0.4.1 answered only

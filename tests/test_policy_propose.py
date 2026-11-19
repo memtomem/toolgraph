@@ -1342,8 +1342,61 @@ def test_no_envelope_does_not_waive_known_live_manifest_mismatch(proposal_case):
     _, export = proposal_case
     with driver.session() as session:
         session.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.governance_digest=$d", d="a" * 64)
-    with pytest.raises(StateMismatchError, match="digest mismatch"):
+    with pytest.raises(StateMismatchError) as raised:
         run_propose(*export(None), unverified_provenance=True, revalidate_current=True)
+    assert str(raised.value) == (
+        "graph governance digest mismatch: supplied manifest and live graph differ; "
+        "pass the manifest that is ingested now, or ingest this one first with "
+        "`toolgraph ingest-manifest`"
+    )
+
+
+def test_the_cli_names_the_next_step_on_a_live_manifest_mismatch(proposal_case):
+    _, export = proposal_case
+    with driver.session() as session:
+        session.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.governance_digest=$d", d="a" * 64)
+    governance, observed = export(None)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "policy",
+            "propose",
+            str(governance),
+            str(observed),
+            "--unverified-provenance",
+            "--revalidate-current",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ERROR: graph governance digest mismatch: supplied manifest and live graph differ; "
+        "pass the manifest that is ingested now, or ingest this one first with "
+        "`toolgraph ingest-manifest`\n"
+    )
+
+
+def test_an_export_digest_the_live_graph_lacks_says_to_re_export():
+    """Called directly: run_propose() refuses this earlier, because
+    verify_envelope() requires the export's digest to equal the manifest's."""
+    live = "b" * 64
+    envelope = {"graph_instance_id": None, "graph_generation": 0, "governance_digest": "c" * 64}
+
+    with pytest.raises(StateMismatchError) as raised:
+        pp._proposal_provenance(
+            envelope,
+            queries.GraphState(instance_id=None, generation=0, governance_digest=live),
+            expected_digest=live,
+            unverified_provenance=True,
+            revalidate_current=False,
+        )
+
+    assert str(raised.value) == (
+        "graph governance digest mismatch: the export declares a governance digest "
+        "the live graph does not have; re-export from the current graph"
+    )
 
 
 @pytest.mark.parametrize("value", ["invalid-digest", "a" * 63, "A" * 64])
