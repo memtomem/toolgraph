@@ -3,3 +3,5 @@ servers:
     transport: stdio
     command: __TOOLGRAPH_PYTHON__
     args: ["policy_gateway_server.py"]
+    # Relative to this file, so the crawl works from any directory.
+    cwd: "."

@@ -828,6 +828,12 @@ The other commands have no MCP tool: `example init`, `init`, `init-schema`,
 
 - `servers.yaml` — MCP servers to crawl (stdio `command`/`args`, or a `url` for
   `streamable-http`; `sse` is accepted for legacy servers that predate it).
+  A stdio server starts in the directory `crawl` runs from unless it sets
+  `cwd:`; a relative `cwd` is read against the directory holding
+  `servers.yaml`, so `cwd: "."` lets relative `args` work from anywhere. The
+  quickstart's `servers.yaml` sets it. `cwd` is refused on HTTP and SSE
+  servers and as a Windows drive-relative path (`C:foo`), and it is never
+  stored in the graph.
 - `governance.yaml` — authored agents, policies, `CAN_CALL` grants, `READS/WRITES`
   data access, `GOVERNED_BY` mappings, and `expected_exceptions` for intentional
   DENY-zone reach. Per-edge `provenance` is optional everywhere. See `examples/`.

@@ -82,9 +82,24 @@ class ServerSpec(StrictInputModel):
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    # The directory the server process starts in. Unset, it starts in the
+    # caller's directory. ``load_servers_config`` resolves a relative value
+    # against the servers file's directory; a spec built in Python keeps it
+    # as given, so the SDK resolves it against the process's directory.
+    cwd: str | None = None
     # http / sse
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _cwd_is_for_stdio(self) -> ServerSpec:
+        if self.cwd is None:
+            return self
+        if self.transport != "stdio":
+            raise ValueFreeError("cwd is only valid for stdio servers")
+        if not self.cwd.strip():
+            raise ValueFreeError("cwd must not be empty")
+        return self
 
 
 class ServersConfig(StrictInputModel):

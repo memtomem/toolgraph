@@ -86,6 +86,14 @@ All notable changes to Toolgraph are documented here.
   URI. While both are empty, the governance digest is the one 0.4.1 computed,
   so observation exports and bundles recorded against a manifest stay valid.
 - `blast-radius --kind resource|policy` and the MCP `kind` argument.
+- `cwd:` on a stdio server in `servers.yaml` (#275): the directory the server
+  process starts in. A relative value is read against the directory holding
+  `servers.yaml`, not the one `crawl` runs from. The quickstart sets
+  `cwd: "."`, so `toolgraph crawl --servers toolgraph-quickstart/servers.yaml`
+  works from the parent directory; 0.4.1 failed there with `can't open file
+  '<cwd>/policy_gateway_server.py'`. A server without `cwd` still starts in
+  the caller's directory. `cwd` on an HTTP or SSE server, or a Windows
+  drive-relative `cwd` such as `C:foo`, is a configuration error.
 
 ### Removed
 
