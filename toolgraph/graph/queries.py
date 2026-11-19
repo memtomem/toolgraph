@@ -142,6 +142,8 @@ def _unverified(result: dict) -> dict:
 def _reset_began(read_state: Callable[[], GraphState]) -> bool:
     try:
         return read_state().reset_in_progress
+    except GraphResetInProgressError:  # a reader that refuses a marked state itself
+        return True
     except Exception:  # the query's own error is the one to report
         return False
 

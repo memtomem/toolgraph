@@ -135,6 +135,27 @@ def test_a_failing_state_read_after_a_failed_query_keeps_the_query_error():
         queries.with_graph_state(fetch, strict=True, state_reader=read)
 
 
+def test_a_reader_that_refuses_the_marker_still_names_a_reset_begun_mid_query(backend_graph):
+    """policy impact's own reader raises on the marker; that is a reset, not a reader failure."""
+    from toolgraph import policy_impact
+
+    schema.init_schema()
+    with driver.session() as s:
+        s.run("MATCH (m:GraphMeta {id:'singleton'}) SET m.governance_digest = $d", d="a" * 64)
+
+    def read():
+        with driver.read_session() as s:
+            return policy_impact._state(s)
+
+    def fetch():
+        _mark_reset()  # the reset's first transaction lands during the query
+        raise RuntimeError("candidate manifest rejected: tool 's::t' not found")
+
+    with pytest.raises(queries.GraphResetInProgressError) as raised:
+        queries.with_graph_state(fetch, strict=True, state_reader=read)
+    assert str(raised.value.__cause__) == "candidate manifest rejected: tool 's::t' not found"
+
+
 def test_the_state_reads_the_marker_row(backend_graph):
     schema.init_schema()  # the Neo4j fixture wipes the singleton too
     assert queries.graph_state().reset_in_progress is False
