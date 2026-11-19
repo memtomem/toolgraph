@@ -338,6 +338,31 @@ def test_state_churn_exhaustion_typed_refusal(
     assert raised.value is other
 
 
+def test_cli_policy_propose_during_a_reset_names_the_reset(
+    backend_graph, sample_gov_path, sample_observed_jsonl
+):
+    """#271: a reset marker is not churn; the error says so and nothing is printed."""
+    schema.init_schema()
+    with driver.session() as s:
+        s.run(
+            "MERGE (m:GraphMeta {id: 'singleton'}) "
+            "SET m.instance_id = 'test-instance', m.generation = 1, m.governance_digest = $d",
+            d=governance_digest(load_governance(sample_gov_path)),
+        )
+        s.run("MERGE (r:GraphMeta {id: 'reset'})")
+
+    result = CliRunner().invoke(
+        cli.app, ["policy", "propose", str(sample_gov_path), str(sample_observed_jsonl)]
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ERROR: a graph reset is in progress or did not finish; retry after it finishes, "
+        "or run toolgraph reset --yes once no reset process is left\n"
+    )
+
+
 def test_cli_policy_propose(backend_graph, sample_gov_path, sample_observed_jsonl):
     schema.init_schema()
     gov = load_governance(sample_gov_path)

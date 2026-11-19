@@ -106,6 +106,23 @@ All notable changes to Toolgraph are documented here.
 
 ### Fixed
 
+- A read during `toolgraph reset` is no longer reported as verified (#271).
+  Reset deletes in batches, and a query bracketed between two batches read
+  the same graph state before and after and came back with
+  `graph_state_verified: true` for a half-erased graph; after the batch that
+  deleted the graph's metadata node, two reads of the missing node agreed too.
+  Reset now keeps that node and marks the graph from its first transaction to
+  its last: a read in between returns `graph_state_verified: false` with null
+  state fields (CLI and MCP), and every artifact command (`preflight`,
+  `policy compile`, `policy review-plan`, `policy propose`, `policy impact`,
+  `ingest-manifest --dry-run`) stops with `ERROR: a graph reset is in
+  progress or did not finish; retry after it finishes, or run toolgraph reset
+  --yes once no reset process is left`. `ingest-manifest --dry-run` used to
+  end in a traceback when the graph state moved on every retry; it prints one
+  `ERROR:` line now. A reset interrupted by an outage stays marked, `doctor`
+  reports Graph State FAIL, and running `reset --yes` again finishes it. Run
+  one reset at a time: overlapping resets are concurrent writers, which the
+  marker does not order.
 - On Windows, a review annotation writer waits for another writer holding the
   lock (#292). It gave up after about ten seconds with `cannot lock review
   annotations: Permission denied`. The lock is now taken with `filelock`, a

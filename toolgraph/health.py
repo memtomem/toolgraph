@@ -193,7 +193,19 @@ def run_doctor() -> DoctorReport:
     try:
         with driver.acquire_readonly_session() as session:
             state = queries.graph_state(session)
-        if state.instance_id:
+        if state.reset_in_progress:
+            checks.append(
+                DoctorCheck(
+                    name="Graph State",
+                    status="FAIL",
+                    message="A graph reset is running or did not finish: wait for a "
+                    "running reset, or once no reset process is left, run "
+                    "'toolgraph reset --yes' to finish it",
+                    details={"reset_in_progress": True, "generation": state.generation},
+                )
+            )
+            overall_healthy = False
+        elif state.instance_id:
             checks.append(
                 DoctorCheck(
                     name="Graph State",
