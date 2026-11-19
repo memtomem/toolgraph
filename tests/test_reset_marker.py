@@ -3,7 +3,7 @@
 Before this, a reader bracketing its query between reset's delete batches
 read the same stamp before and after and got ``graph_state_verified: true``
 for a half-erased graph; once the batch that deleted GraphMeta committed,
-it read ``(None, 0)`` twice and got the same. Reproduced on main 5aa4a59
+it read ``(None, 0)`` twice and got the same. Reproduced on main e141646
 (Ladybug, batches of one node): five reads during one reset, all verified.
 """
 
