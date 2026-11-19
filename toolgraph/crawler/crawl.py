@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePath
 
 from toolgraph.crawler.client import CatalogBudget, crawl_server
 from toolgraph.error_text import describe_error
+from toolgraph.errors import ValueFreeError
 from toolgraph.models import CrawlResult, ServersConfig, ServerSpec
 from toolgraph.redaction import endpoint_label
 from toolgraph.yaml_loader import load_yaml_mapping
@@ -17,12 +18,39 @@ def load_servers_config(path: Path) -> list[ServerSpec]:
     """Parse ``servers.yaml`` into specs; the ``servers`` list is required.
 
     Raises ``OSError`` when the file cannot be opened, ``ValueError`` for an
-    oversized or non-mapping document, and pydantic ``ValidationError`` when
-    the ``servers`` key is missing or not a list (ADR-0014). Only
-    ``servers: []`` declares an empty fleet.
+    oversized or non-mapping document or a drive-relative ``cwd``, and
+    pydantic ``ValidationError`` when the ``servers`` key is missing or not a
+    list (ADR-0014). Only
+    ``servers: []`` declares an empty fleet. A relative stdio ``cwd`` comes
+    back resolved against the directory holding *path*.
     """
     data = load_yaml_mapping(path)
-    return ServersConfig.model_validate(data).servers
+    specs = ServersConfig.model_validate(data).servers
+    # The directory the file was named in, not a symlink's target: relative
+    # scripts sit next to the servers.yaml the operator pointed at.
+    base = path.parent.resolve()
+    return [
+        spec if spec.cwd is None else spec.model_copy(update={"cwd": resolve_cwd(base, spec.cwd)})
+        for spec in specs
+    ]
+
+
+def resolve_cwd(base: PurePath, cwd: str) -> str:
+    """*cwd* as an absolute path, a relative one read against *base* (#275).
+
+    A Windows drive-relative value (``C:foo``, ``C:``) names a directory
+    relative to that drive's current directory, which is process state rather
+    than anything in servers.yaml, so it is refused before the join, also when
+    its drive is the servers file's (where the join would hide it).
+    """
+    given = type(base)(cwd)  # the platform's path rules, as the join uses them
+    joined = base / given
+    if (given.drive and not given.root) or not joined.is_absolute():
+        raise ValueFreeError(
+            "cwd must be an absolute path or a path relative to the servers file, "
+            "not relative to another drive"
+        )
+    return str(joined)
 
 
 def spec_label(spec: ServerSpec) -> str:

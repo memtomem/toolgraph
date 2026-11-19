@@ -41,7 +41,9 @@ async def open_session(spec: ServerSpec) -> AsyncIterator[ClientSession]:
             # Merge over the SDK's safe default env so PATH etc. survive when the
             # user supplies only secrets (e.g. API keys).
             env = {**get_default_environment(), **spec.env} if spec.env else None
-            params = StdioServerParameters(command=spec.command, args=spec.args, env=env)
+            params = StdioServerParameters(
+                command=spec.command, args=spec.args, env=env, cwd=spec.cwd
+            )
             read, write = await stack.enter_async_context(stdio_client(params))
 
         elif spec.transport == "streamable-http":

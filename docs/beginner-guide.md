@@ -59,6 +59,13 @@ server (`--no-prune` keeps them); authored governance is never deleted by
 a crawl. A blank file or one without the key is rejected before any server
 is contacted.
 
+The quickstart's server entry sets `cwd: "."`. A stdio server starts in its
+`cwd`, and a relative `cwd` is read against the directory holding
+`servers.yaml`, so the fixture's relative script path works even when you
+crawl from another directory (`toolgraph crawl --servers
+toolgraph-quickstart/servers.yaml`). Without `cwd`, a stdio server starts in
+the directory you run `toolgraph` from.
+
 The fixture exposes two tools:
 
 - `policy-gateway::read_note` — a read-only, idempotent tool.
