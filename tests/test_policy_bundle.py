@@ -140,23 +140,33 @@ def test_bundle_hides_quoted_userinfo_in_tool_paths(monkeypatch):
 
 def test_bundle_schema_accepts_producer(monkeypatch):
     _mock_graph(monkeypatch)
-    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    schema = json.loads(
+        (ROOT / "contracts" / "policy-bundle.schema.json").read_text(encoding="utf-8")
+    )
     Draft202012Validator(schema, format_checker=None).validate(
         build_policy_bundle(agent="codex", created_at=NOW)
     )
 
 
 def test_golden_contract_and_bundle_bytes_pin_cross_repo_encoding():
-    fixture = json.loads((ROOT / "contracts" / "fixtures" / "tool-contract-v1.json").read_text())
+    fixture = json.loads(
+        (ROOT / "contracts" / "fixtures" / "tool-contract-v1.json").read_text(encoding="utf-8")
+    )
     assert tool_contract_digest(fixture["contract"]) == fixture["expected_digest"]
 
     bundle_path = ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json"
     payload = bundle_path.read_bytes()
     bundle = json.loads(payload)
     assert canonical_json_bytes(bundle) == payload
-    expected = (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.sha256").read_text().strip()
+    expected = (
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.sha256")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     assert sha256_bytes(payload) == expected
-    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    schema = json.loads(
+        (ROOT / "contracts" / "policy-bundle.schema.json").read_text(encoding="utf-8")
+    )
     Draft202012Validator(schema, format_checker=None).validate(bundle)
 
 
@@ -166,7 +176,9 @@ def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
     bundle = json.loads(payload)
     assert canonical_json_bytes(bundle) == payload
     expected = (
-        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.sha256").read_text().strip()
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1-rejected.sha256")
+        .read_text(encoding="utf-8")
+        .strip()
     )
     assert sha256_bytes(payload) == expected
     decision = bundle["tools"][0]
@@ -176,19 +188,25 @@ def test_rejected_golden_bundle_pins_reason_paths_and_exact_bytes():
         "(fixture-agent)-[:CAN_CALL]->(도구-서버::publish)-[:WRITES]->"
         "(file:///demo/drafts)-[:GOVERNED_BY]->(draft-publish-deny)"
     ]
-    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    schema = json.loads(
+        (ROOT / "contracts" / "policy-bundle.schema.json").read_text(encoding="utf-8")
+    )
     Draft202012Validator(schema, format_checker=None).validate(bundle)
 
 
 def test_schema_rejects_exact_duplicate_tool_rows():
-    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
+    schema = json.loads(
+        (ROOT / "contracts" / "policy-bundle.schema.json").read_text(encoding="utf-8")
+    )
     Draft202012Validator.check_schema(schema)
     # Pin the two machine-checkable contract bits so a reformat cannot drop
     # them silently; the per-tool_key uniqueness contract itself lives in the
     # tools description and the producer check.
     assert schema["$defs"]["graphState"]["additionalProperties"] is False
     assert schema["properties"]["tools"]["uniqueItems"] is True
-    bundle = json.loads((ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text())
+    bundle = json.loads(
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text(encoding="utf-8")
+    )
     bundle["tools"] = bundle["tools"] * 2
     with pytest.raises(ValidationError):
         Draft202012Validator(schema, format_checker=None).validate(bundle)
@@ -218,8 +236,12 @@ def test_schema_alone_cannot_catch_conflicting_duplicate_rows():
     uniqueItems compares whole items — so the prose contract and the producer
     check, not the schema, are what make uniqueness enforceable.
     """
-    schema = json.loads((ROOT / "contracts" / "policy-bundle.schema.json").read_text())
-    bundle = json.loads((ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text())
+    schema = json.loads(
+        (ROOT / "contracts" / "policy-bundle.schema.json").read_text(encoding="utf-8")
+    )
+    bundle = json.loads(
+        (ROOT / "contracts" / "fixtures" / "policy-bundle-v1.json").read_text(encoding="utf-8")
+    )
     conflicting = dict(bundle["tools"][0])
     conflicting["risk_score"] = 1.0
     bundle["tools"] = [bundle["tools"][0], conflicting]
@@ -448,7 +470,7 @@ def test_uri_identities_keep_opposite_decisions_in_export(backend_graph, tmp_pat
     assert doc["rejected"][0]["tool_key"] == keys[1]
     output = tmp_path / "artifact.json"
     atomic_write_private(output, canonical_json_bytes(doc))
-    assert json.loads(output.read_text()) == doc
+    assert json.loads(output.read_text(encoding="utf-8")) == doc
 
 
 def test_legacy_reader_fallback():

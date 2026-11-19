@@ -17,18 +17,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from filelock import FileLock
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from toolgraph.artifacts import atomic_write_private, sha256_prefixed
 from toolgraph.error_text import render_one
 from toolgraph.errors import ValueFreeError
 from toolgraph.redaction import is_credential_shaped, is_credential_shaped_identity
-
-if os.name == "nt":  # exercised on Windows CI/users
-    import msvcrt
-else:
-    import fcntl
-
 
 TRACEGRAPH_SCHEMA_VERSION = 1
 TRACEGRAPH_KIND = "tracegraph.review-candidates"
@@ -425,40 +420,33 @@ def normalize_note(value: str | None) -> str | None:
 
 @contextmanager
 def _writer_lock(path: Path) -> Iterator[None]:
-    """Serialize local writers; the OS releases this lock after a crash."""
-    # The .lock file is deliberately never removed: unlinking a file another
-    # process is about to flock() reintroduces the race this lock exists to
-    # close. One empty file per sidecar is the accepted cost.
+    """Serialize local writers; the OS releases this lock after a crash.
+
+    filelock waits as long as another writer holds the lock, and raises any
+    other failure: ``flock`` on POSIX, ``LockFileEx`` on Windows.
+    """
     # Resolve aliases before deriving the lock name.  Otherwise two processes
     # can address one sidecar through real/symlink paths and take distinct locks.
-    lock_path = Path(f"{path.resolve()}.lock")
+    # preserve_lock_file: the .lock file is never removed, because unlinking a
+    # file another process is about to lock reintroduces the race this lock
+    # exists to close. One empty file per sidecar is the accepted cost.
+    # fallback_to_soft=False: on a filesystem without flock, fail instead of
+    # switching to a lock that a crashed writer would leave behind.
+    lock = FileLock(
+        Path(f"{path.resolve()}.lock"),
+        timeout=-1,
+        fallback_to_soft=False,
+        preserve_lock_file=True,
+    )
     try:
-        handle = lock_path.open("a+b")
+        lock.acquire()
     except OSError as exc:
         detail = exc.strerror or type(exc).__name__
         raise ReviewCandidateError(f"cannot lock review annotations: {detail}") from exc
-    with handle:
-        try:
-            if os.name == "nt":  # platform-specific
-                handle.seek(0)
-                if not handle.read(1):
-                    handle.write(b"\0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        except OSError as exc:
-            detail = exc.strerror or type(exc).__name__
-            raise ReviewCandidateError(f"cannot lock review annotations: {detail}") from exc
-        try:
-            yield
-        finally:
-            if os.name == "nt":  # platform-specific
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _annotation_bytes(annotations: AnnotationReport) -> bytes:

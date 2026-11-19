@@ -6,6 +6,7 @@ import errno
 import json
 import os
 import stat
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -345,7 +346,8 @@ def test_published_sidecar_is_not_chmodded_after_replace(tmp_path, monkeypatch):
     )
 
     assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
-    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+    if os.name != "nt":  # Windows has no POSIX mode bits to check
+        assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
 
 
 def test_atomic_write_fsyncs_file_and_parent_directory(tmp_path, monkeypatch):
@@ -469,6 +471,41 @@ def test_concurrent_annotations_are_serialized_without_lost_events(tmp_path):
     assert [event["sequence"] for event in candidate["history"]] == [1, 2]
     assert candidate["history"][1]["from_disposition"] == candidate["history"][0]["disposition"]
     assert candidate["disposition"] in {"accepted", "dismissed"}
+
+
+def _within(seconds, call):
+    """Run *call* on a daemon thread and fail, rather than hang, if it does not
+    return. An executor would not do: leaving its ``with`` block waits for the
+    worker, so a hung call would still hang the test."""
+    outcome = {}
+
+    def run():
+        try:
+            outcome["value"] = call()
+        except BaseException as exc:  # re-raised on the test's thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        pytest.fail(f"did not return within {seconds} s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
+
+
+def test_a_lock_that_cannot_be_taken_is_one_error(tmp_path):
+    """A failure other than another writer holding the lock is not waited on."""
+    sidecar = tmp_path / "annotations.json"
+    Path(f"{sidecar.resolve()}.lock").mkdir()
+
+    def take():
+        with _writer_lock(sidecar):
+            pytest.fail("acquired a lock on a directory")
+
+    with pytest.raises(ReviewCandidateError, match=r"^cannot lock review annotations: "):
+        _within(60, take)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation requires Windows privileges")

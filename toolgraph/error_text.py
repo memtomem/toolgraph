@@ -128,6 +128,13 @@ def describe_os_error(exc: OSError) -> str:
     copy is built from errno and reason alone and given the names afterwards:
     a third constructor argument can mean something else (``BlockingIOError``
     reads an integer there as ``characters_written``).
+
+    On Windows an integer ``winerror`` is kept, so the line reads
+    ``[WinError N]`` as Python's does. An error built with ``winerror=None``
+    passed explicitly reads ``[Errno N]`` here where Python prints
+    ``[WinError None]``: the attribute reads ``None`` either way, so the two
+    cannot be told apart without formatting the original, and formatting it
+    runs the file names' ``__repr__``.
     """
     copy = OSError(exc.errno, exc.strerror)
     copy.filename = _shown_name(exc.filename)

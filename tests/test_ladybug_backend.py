@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -465,6 +466,8 @@ def test_failed_read_releases_the_database_for_another_process(embedded_path):
         [sys.executable, "-m", "toolgraph.cli", "init-schema"],
         env={
             "PATH": "",
+            # Without it a Windows child cannot import asyncio (WinError 10106).
+            **({"SYSTEMROOT": os.environ["SYSTEMROOT"]} if "SYSTEMROOT" in os.environ else {}),
             "TOOLGRAPH_CONFIG": str(embedded_path.parent / "no-config.json"),
             "TOOLGRAPH_BACKEND": "ladybug",
             "TOOLGRAPH_DB_PATH": str(embedded_path),

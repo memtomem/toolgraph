@@ -27,6 +27,19 @@ TABBED = "password\t=QXZQ"
 NBSP = "password\u00a0=QXZQ"
 EN_QUAD = "password\u2000=QXZQ"
 
+# A file name Windows refuses to create (`?`, a tab): such a path cannot
+# exist there, so the case is skipped rather than rewritten. Every test that
+# uses one also runs with a name Windows allows.
+_NOT_A_WINDOWS_NAME = pytest.mark.skipif(
+    sys.platform == "win32", reason="Windows does not allow '?' or a tab in a file name"
+)
+
+
+def _file_name(marker: str):
+    return (
+        pytest.param(marker, marks=_NOT_A_WINDOWS_NAME) if marker in (ENCODED, TABBED) else marker
+    )
+
 
 class _OwnOSError(OSError):
     """An OSError subclass: Python keeps it as it is for any errno."""
@@ -173,14 +186,17 @@ def test_an_ordinary_config_path_is_shown(path, fresh_settings):
     # box wraps that line at any character, so the comparison ignores the
     # whitespace a wrap inserts. The paths themselves hold none.
     assert "".join(path.split()) == path
-    assert path in "".join(flat_output(result.output).split())
+    # Windows names it as an absolute path with its own separators.
+    shown = str(Path(path).resolve()) if sys.platform == "win32" else path
+    assert shown in "".join(flat_output(result.output).split())
 
 
 INVALID_SERVERS = "servers:\n  - name: 1\n    bogus: x\n"
 
 
-def test_crawl_config_error_withholds_the_path(tmp_path):
-    path = tmp_path / f"{ENCODED}.yaml"
+@pytest.mark.parametrize("marker", [_file_name(ENCODED), PLAIN])
+def test_crawl_config_error_withholds_the_path(tmp_path, marker):
+    path = tmp_path / f"{marker}.yaml"
     path.write_text(INVALID_SERVERS, encoding="utf-8")
 
     result = _run(["crawl", "--servers", str(path)])
@@ -277,15 +293,23 @@ def test_a_malformed_runtime_config_withholds_its_path(tmp_path, monkeypatch, fr
     _assert_hidden(result.output)
 
 
-def test_init_prints_an_os_error_without_its_file_names(tmp_path, fresh_settings):
-    """`str(OSError)` repeats the path, escaped (`\\t`) out of the scrubber's sight."""
-    blocker = tmp_path / TABBED
+@pytest.mark.parametrize("marker", [_file_name(TABBED), NBSP])
+def test_init_prints_an_os_error_without_its_file_names(tmp_path, fresh_settings, marker):
+    """`str(OSError)` repeats the path, escaped (`\\t`, `\\xa0`) out of the scrubber's sight."""
+    blocker = tmp_path / marker
     blocker.write_text("x", encoding="utf-8")
 
     result = _run(["init", "--backend", "ladybug", "--state-dir", str(blocker / "state")])
 
     assert result.exit_code == 1
-    assert result.output == f"ERROR: cannot initialize {PATH_WITHHELD}: Not a directory\n"
+    # The OS's own reason for making a directory under a file (measured on the
+    # windows-latest runner).
+    reason = (
+        "Cannot create a file when that file already exists"
+        if sys.platform == "win32"
+        else "Not a directory"
+    )
+    assert result.output == f"ERROR: cannot initialize {PATH_WITHHELD}: {reason}\n"
 
 
 def test_example_init_lines_withhold_the_destination(tmp_path):
@@ -338,7 +362,7 @@ def test_dry_run_json_redacts_a_resource_query(tmp_path, monkeypatch, fresh_sett
 @pytest.mark.parametrize(
     ("path", "shown"),
     [
-        (Path("/srv/toolgraph/servers.yaml"), "/srv/toolgraph/servers.yaml"),
+        (Path("/srv/toolgraph/servers.yaml"), str(Path("/srv/toolgraph/servers.yaml"))),
         (Path("/tmp/password=QXZQ.yaml"), PATH_WITHHELD),
         (Path("/tmp/?%74oken=QXZQ"), PATH_WITHHELD),
         ("neo4j://u:QXZQ@h/x", PATH_WITHHELD),
@@ -359,7 +383,7 @@ def test_ordinary_text_still_goes_through_the_scrubber():
     _assert_hidden(result.output)
 
 
-@pytest.mark.parametrize("directory", [TABBED, NBSP, EN_QUAD])
+@pytest.mark.parametrize("directory", [_file_name(TABBED), NBSP, EN_QUAD])
 @pytest.mark.parametrize(
     ("args", "prefix"),
     [
@@ -384,7 +408,13 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
     "exc",
     [
         FileNotFoundError(2, "No such file or directory", "/srv/servers.yaml"),
-        OSError(18, "Invalid cross-device link", "/srv/a", None, "/mnt/b"),
+        pytest.param(
+            OSError(18, "Invalid cross-device link", "/srv/a", None, "/mnt/b"),
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="Windows prints [WinError None] here; see the test below",
+            ),
+        ),
         PermissionError(13, "Permission denied"),
         OSError(2, None, "/srv/servers.yaml"),
         OSError(2, "", "/srv/servers.yaml"),
@@ -400,12 +430,21 @@ def test_a_missing_config_file_names_neither_path(tmp_path, directory, args, pre
     ],
 )
 def test_an_os_error_reads_as_python_prints_it(exc):
-    """An ordinary file name, of any type, reads exactly as Python prints it.
+    """An ordinary file name, of any type, reads exactly as Python prints it,
+    for an OSError with no ``winerror`` or an integer one.
 
     A copy built with the name as a constructor argument made an ``EAGAIN``
     error a ``BlockingIOError``, which reads an integer there as
     ``characters_written``: the name went missing, or the copy raised."""
     assert describe_error(exc) == str(exc)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="winerror exists on Windows only")
+def test_a_windows_error_built_with_winerror_none_reads_as_errno():
+    """Python prints `[WinError None]` for this one; Toolgraph prints the errno."""
+    exc = OSError(18, "Invalid cross-device link", "/srv/a", None, "/mnt/b")
+
+    assert describe_error(exc) == "[Errno 18] Invalid cross-device link: '/srv/a' -> '/mnt/b'"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="winerror exists on Windows only")
@@ -431,7 +470,7 @@ def test_a_credential_shaped_file_name_is_withheld(exc):
     assert PATH_WITHHELD in describe_error(exc)
 
 
-@pytest.mark.parametrize("marker", [PLAIN, ENCODED, TABBED])
+@pytest.mark.parametrize("marker", [PLAIN, _file_name(ENCODED), _file_name(TABBED)])
 def test_yaml_and_export_and_health_and_driver_paths_withhold_only_the_path(
     tmp_path, monkeypatch, fresh_settings, marker
 ):
@@ -482,7 +521,7 @@ def _ladybug_raising(message: str, *, before=lambda: None):
     return SimpleNamespace(Database=database)
 
 
-@pytest.mark.parametrize("marker", [PLAIN, ENCODED, TABBED])
+@pytest.mark.parametrize("marker", [PLAIN, _file_name(ENCODED), _file_name(TABBED)])
 def test_limit_row_digest_and_open_errors_withhold_only_the_path(
     tmp_path, monkeypatch, fresh_settings, marker
 ):

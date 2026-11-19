@@ -475,7 +475,7 @@ def test_example_init_creates_self_contained_assets_and_refuses_collision(tmp_pa
         assert isinstance(evidence, str) and evidence.strip(), edge
 
     servers = (destination / "servers.yaml").read_text()
-    assert sys.executable in servers
+    assert json.dumps(sys.executable) in servers
     assert "__TOOLGRAPH_PYTHON__" not in servers
     assert f"Next: cd {destination} && toolgraph init" in created.output
 
