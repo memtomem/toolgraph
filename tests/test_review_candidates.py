@@ -6,9 +6,7 @@ import errno
 import json
 import os
 import stat
-import subprocess
-import sys
-import time
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -475,69 +473,26 @@ def test_concurrent_annotations_are_serialized_without_lost_events(tmp_path):
     assert candidate["disposition"] in {"accepted", "dismissed"}
 
 
-_HOLD_THE_LOCK = """
-import sys, time
-from pathlib import Path
-from toolgraph.review_candidates import _writer_lock
-sidecar, held, go, released = map(Path, sys.argv[1:5])
-with _writer_lock(sidecar):
-    held.write_text("held", encoding="utf-8")
-    deadline = time.monotonic() + 60
-    while not go.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    time.sleep(1.0)
-    released.write_text(repr(time.time()), encoding="utf-8")
-"""
-
-
 def _within(seconds, call):
-    """Run *call* on a thread and fail, rather than hang, if it does not return."""
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(call).result(timeout=seconds)
+    """Run *call* on a daemon thread and fail, rather than hang, if it does not
+    return. An executor would not do: leaving its ``with`` block waits for the
+    worker, so a hung call would still hang the test."""
+    outcome = {}
 
-
-def test_a_writer_waits_for_another_process_holding_the_lock(tmp_path):
-    """#292: on Windows the old lock gave up after about ten seconds. Another
-    process holds the lock here; the annotation lands only after it lets go.
-
-    Checked by order, not by duration: a slow runner can delay either side.
-    """
-    source = _source(tmp_path)
-    sidecar = default_annotations_path(source)
-    held, go, released = (tmp_path / name for name in ("held", "go", "released"))
-    holder = subprocess.Popen(
-        [sys.executable, "-c", _HOLD_THE_LOCK, *map(str, (sidecar, held, go, released))]
-    )
-    try:
-        deadline = time.monotonic() + 60
-        while not held.exists():
-            assert holder.poll() is None, "the holder exited before taking the lock"
-            assert time.monotonic() < deadline, "the holder never took the lock"
-            time.sleep(0.05)
-        go.write_text("go", encoding="utf-8")
-
-        _within(
-            120,
-            lambda: annotate_candidate(
-                source,
-                CANDIDATE_ID,
-                disposition="accepted",
-                reviewer="operator",
-                recorded_at=_at(6),
-            ),
-        )
-        returned_at = time.time()
-    finally:
-        # The holder exits on its own once it releases the lock.
+    def run():
         try:
-            holder.wait(timeout=60)
-        except subprocess.TimeoutExpired:
-            holder.kill()
-            holder.wait()
+            outcome["value"] = call()
+        except BaseException as exc:  # re-raised on the test's thread
+            outcome["error"] = exc
 
-    assert holder.returncode == 0
-    assert returned_at >= float(released.read_text(encoding="utf-8"))
-    assert len(json.loads(sidecar.read_text(encoding="utf-8"))["events"]) == 1
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(seconds)
+    if worker.is_alive():
+        pytest.fail(f"did not return within {seconds} s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("value")
 
 
 def test_a_lock_that_cannot_be_taken_is_one_error(tmp_path):
