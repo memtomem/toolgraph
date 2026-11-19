@@ -302,7 +302,14 @@ def test_init_prints_an_os_error_without_its_file_names(tmp_path, fresh_settings
     result = _run(["init", "--backend", "ladybug", "--state-dir", str(blocker / "state")])
 
     assert result.exit_code == 1
-    assert result.output == f"ERROR: cannot initialize {PATH_WITHHELD}: Not a directory\n"
+    # The OS's own reason for making a directory under a file (measured on the
+    # windows-latest runner).
+    reason = (
+        "Cannot create a file when that file already exists"
+        if sys.platform == "win32"
+        else "Not a directory"
+    )
+    assert result.output == f"ERROR: cannot initialize {PATH_WITHHELD}: {reason}\n"
 
 
 def test_example_init_lines_withhold_the_destination(tmp_path):
